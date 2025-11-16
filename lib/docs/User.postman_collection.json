@@ -1,0 +1,270 @@
+{
+	"info": {
+		"_postman_id": "bdc09718-9657-4359-bd32-08c2a34aea90",
+		"name": "User",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "31685099",
+		"_collection_link": "https://dark-comet-419736.postman.co/workspace/hifi~6f9eccc0-acb8-420f-88c4-451be9c2f4d2/collection/26695874-bdc09718-9657-4359-bd32-08c2a34aea90?action=share&source=collection_link&creator=31685099"
+	},
+	"item": [
+		{
+			"name": "Create user",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{idToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "",
+						"value": "",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"username\": \"testuser\",\n    \"name\": \"Test User \"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseurl}}/users/create",
+					"host": [
+						"{{baseurl}}"
+					],
+					"path": [
+						"users",
+						"create"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "User name availability",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "",
+						"value": "",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{baseurl}}/users/availability/testuser",
+					"host": [
+						"{{baseurl}}"
+					],
+					"path": [
+						"users",
+						"availability",
+						"testuser"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Update user",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{idToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "PUT",
+				"header": [
+					{
+						"key": "",
+						"value": "",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"name\":\"Test User\"\n}"
+				},
+				"url": {
+					"raw": "{{baseurl}}/users/testuser",
+					"host": [
+						"{{baseurl}}"
+					],
+					"path": [
+						"users",
+						"testuser"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete user",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseurl}}/users/testuser",
+					"host": [
+						"{{baseurl}}"
+					],
+					"path": [
+						"users",
+						"testuser"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get user",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{idToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "",
+						"value": "",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{baseurl}}/users/testuser",
+					"host": [
+						"{{baseurl}}"
+					],
+					"path": [
+						"users",
+						"testuser"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{idToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					"// Auto-refresh Firebase token if expired",
+					"const apiKey = pm.environment.get(\"firebase_api_key\");",
+					"const email = pm.environment.get(\"email\");",
+					"const password = pm.environment.get(\"password\");",
+					"let idToken = pm.environment.get(\"idToken\");",
+					"let uid = pm.environment.get(\"uid\")",
+					"let refreshToken = pm.environment.get(\"refreshToken\");",
+					"let tokenExpiry = pm.environment.get(\"tokenExpiry\");",
+					"",
+					"const isExpired = !tokenExpiry || Date.now() > parseInt(tokenExpiry);",
+					"",
+					"if (!idToken || isExpired) {",
+					"    console.log(\"Refreshing Firebase token...\");",
+					"    pm.sendRequest({",
+					"        url: `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,",
+					"        method: 'POST',",
+					"        header: { 'Content-Type': 'application/json' },",
+					"        body: {",
+					"            mode: 'raw',",
+					"            raw: JSON.stringify({",
+					"                email: email,",
+					"                password: password,",
+					"                returnSecureToken: true",
+					"            })",
+					"        }",
+					"    }, function (err, res) {",
+					"        if (!err) {",
+					"            const data = res.json();",
+					"            pm.environment.set(\"idToken\", data.idToken);",
+					"            pm.environment.set(\"uid\", data.uid)",
+					"            pm.environment.set(\"refreshToken\", data.refreshToken);",
+					"            pm.environment.set(\"tokenExpiry\", Date.now() + (parseInt(data.expiresIn) - 60) * 1000);",
+					"        } else {",
+					"            console.error(\"Firebase login failed\", err);",
+					"        }",
+					"    });",
+					"}",
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	]
+}
