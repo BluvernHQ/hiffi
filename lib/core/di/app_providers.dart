@@ -11,8 +11,11 @@ import '../../features/upload/presentation/viewmodels/upload_view_model.dart';
 import '../../features/upload/presentation/viewmodels/video_upload_view_model.dart';
 import '../../features/user/data/user_repository.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
+import '../../features/video/domain/repositories/video_repository.dart';
+import '../../features/video/presentation/viewmodels/video_view_model.dart';
 import '../routes/app_router.dart';
 import '../services/api_client.dart';
+import '../services/notification_service.dart';
 
 List<SingleChildWidget> buildAppProviders() {
   return [
@@ -29,6 +32,10 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<UserRepository>(
       create: (context) =>
           ApiUserRepository(apiClient: context.read<ApiClient>()),
+    ),
+    Provider<VideoRepository>(
+      create: (context) =>
+          VideoRepositoryImpl(apiClient: context.read<ApiClient>()),
     ),
     Provider<AppRouter>(
       create: (context) =>
@@ -64,8 +71,16 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) =>
           UploadViewModel(spacesService: context.read<SpacesService>()),
     ),
+    Provider<NotificationService>(create: (_) => NotificationService()),
     ChangeNotifierProvider<VideoUploadViewModel>(
-      create: (_) => VideoUploadViewModel(),
+      create: (context) => VideoUploadViewModel(
+        apiClient: context.read<ApiClient>(),
+        notificationService: context.read<NotificationService>(),
+      ),
+    ),
+    ChangeNotifierProvider<VideoViewModel>(
+      create: (context) =>
+          VideoViewModel(videoRepository: context.read<VideoRepository>()),
     ),
   ];
 }

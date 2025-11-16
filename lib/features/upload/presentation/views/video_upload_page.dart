@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../viewmodels/video_upload_view_model.dart';
 
 class VideoUploadPage extends StatefulWidget {
@@ -17,16 +18,10 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
   @override
   void initState() {
     super.initState();
+    // Clear any previous success/error state when page opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      context.read<VideoUploadViewModel>().registerForegroundListener();
+      context.read<VideoUploadViewModel>().clear();
     });
-  }
-
-  @override
-  void dispose() {
-    context.read<VideoUploadViewModel>().unregisterForegroundListener();
-    super.dispose();
   }
 
   void _showExitConfirmation(
@@ -47,7 +42,7 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
           ),
           TextButton(
             onPressed: () async {
-              await viewModel.cancelScheduledUpload();
+              await viewModel.cancelUpload();
               viewModel.clear();
               Navigator.of(context).pop();
               context.pop();
@@ -66,13 +61,12 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
     if (viewModel.shouldPopAfterSuccess) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final message = viewModel.successMessage;
         viewModel.consumePopRequest();
-        if (message != null) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(message)));
-        }
+        // Clear the form immediately
+        viewModel.clear();
+        // Refresh video list after successful upload
+        context.read<VideoViewModel>().refresh();
+        // Pop without showing success message
         if (Navigator.of(context).canPop()) {
           context.pop();
         }
@@ -98,7 +92,7 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
           if (viewModel.isUploading || viewModel.isQueued)
             TextButton.icon(
               onPressed: () async {
-                await viewModel.cancelScheduledUpload();
+                await viewModel.cancelUpload();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -400,7 +394,8 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                       Expanded(
                         child: Text(
                           'Your video is being uploaded in the background. '
-                          'We will show a notification when it finishes.',
+                          'Upload will continue even if you close the app. '
+                          'Notifications will appear when the app is in background.',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(
                                 color: Theme.of(
@@ -415,18 +410,117 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                 const SizedBox(height: 24),
               ],
 
+              // Upload Progress Indicator
+              if (viewModel.isUploading) ...[
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.4),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.cloud_upload,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Uploading video...',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onPrimaryContainer,
+                                  ),
+                            ),
+                          ),
+                          Text(
+                            '${(viewModel.uploadProgressPercent * 100).toInt()}%',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      LinearProgressIndicator(
+                        value: viewModel.uploadProgressPercent,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withOpacity(0.3),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Theme.of(context).colorScheme.primary,
+                        ),
+                        minHeight: 8,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatBytes(viewModel.uploadProgress),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimaryContainer
+                                      .withOpacity(0.7),
+                                ),
+                          ),
+                          Text(
+                            _formatBytes(viewModel.uploadTotal),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimaryContainer
+                                      .withOpacity(0.7),
+                                ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+
               // Upload Button
               FilledButton(
                 onPressed: viewModel.canUpload && !viewModel.isUploading
                     ? () async {
-                        final scheduled = await viewModel.scheduleUpload();
-                        if (scheduled && mounted) {
+                        final success = await viewModel.startUpload();
+                        if (success && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Video upload scheduled'),
+                              content: Text(
+                                'Video upload started. '
+                                'Upload will continue even if you close the app.',
+                              ),
                               behavior: SnackBarBehavior.floating,
+                              duration: Duration(seconds: 4),
                             ),
                           );
+                          // Refresh video list after upload starts
+                          // (will refresh again when upload completes)
+                          context.read<VideoViewModel>().refresh();
                         }
                       }
                     : null,
@@ -460,6 +554,16 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
         ),
       ),
     );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    } else if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    } else {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
   }
 }
 

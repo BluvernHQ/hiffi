@@ -13,4 +13,5 @@ class ApiConstants {
   static const String uploadVideo = '/videos/upload';
   static String uploadVideoAck(String bridgeId) =>
       '/videos/upload/ack/$bridgeId';
+  static const String videoList = '/videos/list';
 }

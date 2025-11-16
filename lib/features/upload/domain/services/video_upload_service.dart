@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import '../../../../core/constants/api_constants.dart';
@@ -14,6 +15,8 @@ enum VideoUploadStage {
 
 typedef VideoUploadStageCallback =
     Future<void> Function(VideoUploadStage stage);
+typedef VideoUploadProgressCallback =
+    Future<void> Function(int sentBytes, int totalBytes);
 
 class VideoUploadResult {
   VideoUploadResult({required this.success, required this.message});
@@ -30,14 +33,20 @@ class VideoUploadService {
   Future<VideoUploadResult> uploadVideo(
     VideoUploadPayload payload, {
     VideoUploadStageCallback? onStage,
+    VideoUploadProgressCallback? onVideoProgress,
   }) async {
     try {
       await onStage?.call(VideoUploadStage.preparing);
-      final bridgeResponse = await _apiClient.post(ApiConstants.uploadVideo, {
-        'video_title': payload.title,
-        'video_description': payload.description,
-        'video_tags': payload.tags,
-      }, requiresAuth: true);
+      final bridgeResponse = await _apiClient.post(
+        ApiConstants.uploadVideo,
+        {
+          'video_title': payload.title,
+          'video_description': payload.description,
+          'video_tags': payload.tags,
+        },
+        requiresAuth: true,
+        idToken: payload.idToken,
+      );
 
       if (bridgeResponse.statusCode != 200) {
         return VideoUploadResult(
@@ -60,16 +69,38 @@ class VideoUploadService {
         );
       }
 
+      print('');
+      print('🚀 ============================================');
+      print('🚀 STARTING UPLOAD PROCESS:');
+      print('🚀 📹 Video: ${payload.videoPath}');
+      print(
+        '🚀 📸 Thumbnail: ${payload.resolvedThumbnailPath ?? "Auto-generated"}',
+      );
+      print('🚀 🔗 Bridge ID: $bridgeId');
+      print('🚀 ============================================');
+      print('');
+
       await onStage?.call(VideoUploadStage.uploadingVideo);
+      print('📹 Starting video upload...');
       final videoFile = File(payload.videoPath);
       final videoResponse = await _apiClient.uploadFileToGateway(
         gatewayUrl,
         videoFile,
         contentType: _detectVideoMimeType(payload.videoPath),
+        onProgress: (sent, total) async {
+          if (onVideoProgress != null) {
+            await onVideoProgress(sent, total);
+          }
+        },
       );
 
       if (videoResponse.statusCode != 200) {
         final errorBody = await videoResponse.stream.bytesToString();
+        developer.log(
+          'Video upload to gateway failed',
+          name: 'hiffi.video_upload_service',
+          error: 'Status: ${videoResponse.statusCode}, Body: $errorBody',
+        );
         return VideoUploadResult(
           success: false,
           message:
@@ -77,44 +108,140 @@ class VideoUploadService {
         );
       }
 
+      developer.log(
+        'Video uploaded to gateway successfully',
+        name: 'hiffi.video_upload_service',
+      );
+      print('✅ Video uploaded successfully to gateway!');
+
+      // Upload thumbnail if available (optional - don't fail if this fails)
       if (payload.resolvedThumbnailPath != null && gatewayThumbnail != null) {
+        print('📸 Starting thumbnail upload...');
         await onStage?.call(VideoUploadStage.uploadingThumbnail);
-        final thumbFile = File(payload.resolvedThumbnailPath!);
-        final thumbResponse = await _apiClient.uploadFileToGateway(
-          gatewayThumbnail,
-          thumbFile,
-          contentType: 'image/jpeg',
+        try {
+          final thumbFile = File(payload.resolvedThumbnailPath!);
+          print('   📄 Thumbnail file: ${thumbFile.path}');
+          final thumbResponse = await _apiClient.uploadFileToGateway(
+            gatewayThumbnail,
+            thumbFile,
+            contentType: 'image/jpeg',
+          );
+
+          if (thumbResponse.statusCode != 200) {
+            final errorBody = await thumbResponse.stream.bytesToString();
+            developer.log(
+              'Thumbnail upload failed (non-critical)',
+              name: 'hiffi.video_upload_service',
+              error: 'Status: ${thumbResponse.statusCode}, Body: $errorBody',
+            );
+            print(
+              '   ⚠️ Thumbnail upload failed (non-critical): ${thumbResponse.statusCode}',
+            );
+            // Don't fail the whole upload for thumbnail
+          } else {
+            developer.log(
+              'Thumbnail uploaded successfully',
+              name: 'hiffi.video_upload_service',
+            );
+            print('   ✅ Thumbnail uploaded successfully!');
+          }
+        } catch (e) {
+          developer.log(
+            'Thumbnail upload error (non-critical)',
+            name: 'hiffi.video_upload_service',
+            error: e,
+          );
+          print('   ⚠️ Thumbnail upload error (non-critical): $e');
+          // Don't fail the whole upload for thumbnail
+        }
+      } else {
+        print('📸 No thumbnail to upload (skipping thumbnail step)');
+      }
+
+      // Always acknowledge upload completion, even if thumbnail failed
+      try {
+        await onStage?.call(VideoUploadStage.acknowledging);
+        developer.log(
+          'Acknowledging upload completion',
+          name: 'hiffi.video_upload_service',
+        );
+        print(
+          '📤 Acknowledging upload: ${ApiConstants.uploadVideoAck(bridgeId)}',
         );
 
-        if (thumbResponse.statusCode != 200) {
-          final errorBody = await thumbResponse.stream.bytesToString();
+        final ackResponse = await _apiClient.post(
+          ApiConstants.uploadVideoAck(bridgeId),
+          const {},
+          requiresAuth: true,
+          idToken: payload.idToken,
+        );
+
+        developer.log(
+          'Acknowledge response: ${ackResponse.statusCode}',
+          name: 'hiffi.video_upload_service',
+        );
+        print('   ✅ Acknowledge Response: ${ackResponse.statusCode}');
+        if (ackResponse.body.isNotEmpty) {
+          print('   📄 Acknowledge Body: ${ackResponse.body}');
+        }
+
+        if (ackResponse.statusCode != 200) {
+          developer.log(
+            'Failed to acknowledge upload',
+            name: 'hiffi.video_upload_service',
+            error:
+                'Status: ${ackResponse.statusCode}, Body: ${ackResponse.body}',
+          );
+          print(
+            '   ❌ Acknowledge failed: ${ackResponse.statusCode} - ${ackResponse.body}',
+          );
           return VideoUploadResult(
             success: false,
             message:
-                'Thumbnail upload failed (${thumbResponse.statusCode}): $errorBody',
+                'Failed to acknowledge upload (${ackResponse.statusCode}): ${ackResponse.body}',
           );
         }
-      }
 
-      await onStage?.call(VideoUploadStage.acknowledging);
-      final ackResponse = await _apiClient.post(
-        ApiConstants.uploadVideoAck(bridgeId),
-        const {},
-        requiresAuth: true,
-      );
-
-      if (ackResponse.statusCode != 200) {
+        developer.log(
+          'Upload completed and acknowledged successfully',
+          name: 'hiffi.video_upload_service',
+        );
+        print('   ✅ Upload acknowledged successfully!');
+        print('');
+        print('🎉 ============================================');
+        print('🎉 UPLOAD COMPLETE SUMMARY:');
+        print('🎉 ✅ Video: Uploaded');
+        print(
+          '🎉 ${payload.resolvedThumbnailPath != null && gatewayThumbnail != null ? "✅" : "⏭️"} Thumbnail: ${payload.resolvedThumbnailPath != null && gatewayThumbnail != null ? "Uploaded" : "Skipped"}',
+        );
+        print('🎉 ✅ Acknowledge: Completed');
+        print('🎉 ============================================');
+        print('');
+        return VideoUploadResult(
+          success: true,
+          message: 'Video uploaded successfully',
+        );
+      } catch (ackError, stackTrace) {
+        developer.log(
+          'Exception during acknowledge step',
+          name: 'hiffi.video_upload_service',
+          error: ackError,
+          stackTrace: stackTrace,
+        );
+        print('   ❌ Exception during acknowledge: $ackError');
         return VideoUploadResult(
           success: false,
-          message: 'Failed to acknowledge upload (${ackResponse.statusCode})',
+          message: 'Video uploaded but acknowledge failed: $ackError',
         );
       }
-
-      return VideoUploadResult(
-        success: true,
-        message: 'Video uploaded successfully',
+    } catch (error, stackTrace) {
+      developer.log(
+        'Video upload failed with exception',
+        name: 'hiffi.video_upload_service',
+        error: error,
+        stackTrace: stackTrace,
       );
-    } catch (error) {
+      print('❌ Upload exception: $error');
       return VideoUploadResult(
         success: false,
         message: 'Video upload failed: $error',

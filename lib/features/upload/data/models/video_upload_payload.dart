@@ -9,6 +9,7 @@ class VideoUploadPayload {
     required this.videoPath,
     this.customThumbnailPath,
     this.autoThumbnailPath,
+    required this.idToken,
   });
 
   final String taskId;
@@ -18,6 +19,7 @@ class VideoUploadPayload {
   final String videoPath;
   final String? customThumbnailPath;
   final String? autoThumbnailPath;
+  final String idToken;
 
   Map<String, dynamic> toMap() {
     return {
@@ -28,6 +30,7 @@ class VideoUploadPayload {
       'videoPath': videoPath,
       'customThumbnailPath': customThumbnailPath,
       'autoThumbnailPath': autoThumbnailPath,
+      'idToken': idToken,
     };
   }
 
@@ -44,6 +47,7 @@ class VideoUploadPayload {
       videoPath: map['videoPath'] as String? ?? '',
       customThumbnailPath: map['customThumbnailPath'] as String?,
       autoThumbnailPath: map['autoThumbnailPath'] as String?,
+      idToken: map['idToken'] as String? ?? '',
     );
   }
 

@@ -143,6 +143,7 @@ class ApiClient {
     String endpoint,
     Map<String, dynamic> body, {
     bool requiresAuth = false,
+    String? idToken,
   }) async {
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
@@ -157,7 +158,7 @@ class ApiClient {
 
     if (requiresAuth) {
       // Use cached token first (Firebase SDK handles token refresh automatically)
-      final token = await _getIdToken(forceRefresh: false);
+      final token = idToken ?? await _getIdToken(forceRefresh: false);
       if (token == null) {
         developer.log(
           'No token available for authenticated request',
@@ -194,7 +195,7 @@ class ApiClient {
       }
 
       // If 401, try once more with refreshed token
-      if (response.statusCode == 401 && requiresAuth) {
+      if (response.statusCode == 401 && requiresAuth && idToken == null) {
         print('   ⚠️ 401 Unauthorized - Retrying with refreshed token...');
         final refreshedToken = await _getIdToken(forceRefresh: true);
         if (refreshedToken != null) {
@@ -397,7 +398,7 @@ class ApiClient {
   }
 
   /// Upload binary file to a gateway URL (e.g., DigitalOcean Spaces)
-  /// This is used for uploading video and thumbnail files
+  /// Supports optional progress callback.
   Future<http.StreamedResponse> uploadFileToGateway(
     String gatewayUrl,
     File file, {
@@ -407,24 +408,83 @@ class ApiClient {
     developer.log('PUT (binary) $gatewayUrl', name: 'hiffi.api');
     print('🌐 Uploading file to gateway: $gatewayUrl');
     print('   📄 File: ${file.path}');
-    print('   📊 Size: ${await file.length()} bytes');
+    final total = await file.length();
+    print('   📊 Size: $total bytes');
 
-    final request = http.Request('PUT', Uri.parse(gatewayUrl));
+    final uri = Uri.parse(gatewayUrl);
+    final request = http.StreamedRequest('PUT', uri);
     if (contentType != null) {
       request.headers['Content-Type'] = contentType;
     }
+    request.headers['Content-Length'] = total.toString();
 
-    final fileBytes = await file.readAsBytes();
-    request.bodyBytes = fileBytes;
+    // Stream file by chunks and report progress
+    const int chunkSize = 64 * 1024; // 64KiB
+    final raf = await file.open();
+    int sent = 0;
 
-    final streamedResponse = await _client.send(request);
+    // Start sending the request first, then stream data
+    print('   🚀 Starting request send...');
+    final responseFuture = _client.send(request);
 
+    try {
+      print('   📖 Reading and streaming file in chunks...');
+      while (sent < total) {
+        final remaining = total - sent;
+        final toRead = remaining < chunkSize ? remaining : chunkSize;
+
+        final bytes = await raf.read(toRead);
+        if (bytes.isEmpty) {
+          print('   ⚠️ Read empty bytes at position $sent/$total');
+          break;
+        }
+
+        request.sink.add(bytes);
+        sent += bytes.length;
+
+        if (onProgress != null) {
+          onProgress(sent, total);
+        }
+
+        // Log every 10% progress
+        if (sent % (total ~/ 10) < chunkSize || sent == total) {
+          final percent = ((sent / total) * 100).toInt();
+          print('   📊 Upload progress: $percent% ($sent/$total bytes)');
+        }
+      }
+
+      print('   ✅ Finished streaming file ($sent/$total bytes)');
+      print('   🔒 Closing request sink...');
+
+      // Close the sink after all data is streamed
+      await request.sink.close();
+      print('   📤 Request sink closed successfully');
+    } catch (e, stackTrace) {
+      print('   ❌ Error during file read/stream: $e');
+      developer.log(
+        'Error during file upload stream',
+        name: 'hiffi.api',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      try {
+        await request.sink.close();
+      } catch (_) {}
+      await raf.close();
+      rethrow;
+    } finally {
+      await raf.close();
+      print('   📂 File handle closed');
+    }
+
+    // Wait for the response
+    print('   ⏳ Waiting for upload response...');
+    final streamedResponse = await responseFuture;
     developer.log(
       'PUT (binary) $gatewayUrl - Status: ${streamedResponse.statusCode}',
       name: 'hiffi.api',
     );
     print('   ✅ Upload Response: ${streamedResponse.statusCode}');
-
     return streamedResponse;
   }
 

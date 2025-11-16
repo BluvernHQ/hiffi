@@ -11,6 +11,6 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService().initialize();
-  await Workmanager().initialize(videoUploadCallbackDispatcher);
+  await Workmanager().initialize(callbackDispatcher);
   runApp(const HiffiApp());
 }
