@@ -116,7 +116,7 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Video Preview Section (YouTube-like)
+              // Video Preview Section
               if (viewModel.selectedVideo != null) ...[
                 _VideoPreviewCard(
                   videoFile: viewModel.selectedVideo!,

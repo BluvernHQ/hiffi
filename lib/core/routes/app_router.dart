@@ -11,6 +11,8 @@ import '../../features/home/presentation/views/home_page.dart';
 
 import '../../features/upload/presentation/views/video_upload_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
+import '../../features/video/domain/models/video_model.dart';
+import '../../features/video/presentation/views/video_player_page.dart';
 
 class AppRouter {
   AppRouter({required AuthRepository authRepository})
@@ -34,7 +36,7 @@ class AppRouter {
               const AuthPage(initialMode: AuthMode.signUp),
         ),
         GoRoute(path: '/home', builder: (context, state) => const HomePage()),
-        
+
         GoRoute(
           path: '/upload/video',
           builder: (context, state) => const VideoUploadPage(),
@@ -44,6 +46,17 @@ class AppRouter {
           builder: (context, state) {
             final username = state.pathParameters['username'] ?? '';
             return UserProfilePage(username: username);
+          },
+        ),
+        GoRoute(
+          path: '/video/:videoId',
+          builder: (context, state) {
+            final video = state.extra as VideoModel?;
+            if (video == null) {
+              // Redirect to home if video not found
+              return const HomePage();
+            }
+            return VideoPlayerPage(video: video);
           },
         ),
       ],

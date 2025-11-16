@@ -140,8 +140,15 @@ class _HomePageState extends State<HomePage> {
                     )
                   else
                     SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      sliver: SliverList(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      sliver: SliverGrid(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 0.75,
+                            ),
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
                             if (index >= videoViewModel.videos.length) {
@@ -151,16 +158,13 @@ class _HomePageState extends State<HomePage> {
                                 videoViewModel.loadVideos();
                               }
                               return videoViewModel.isLoading
-                                  ? const Padding(
-                                      padding: EdgeInsets.all(16.0),
-                                      child: Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
+                                  ? const Center(
+                                      child: CircularProgressIndicator(),
                                     )
                                   : const SizedBox.shrink();
                             }
                             final video = videoViewModel.videos[index];
-                            return _VideoCard(video: video);
+                            return _GridVideoCard(video: video);
                           },
                           childCount:
                               videoViewModel.videos.length +
@@ -343,8 +347,9 @@ class _CompactProfileSection extends StatelessWidget {
   }
 }
 
-class _VideoCard extends StatelessWidget {
-  const _VideoCard({required this.video});
+// Grid video card for feed layout
+class _GridVideoCard extends StatelessWidget {
+  const _GridVideoCard({required this.video});
 
   final VideoModel video;
 
@@ -353,205 +358,159 @@ class _VideoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Thumbnail
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Image.network(
-                  _thumbnailUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      child: Icon(
-                        Icons.video_library,
-                        size: 48,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    );
-                  },
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return Container(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          value: loadingProgress.expectedTotalBytes != null
-                              ? loadingProgress.cumulativeBytesLoaded /
-                                    loadingProgress.expectedTotalBytes!
-                              : null,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          context.push('/video/${video.videoId}', extra: video);
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Thumbnail
+            Expanded(
+              flex: 3,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.network(
+                      _thumbnailUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
+                          child: Icon(
+                            Icons.video_library,
+                            size: 32,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        );
+                      },
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                  : null,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    // View count overlay (top right)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
                         ),
-                      ),
-                    );
-                  },
-                ),
-                // Play overlay
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                  ),
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.9),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.play_circle_filled,
-                        size: 48,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Video Info
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Title
-                Text(
-                  video.videoTitle,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 8),
-                // Description
-                if (video.videoDescription.isNotEmpty)
-                  Text(
-                    video.videoDescription,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                if (video.videoDescription.isNotEmpty)
-                  const SizedBox(height: 8),
-                // Tags
-                if (video.videoTags.isNotEmpty)
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: video.videoTags
-                        .take(3)
-                        .map(
-                          (tag) => Chip(
-                            label: Text(
-                              tag,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.primary,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.visibility,
+                              size: 12,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatCount(video.videoViews),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.primaryContainer,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        )
-                        .toList(),
-                  ),
-                if (video.videoTags.isNotEmpty) const SizedBox(height: 8),
-                // Stats
-                Row(
-                  children: [
-                    _StatIcon(icon: Icons.visibility, count: video.videoViews),
-                    const SizedBox(width: 16),
-                    _StatIcon(icon: Icons.thumb_up, count: video.videoUpvotes),
-                    const SizedBox(width: 16),
-                    _StatIcon(icon: Icons.comment, count: video.videoComments),
-                    const Spacer(),
-                    Text(
-                      _formatDate(video.createdAt),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            // Title and User (minimal)
+            Expanded(
+              flex: 1,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    video.videoTitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 10,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer,
+                        child: Text(
+                          video.userUsername.isNotEmpty
+                              ? video.userUsername[0].toUpperCase()
+                              : 'U',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          video.userUsername.isNotEmpty
+                              ? video.userUsername
+                              : 'Unknown',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    );
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (difference.inDays > 7) {
-      return '${date.day}/${date.month}/${date.year}';
-    } else if (difference.inDays > 0) {
-      return '${difference.inDays}d ago';
-    } else if (difference.inHours > 0) {
-      return '${difference.inHours}h ago';
-    } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes}m ago';
-    } else {
-      return 'Just now';
-    }
-  }
-}
-
-class _StatIcon extends StatelessWidget {
-  const _StatIcon({required this.icon, required this.count});
-
-  final IconData icon;
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          size: 16,
-          color: Theme.of(
-            context,
-          ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          _formatCount(count),
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-          ),
-        ),
-      ],
     );
   }
 

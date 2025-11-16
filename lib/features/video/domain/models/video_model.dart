@@ -11,6 +11,7 @@ class VideoModel {
     required this.videoDownvotes,
     required this.videoComments,
     required this.userUid,
+    required this.userUsername,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -26,6 +27,7 @@ class VideoModel {
   final int videoDownvotes;
   final int videoComments;
   final String userUid;
+  final String userUsername;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -46,6 +48,7 @@ class VideoModel {
       videoDownvotes: json['video_downvotes'] as int? ?? 0,
       videoComments: json['video_comments'] as int? ?? 0,
       userUid: json['user_uid'] as String,
+      userUsername: json['user_username'] as String? ?? '',
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -64,6 +67,7 @@ class VideoModel {
       'video_downvotes': videoDownvotes,
       'video_comments': videoComments,
       'user_uid': userUid,
+      'user_username': userUsername,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
