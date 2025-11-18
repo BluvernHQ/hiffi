@@ -14,6 +14,7 @@ class VideoModel {
     required this.userUsername,
     required this.createdAt,
     required this.updatedAt,
+    this.userVoteStatus,
   });
 
   final String videoId;
@@ -30,6 +31,7 @@ class VideoModel {
   final String userUsername;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? userVoteStatus; // 'upvoted', 'downvoted', or null
 
   factory VideoModel.fromJson(Map<String, dynamic> json) {
     return VideoModel(
@@ -51,6 +53,7 @@ class VideoModel {
       userUsername: json['user_username'] as String? ?? '',
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+      userVoteStatus: json['user_vote_status'] as String?,
     );
   }
 
@@ -70,6 +73,7 @@ class VideoModel {
       'user_username': userUsername,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      if (userVoteStatus != null) 'user_vote_status': userVoteStatus,
     };
   }
 }

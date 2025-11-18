@@ -15,6 +15,7 @@ class UserModel {
   final int totalStreams;
   final int totalVideos;
   final UserStatus? status;
+  final bool? isFollowing; // Whether current user is following this user
 
   UserModel({
     required this.username,
@@ -33,6 +34,7 @@ class UserModel {
     this.totalStreams = 0,
     this.totalVideos = 0,
     this.status,
+    this.isFollowing,
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -83,6 +85,7 @@ class UserModel {
       totalStreams: (userData['total_streams'] as num?)?.toInt() ?? 0,
       totalVideos: (userData['total_videos'] as num?)?.toInt() ?? 0,
       status: status,
+      isFollowing: userData['is_following'] as bool?,
     );
   }
 
@@ -105,6 +108,7 @@ class UserModel {
       'total_videos': totalVideos,
       if (status != null)
         'status': {'is_live': status!.isLive, 'session_id': status!.sessionId},
+      if (isFollowing != null) 'is_following': isFollowing,
     };
   }
 
@@ -125,6 +129,7 @@ class UserModel {
     int? totalStreams,
     int? totalVideos,
     UserStatus? status,
+    bool? isFollowing,
   }) {
     return UserModel(
       username: username ?? this.username,
@@ -143,6 +148,7 @@ class UserModel {
       totalStreams: totalStreams ?? this.totalStreams,
       totalVideos: totalVideos ?? this.totalVideos,
       status: status ?? this.status,
+      isFollowing: isFollowing ?? this.isFollowing,
     );
   }
 }

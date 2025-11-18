@@ -222,6 +222,76 @@ class UserViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> followUser(String username) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      developer.log('Following user: $username', name: 'hiffi.user');
+      await _userRepository.followUser(username);
+
+      // Reload user to get updated follow status
+      if (_currentUser?.username == username) {
+        // If viewing the user being followed, reload to update isFollowing
+        await loadUser(username);
+      } else {
+        // Reload current user to update following count
+        await loadCurrentUser();
+      }
+
+      developer.log('User followed successfully', name: 'hiffi.user');
+    } catch (error) {
+      developer.log(
+        'Failed to follow user: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to follow user: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> unfollowUser(String username) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      developer.log('Unfollowing user: $username', name: 'hiffi.user');
+      await _userRepository.unfollowUser(username);
+
+      // Reload user to get updated follow status
+      if (_currentUser?.username == username) {
+        // If viewing the user being unfollowed, reload to update isFollowing
+        await loadUser(username);
+      } else {
+        // Reload current user to update following count
+        await loadCurrentUser();
+      }
+
+      developer.log('User unfollowed successfully', name: 'hiffi.user');
+    } catch (error) {
+      developer.log(
+        'Failed to unfollow user: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to unfollow user: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
   void clearUsernameAvailability() {
     _usernameAvailabilityMessage = null;
     _isUsernameAvailable = null;

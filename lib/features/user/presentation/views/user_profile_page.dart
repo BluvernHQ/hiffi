@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/user_repository.dart';
 import '../../domain/models/user_model.dart';
 import '../viewmodels/user_view_model.dart';
 
@@ -19,12 +20,26 @@ class _UserProfilePageState extends State<UserProfilePage> {
   final _nameController = TextEditingController();
   bool _isEditingUsername = false;
   bool _isEditingName = false;
+  UserModel? _currentLoggedInUser;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<UserViewModel>().loadUser(widget.username);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final viewModel = context.read<UserViewModel>();
+      final userRepository = context.read<UserRepository>();
+      // Load current logged-in user first and store it
+      try {
+        final currentUser = await userRepository.getCurrentUser();
+        setState(() {
+          _currentLoggedInUser = currentUser;
+        });
+      } catch (e) {
+        // Ignore error, might not be logged in
+        debugPrint('Failed to load current user: $e');
+      }
+      // Load the profile user
+      await viewModel.loadUser(widget.username);
     });
   }
 
@@ -39,6 +54,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
   Widget build(BuildContext context) {
     final viewModel = context.watch<UserViewModel>();
     final user = viewModel.currentUser;
+    final isOwnProfile = _currentLoggedInUser?.username == widget.username;
 
     // Update controllers when user data changes and not editing
     if (user != null &&
@@ -54,25 +70,27 @@ class _UserProfilePageState extends State<UserProfilePage> {
       appBar: AppBar(
         title: Text(user?.username ?? 'Profile'),
         actions: [
-          PopupMenuButton(
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                child: const Row(
-                  children: [
-                    Icon(Icons.delete, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Delete Account'),
-                  ],
+          // Only show delete menu for own profile
+          if (isOwnProfile)
+            PopupMenuButton(
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  child: const Row(
+                    children: [
+                      Icon(Icons.delete, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Delete Account'),
+                    ],
+                  ),
+                  onTap: () async {
+                    await Future.delayed(const Duration(milliseconds: 100));
+                    if (mounted) {
+                      _showDeleteConfirmation(context, viewModel);
+                    }
+                  },
                 ),
-                onTap: () async {
-                  await Future.delayed(const Duration(milliseconds: 100));
-                  if (mounted) {
-                    _showDeleteConfirmation(context, viewModel);
-                  }
-                },
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
       body: viewModel.isLoading && user == null
@@ -240,52 +258,141 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             ],
                           ),
                           const SizedBox(height: 24),
-                          _EditableField(
-                            label: 'Username',
-                            value: user.username,
-                            controller: _usernameController,
-                            isEditing: _isEditingUsername,
-                            isLoading: viewModel.isLoading,
-                            onTap: () {
-                              setState(() {
-                                _isEditingUsername = true;
-                              });
-                            },
-                            onSave: () async {
-                              await _saveUsername(viewModel, user);
-                            },
-                            onCancel: () {
-                              setState(() {
-                                _isEditingUsername = false;
-                                _usernameController.text = user.username;
-                                viewModel.clearUsernameAvailability();
-                              });
-                            },
-                            isUsername: true,
-                            currentUsername: user.username,
-                          ),
-                          const SizedBox(height: 16),
-                          _EditableField(
-                            label: 'Name',
-                            value: user.name,
-                            controller: _nameController,
-                            isEditing: _isEditingName,
-                            isLoading: viewModel.isLoading,
-                            onTap: () {
-                              setState(() {
-                                _isEditingName = true;
-                              });
-                            },
-                            onSave: () async {
-                              await _saveName(viewModel, user);
-                            },
-                            onCancel: () {
-                              setState(() {
-                                _isEditingName = false;
-                                _nameController.text = user.name;
-                              });
-                            },
-                          ),
+                          // Follow/Unfollow button for other users
+                          if (!isOwnProfile && _currentLoggedInUser != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 24),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: viewModel.isLoading
+                                      ? null
+                                      : () async {
+                                          try {
+                                            if (user.isFollowing == true) {
+                                              await viewModel.unfollowUser(
+                                                widget.username,
+                                              );
+                                            } else {
+                                              await viewModel.followUser(
+                                                widget.username,
+                                              );
+                                            }
+                                            // Reload user to update follow status
+                                            await viewModel.loadUser(
+                                              widget.username,
+                                            );
+                                          } catch (e) {
+                                            if (mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Failed to ${user.isFollowing == true ? 'unfollow' : 'follow'}: ${e.toString()}',
+                                                  ),
+                                                  backgroundColor: Colors.red,
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: user.isFollowing == true
+                                        ? Colors.grey[300]
+                                        : Theme.of(context).colorScheme.primary,
+                                    foregroundColor: user.isFollowing == true
+                                        ? Colors.black87
+                                        : Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: viewModel.isLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Colors.white,
+                                                ),
+                                          ),
+                                        )
+                                      : Text(
+                                          user.isFollowing == true
+                                              ? 'Unfollow'
+                                              : 'Follow',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ),
+                          // Editable fields only for own profile
+                          if (isOwnProfile) ...[
+                            _EditableField(
+                              label: 'Username',
+                              value: user.username,
+                              controller: _usernameController,
+                              isEditing: _isEditingUsername,
+                              isLoading: viewModel.isLoading,
+                              onTap: () {
+                                setState(() {
+                                  _isEditingUsername = true;
+                                });
+                              },
+                              onSave: () async {
+                                await _saveUsername(viewModel, user);
+                              },
+                              onCancel: () {
+                                setState(() {
+                                  _isEditingUsername = false;
+                                  _usernameController.text = user.username;
+                                  viewModel.clearUsernameAvailability();
+                                });
+                              },
+                              isUsername: true,
+                              currentUsername: user.username,
+                            ),
+                            const SizedBox(height: 16),
+                            _EditableField(
+                              label: 'Name',
+                              value: user.name,
+                              controller: _nameController,
+                              isEditing: _isEditingName,
+                              isLoading: viewModel.isLoading,
+                              onTap: () {
+                                setState(() {
+                                  _isEditingName = true;
+                                });
+                              },
+                              onSave: () async {
+                                await _saveName(viewModel, user);
+                              },
+                              onCancel: () {
+                                setState(() {
+                                  _isEditingName = false;
+                                  _nameController.text = user.name;
+                                });
+                              },
+                            ),
+                          ]
+                          // Read-only fields for other users
+                          else ...[
+                            _ReadOnlyField(
+                              label: 'Username',
+                              value: user.username,
+                            ),
+                            const SizedBox(height: 16),
+                            _ReadOnlyField(label: 'Name', value: user.name),
+                          ],
                           if (user.email != null) ...[
                             const SizedBox(height: 16),
                             Text(
@@ -761,6 +868,37 @@ class _EditableFieldState extends State<_EditableField> {
                   ),
                 ),
               ),
+      ],
+    );
+  }
+}
+
+class _ReadOnlyField extends StatelessWidget {
+  const _ReadOnlyField({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+              width: 1,
+            ),
+          ),
+          child: Text(value, style: Theme.of(context).textTheme.bodyLarge),
+        ),
       ],
     );
   }

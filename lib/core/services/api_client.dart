@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
@@ -398,8 +399,68 @@ class ApiClient {
   }
 
   /// Upload binary file to a gateway URL (e.g., DigitalOcean Spaces)
-  /// Supports optional progress callback.
+  /// Supports optional progress callback and automatic retry on connection errors.
   Future<http.StreamedResponse> uploadFileToGateway(
+    String gatewayUrl,
+    File file, {
+    String? contentType,
+    void Function(int sent, int total)? onProgress,
+    int maxRetries = 3,
+  }) async {
+    int attempt = 0;
+    Exception? lastError;
+
+    while (attempt < maxRetries) {
+      attempt++;
+      if (attempt > 1) {
+        print('   🔄 Retry attempt $attempt/$maxRetries...');
+        // Wait before retrying (exponential backoff)
+        await Future.delayed(Duration(seconds: attempt * 2));
+      }
+
+      try {
+        return await _performUpload(
+          gatewayUrl,
+          file,
+          contentType: contentType,
+          onProgress: onProgress,
+        );
+      } on SocketException catch (e) {
+        lastError = e;
+        final isConnectionReset =
+            e.message.contains('Connection reset') ||
+            e.message.contains('errno = 104');
+
+        if (isConnectionReset && attempt < maxRetries) {
+          print('   ⚠️ Connection reset detected, will retry...');
+          continue;
+        }
+        rethrow;
+      } on http.ClientException catch (e) {
+        lastError = e;
+        final isConnectionReset =
+            e.message.contains('Connection reset') ||
+            e.toString().contains('Connection reset');
+
+        if (isConnectionReset && attempt < maxRetries) {
+          print('   ⚠️ Connection reset detected, will retry...');
+          continue;
+        }
+        rethrow;
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        if (attempt < maxRetries) {
+          print('   ⚠️ Upload error: $e, will retry...');
+          continue;
+        }
+        rethrow;
+      }
+    }
+
+    throw lastError ?? Exception('Upload failed after $maxRetries attempts');
+  }
+
+  Future<http.StreamedResponse> _performUpload(
     String gatewayUrl,
     File file, {
     String? contentType,
@@ -417,6 +478,9 @@ class ApiClient {
       request.headers['Content-Type'] = contentType;
     }
     request.headers['Content-Length'] = total.toString();
+    // Add x-amz-acl header if it's in the signed headers (required by DigitalOcean Spaces)
+    // The signed URL includes this in X-Amz-SignedHeaders, so we must include it
+    request.headers['x-amz-acl'] = 'public-read';
 
     // Stream file by chunks and report progress
     const int chunkSize = 64 * 1024; // 64KiB
@@ -477,15 +541,31 @@ class ApiClient {
       print('   📂 File handle closed');
     }
 
-    // Wait for the response
+    // Wait for the response with timeout
     print('   ⏳ Waiting for upload response...');
-    final streamedResponse = await responseFuture;
-    developer.log(
-      'PUT (binary) $gatewayUrl - Status: ${streamedResponse.statusCode}',
-      name: 'hiffi.api',
-    );
-    print('   ✅ Upload Response: ${streamedResponse.statusCode}');
-    return streamedResponse;
+    try {
+      final streamedResponse = await responseFuture.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          throw TimeoutException(
+            'Upload response timeout after 5 minutes',
+            const Duration(minutes: 5),
+          );
+        },
+      );
+      developer.log(
+        'PUT (binary) $gatewayUrl - Status: ${streamedResponse.statusCode}',
+        name: 'hiffi.api',
+      );
+      print('   ✅ Upload Response: ${streamedResponse.statusCode}');
+      return streamedResponse;
+    } on TimeoutException catch (e) {
+      print('   ❌ Upload response timeout: $e');
+      rethrow;
+    } catch (e) {
+      print('   ❌ Error waiting for upload response: $e');
+      rethrow;
+    }
   }
 
   void dispose() {

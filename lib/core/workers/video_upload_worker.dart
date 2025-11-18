@@ -32,14 +32,26 @@ void callbackDispatcher() {
       );
       print('✅ Firebase initialized in worker');
 
-      final notificationService = NotificationService();
-      await notificationService.initialize();
-      print('✅ Notification service initialized');
+      // Initialize notification service - this may fail in background workers
+      // but we continue anyway as notifications are optional
+      NotificationService? notificationService;
+      try {
+        notificationService = NotificationService();
+        // Skip permission request in background worker (no Activity context)
+        await notificationService.initialize(skipPermissionRequest: true);
+        print('✅ Notification service initialized');
+      } catch (e) {
+        // Notification initialization failed, but we continue with upload
+        print(
+          '⚠️ Notification service initialization failed (non-critical): $e',
+        );
+        print('   Continuing with upload anyway...');
+      }
 
       final payload = VideoUploadPayload.fromMap(inputData);
       if (payload == null) {
         print('❌ Payload is null or invalid');
-        await notificationService.showCompletion(
+        await notificationService?.showCompletion(
           taskId: 'unknown',
           title: 'Video upload failed',
           body: 'Payload was missing',
@@ -61,7 +73,7 @@ void callbackDispatcher() {
       const totalStages = 4;
 
       print('📢 Showing initial notification...');
-      await notificationService.showProgress(
+      await notificationService?.showProgress(
         taskId: payload.taskId,
         title: 'Uploading video',
         body: 'Preparing upload...',
@@ -83,7 +95,7 @@ void callbackDispatcher() {
           };
 
           print('📊 Stage update: $stage - $statusText');
-          await notificationService.showProgress(
+          await notificationService?.showProgress(
             taskId: payload.taskId,
             title: 'Uploading video',
             body: statusText,
@@ -96,7 +108,7 @@ void callbackDispatcher() {
           final percent = total > 0
               ? ((sent / total) * 100).clamp(0, 100).toInt()
               : 0;
-          await notificationService.showProgress(
+          await notificationService?.showProgress(
             taskId: payload.taskId,
             title: 'Uploading video',
             body: 'Uploading video file... $percent%',
@@ -108,7 +120,7 @@ void callbackDispatcher() {
 
       print('✅ Upload service completed: success=${result.success}');
       print('📢 Showing completion notification...');
-      await notificationService.showCompletion(
+      await notificationService?.showCompletion(
         taskId: payload.taskId,
         title: result.success ? 'Video uploaded' : 'Video upload failed',
         body: result.message,
@@ -151,7 +163,8 @@ void callbackDispatcher() {
 
       try {
         final notificationService = NotificationService();
-        await notificationService.initialize();
+        // Skip permission request in background worker (no Activity context)
+        await notificationService.initialize(skipPermissionRequest: true);
         final taskId = inputData?['taskId'] as String? ?? 'unknown';
         await notificationService.showCompletion(
           taskId: taskId,

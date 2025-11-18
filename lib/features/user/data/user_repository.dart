@@ -20,6 +20,8 @@ abstract class UserRepository {
     String? name,
   });
   Future<void> deleteUser(String username);
+  Future<void> followUser(String username);
+  Future<void> unfollowUser(String username);
 }
 
 class ApiUserRepository implements UserRepository {
@@ -311,6 +313,84 @@ class ApiUserRepository implements UserRepository {
         rethrow;
       }
       throw ApiException('Failed to delete user: $error', null);
+    }
+  }
+
+  @override
+  Future<void> followUser(String username) async {
+    developer.log('Following user: $username', name: 'hiffi.user');
+    print('👥 Following user: $username');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.followUser(username),
+        {},
+        requiresAuth: true,
+      );
+
+      developer.log(
+        'Follow user response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200) {
+        print('   ✅ User followed successfully');
+      } else {
+        final errorMessage = 'Failed to follow user: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        throw ApiException(errorMessage, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to follow user: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error following user: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException('Failed to follow user: $error', null);
+    }
+  }
+
+  @override
+  Future<void> unfollowUser(String username) async {
+    developer.log('Unfollowing user: $username', name: 'hiffi.user');
+    print('👥 Unfollowing user: $username');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.unfollowUser(username),
+        {},
+        requiresAuth: true,
+      );
+
+      developer.log(
+        'Unfollow user response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200) {
+        print('   ✅ User unfollowed successfully');
+      } else {
+        final errorMessage = 'Failed to unfollow user: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        throw ApiException(errorMessage, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to unfollow user: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error unfollowing user: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException('Failed to unfollow user: $error', null);
     }
   }
 }

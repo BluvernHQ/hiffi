@@ -14,4 +14,21 @@ class ApiConstants {
   static String uploadVideoAck(String bridgeId) =>
       '/videos/upload/ack/$bridgeId';
   static const String videoList = '/videos/list';
+  static String getVideoUrl(String videoUrl) => '/$videoUrl';
+
+  // Social endpoints
+  static String upvoteVideo(String videoId) => '/social/videos/upvote/$videoId';
+  static String downvoteVideo(String videoId) =>
+      '/social/videos/downvote/$videoId';
+  static String postComment(String videoId) =>
+      '/social/videos/comment/$videoId';
+  static String getComments(String videoId) =>
+      '/social/videos/comments/$videoId';
+  static String postReply(String commentId) =>
+      '/social/videos/reply/$commentId';
+  static String getReplies(String commentId) =>
+      '/social/videos/replies/$commentId';
+  static String followUser(String username) => '/social/users/follow/$username';
+  static String unfollowUser(String username) =>
+      '/social/users/unfollow/$username';
 }
