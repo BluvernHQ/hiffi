@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/auth_repository.dart';
 import '../viewmodels/auth_view_model.dart';
+import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 
 class AuthPage extends StatefulWidget {
@@ -19,6 +22,7 @@ class _AuthPageState extends State<AuthPage> {
   // Create form keys locally to avoid GlobalKey conflicts
   final _signInFormKey = GlobalKey<FormState>();
   final _signUpFormKey = GlobalKey<FormState>();
+  StreamSubscription? _authSubscription;
 
   @override
   void initState() {
@@ -26,6 +30,27 @@ class _AuthPageState extends State<AuthPage> {
     // Set mode after build to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AuthViewModel>().setMode(widget.initialMode);
+      _setupAuthListener();
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _setupAuthListener() {
+    final authRepository = context.read<AuthRepository>();
+    _authSubscription = authRepository.authStateChanges().listen((user) {
+      if (mounted && user != null) {
+        // User just logged in, navigate to home
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            context.go('/home');
+          }
+        });
+      }
     });
   }
 
@@ -38,6 +63,21 @@ class _AuthPageState extends State<AuthPage> {
         widget.initialMode == AuthMode.signIn;
 
     return Scaffold(
+      appBar: isSignIn
+          ? AppBar(
+              actions: [
+                TextButton(
+                  onPressed: viewModel.isLoading
+                      ? null
+                      : () {
+                          FocusScope.of(context).unfocus();
+                          context.go('/home');
+                        },
+                  child: const Text('Skip'),
+                ),
+              ],
+            )
+          : null,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -57,7 +97,7 @@ class _AuthPageState extends State<AuthPage> {
                     const SizedBox(height: 8),
                     Text(
                       isSignIn
-                          ? 'Sign in with your email or username.'
+                          ? 'Sign in with your username.'
                           : 'Create an account to start using hiffi.',
                       style: theme.textTheme.bodyLarge,
                     ),
@@ -85,20 +125,16 @@ class _AuthPageState extends State<AuthPage> {
                         children: [
                           if (isSignIn) ...[
                             TextFormField(
-                              controller: viewModel.identifierController,
+                              controller: viewModel.usernameController,
                               decoration: const InputDecoration(
-                                labelText: 'Email address',
+                                labelText: 'Username',
                               ),
-                              keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
-                              autofillHints: const [AutofillHints.email],
+                              autofillHints: const [AutofillHints.username],
                               validator: (value) {
-                                final email = value?.trim() ?? '';
-                                if (email.isEmpty) {
-                                  return 'Please enter your email.';
-                                }
-                                if (!email.contains('@')) {
-                                  return 'Please enter a valid email address.';
+                                final username = value?.trim() ?? '';
+                                if (username.isEmpty) {
+                                  return 'Please enter your username.';
                                 }
                                 return null;
                               },
@@ -136,32 +172,15 @@ class _AuthPageState extends State<AuthPage> {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Please enter your name.';
                                 }
+                                if (value.trim().length >= 30) {
+                                  return 'Name must be less than 30 characters.';
+                                }
                                 return null;
                               },
                             ),
                             const SizedBox(height: 12),
                             _UsernameField(
-                              controller: viewModel.usernameController,
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              controller: viewModel.emailController,
-                              decoration: const InputDecoration(
-                                labelText: 'Email address',
-                              ),
-                              keyboardType: TextInputType.emailAddress,
-                              textInputAction: TextInputAction.next,
-                              autofillHints: const [AutofillHints.email],
-                              validator: (value) {
-                                final email = value?.trim() ?? '';
-                                if (email.isEmpty) {
-                                  return 'Please enter your email.';
-                                }
-                                if (!email.contains('@')) {
-                                  return 'Enter a valid email.';
-                                }
-                                return null;
-                              },
+                              controller: viewModel.signUpUsernameController,
                             ),
                             const SizedBox(height: 12),
                             TextFormField(
@@ -205,13 +224,7 @@ class _AuthPageState extends State<AuthPage> {
                                 viewModel.submit(formKey: formKey);
                               },
                         child: viewModel.isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
+                            ? const InlineShimmer(width: 20, height: 20)
                             : Text(isSignIn ? 'Sign in' : 'Create account'),
                       ),
                     ),
@@ -273,15 +286,27 @@ class _UsernameFieldState extends State<_UsernameField> {
       return;
     }
 
-    if (!RegExp(r'^[a-zA-Z0-9_]{3,}$').hasMatch(username.trim())) {
+    // Backend regex: ^[a-z0-9_]{3,30}$ - lowercase only, 3-30 chars
+    final trimmedUsername = username.trim().toLowerCase();
+    if (!RegExp(r'^[a-z0-9_]{3,30}$').hasMatch(trimmedUsername)) {
       setState(() {
-        _validationError = 'Use at least 3 letters, numbers, or underscores.';
+        if (trimmedUsername.length < 3) {
+          _validationError = 'Username must be at least 3 characters.';
+        } else if (trimmedUsername.length > 30) {
+          _validationError = 'Username must be 30 characters or less.';
+        } else {
+          _validationError =
+              'Username can only contain lowercase letters, numbers, and underscores.';
+        }
       });
       return;
     }
 
     final userViewModel = context.read<UserViewModel>();
-    final available = await userViewModel.checkUsernameAvailability(username);
+    // Backend requires lowercase usernames
+    final available = await userViewModel.checkUsernameAvailability(
+      username.toLowerCase(),
+    );
 
     if (mounted) {
       setState(() {
@@ -319,14 +344,15 @@ class _UsernameFieldState extends State<_UsernameField> {
           controller: widget.controller,
           decoration: InputDecoration(
             labelText: 'Username',
-            helperText: 'Letters, numbers, or underscores only.',
+            helperText:
+                '3-30 characters, lowercase letters, numbers, and underscores only.',
             suffixIcon: isChecking
                 ? const SizedBox(
                     width: 20,
                     height: 20,
-                    child: Padding(
+                    child: const Padding(
                       padding: EdgeInsets.all(12),
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: InlineShimmer(width: 20, height: 20),
                     ),
                   )
                 : isAvailable == true
@@ -341,14 +367,35 @@ class _UsernameFieldState extends State<_UsernameField> {
           ),
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.username],
+          inputFormatters: [
+            // Convert to lowercase and allow only valid characters (backend requires lowercase)
+            FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_]')),
+            TextInputFormatter.withFunction((oldValue, newValue) {
+              // Convert to lowercase
+              final lowercaseText = newValue.text.toLowerCase();
+              return TextEditingValue(
+                text: lowercaseText,
+                selection: newValue.selection,
+              );
+            }),
+            LengthLimitingTextInputFormatter(30),
+          ],
           onChanged: _onUsernameChanged,
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
               return 'Please choose a username.';
             }
-            if (!RegExp(r'^[a-zA-Z0-9_]{3,}$').hasMatch(trimmed)) {
-              return 'Use at least 3 letters, numbers, or underscores.';
+            // Backend regex: ^[a-z0-9_]{3,30}$ - lowercase only, 3-30 chars
+            final lowercaseTrimmed = trimmed.toLowerCase();
+            if (lowercaseTrimmed.length < 3) {
+              return 'Username must be at least 3 characters.';
+            }
+            if (lowercaseTrimmed.length > 30) {
+              return 'Username must be 30 characters or less.';
+            }
+            if (!RegExp(r'^[a-z0-9_]{3,30}$').hasMatch(lowercaseTrimmed)) {
+              return 'Username can only contain lowercase letters, numbers, and underscores.';
             }
             if (_validationError != null) {
               return _validationError;

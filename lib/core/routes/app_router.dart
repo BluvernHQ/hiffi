@@ -10,20 +10,24 @@ import '../../features/auth/presentation/views/auth_page.dart';
 import '../../features/home/presentation/views/home_page.dart';
 
 import '../../features/upload/presentation/views/video_upload_page.dart';
+import '../../features/user/presentation/views/become_creator_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
 
 class AppRouter {
   AppRouter({required AuthRepository authRepository})
-    : _authRepository = authRepository {
+    : _authRepository = authRepository,
+      _navigatorKey = GlobalKey<NavigatorState>() {
     _refreshListenable = RouterRefreshStream(
       _authRepository.authStateChanges(),
     );
 
     router = GoRouter(
+      navigatorKey: _navigatorKey,
       initialLocation: '/login',
       refreshListenable: _refreshListenable,
+      debugLogDiagnostics: true,
       routes: [
         GoRoute(
           path: '/login',
@@ -40,6 +44,10 @@ class AppRouter {
         GoRoute(
           path: '/upload/video',
           builder: (context, state) => const VideoUploadPage(),
+        ),
+        GoRoute(
+          path: '/become-creator',
+          builder: (context, state) => const BecomeCreatorPage(),
         ),
         GoRoute(
           path: '/users/:username',
@@ -69,25 +77,31 @@ class AppRouter {
           return state.uri.path == '/login' ? null : '/login';
         }
 
+        // Wait a tiny bit to ensure auth state is updated
+        await Future.delayed(const Duration(milliseconds: 100));
+
         final isLoggedIn = _authRepository.currentUser != null;
         final loggingIn = state.uri.path == '/login';
         final signingUp = state.uri.path == '/signup';
         final uploading =
             state.uri.path == '/upload' || state.uri.path == '/upload/video';
         final onProfile = state.uri.path.startsWith('/users/');
+        final onHome = state.uri.path == '/home';
+        final onVideo = state.uri.path.startsWith('/video/');
 
         if (!isLoggedIn) {
-          // Allow access to upload pages for testing without authentication
-          return (loggingIn || signingUp || uploading) ? null : '/login';
+          // Allow access to home, video player, upload pages, and auth pages without authentication
+          // Profile pages require authentication - redirect to login
+          if (onProfile) {
+            return '/login';
+          }
+          return (loggingIn || signingUp || uploading || onHome || onVideo)
+              ? null
+              : '/login';
         }
 
-        // If already on profile page, don't redirect
-        if (onProfile) {
-          return null;
-        }
-
+        // If logged in and on login/signup page, redirect to home
         if (loggingIn || signingUp) {
-          // Redirect to home page - it will show profile if username is available
           return '/home';
         }
 
@@ -99,6 +113,9 @@ class AppRouter {
   late final GoRouter router;
   late final RouterRefreshStream _refreshListenable;
   final AuthRepository _authRepository;
+  final GlobalKey<NavigatorState> _navigatorKey;
+
+  GlobalKey<NavigatorState> get navigatorKey => _navigatorKey;
 
   void dispose() {
     _refreshListenable.dispose();
@@ -116,8 +133,20 @@ class AppRouter {
 
 class RouterRefreshStream extends ChangeNotifier {
   RouterRefreshStream(Stream<dynamic> stream) {
-    _subscription = stream.listen((_) {
+    _subscription = stream.listen((user) {
+      print(
+        '🔄 Auth state changed: ${user != null ? "logged in" : "logged out"}',
+      );
+      // Notify listeners immediately to trigger router refresh
       notifyListeners();
+      // Also schedule multiple notifications to ensure router processes the change
+      Future.microtask(() {
+        notifyListeners();
+      });
+      // Additional delayed notification to catch any race conditions
+      Future.delayed(const Duration(milliseconds: 200), () {
+        notifyListeners();
+      });
     });
   }
 

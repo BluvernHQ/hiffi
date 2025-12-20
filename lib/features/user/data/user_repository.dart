@@ -18,6 +18,9 @@ abstract class UserRepository {
     required String currentUsername,
     String? newUsername,
     String? name,
+    String? email,
+    String? bio,
+    String? role,
   });
   Future<void> deleteUser(String username);
   Future<void> followUser(String username);
@@ -50,11 +53,22 @@ class ApiUserRepository implements UserRepository {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
-        final available = body['available'] as bool? ?? false;
-        print(
-          '   ✅ Username $username is ${available ? "available" : "taken"}',
-        );
-        return available;
+        // API returns: {"success": true, "data": {"available": true/false, "username": "..."}}
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final available = data?['available'] as bool? ?? false;
+          print(
+            '   ✅ Username $username is ${available ? "available" : "taken"}',
+          );
+          return available;
+        } else {
+          // Fallback: check for 'available' field directly (if no data wrapper)
+          final available = body['available'] as bool? ?? false;
+          print(
+            '   ✅ Username $username is ${available ? "available" : "taken"}',
+          );
+          return available;
+        }
       } else {
         print('   ⚠️ Unexpected status code: ${response.statusCode}');
         // If API returns non-200, assume username is taken for safety
@@ -77,47 +91,12 @@ class ApiUserRepository implements UserRepository {
     required String username,
     required String name,
   }) async {
-    developer.log(
-      'Creating user: username=$username, name=$name',
-      name: 'hiffi.user',
+    // Note: Users are now created via /auth/register endpoint
+    // This method is kept for backward compatibility but may not be used
+    throw ApiException(
+      'User creation is handled via /auth/register endpoint. Use authentication registration instead.',
+      400,
     );
-    print('👤 Creating user: $username');
-
-    try {
-      final response = await _apiClient.post(ApiConstants.createUser, {
-        'username': username,
-        'name': name,
-      }, requiresAuth: true);
-
-      developer.log(
-        'Create user response: ${response.statusCode}',
-        name: 'hiffi.user',
-      );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        final user = UserModel.fromJson(body);
-        print('   ✅ User created successfully');
-        print('   📄 User data: ${user.toJson()}');
-        return user;
-      } else {
-        final errorMessage = 'Failed to create user: ${response.statusCode}';
-        developer.log(errorMessage, name: 'hiffi.user');
-        print('   ❌ $errorMessage');
-        throw ApiException(errorMessage, response.statusCode);
-      }
-    } catch (error) {
-      developer.log(
-        'Failed to create user: $error',
-        name: 'hiffi.user',
-        error: error,
-      );
-      print('   ❌ Error creating user: $error');
-      if (error is ApiException) {
-        rethrow;
-      }
-      throw ApiException('Failed to create user: $error', null);
-    }
   }
 
   @override
@@ -138,7 +117,25 @@ class ApiUserRepository implements UserRepository {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
-        // Handle nested response structure: {"success": true, "user": {...}}
+        // API returns: {"success": true, "data": {"user": {...}}}
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+          if (userData != null) {
+            final user = UserModel.fromJson({'user': userData});
+            print('   ✅ Current user retrieved successfully');
+            print('   📄 User data: ${user.toJson()}');
+            return user;
+          }
+        }
+        // Fallback: try parsing with status: success structure
+        if (body['status'] == 'success' && body['user'] != null) {
+          final user = UserModel.fromJson(body);
+          print('   ✅ Current user retrieved successfully');
+          print('   📄 User data: ${user.toJson()}');
+          return user;
+        }
+        // Final fallback: try parsing user directly
         final user = UserModel.fromJson(body);
         print('   ✅ Current user retrieved successfully');
         print('   📄 User data: ${user.toJson()}');
@@ -182,6 +179,34 @@ class ApiUserRepository implements UserRepository {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
+        // API returns: {"success": true, "data": {"following": true, "user": {...}}}
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+          if (userData != null) {
+            // Extract following status from data level
+            final following = data?['following'] as bool?;
+
+            // Add following status to user data for parsing
+            final userDataWithFollowing = Map<String, dynamic>.from(userData);
+            if (following != null) {
+              userDataWithFollowing['is_following'] = following;
+            }
+
+            final user = UserModel.fromJson({'user': userDataWithFollowing});
+            print('   ✅ User retrieved successfully');
+            print('   📄 User data: ${user.toJson()}');
+            return user;
+          }
+        }
+        // Fallback: try parsing with status: success structure
+        if (body['status'] == 'success' && body['user'] != null) {
+          final user = UserModel.fromJson(body);
+          print('   ✅ User retrieved successfully');
+          print('   📄 User data: ${user.toJson()}');
+          return user;
+        }
+        // Final fallback: try parsing user directly
         final user = UserModel.fromJson(body);
         print('   ✅ User retrieved successfully');
         print('   📄 User data: ${user.toJson()}');
@@ -211,38 +236,42 @@ class ApiUserRepository implements UserRepository {
     required String currentUsername,
     String? newUsername,
     String? name,
+    String? email,
+    String? bio,
+    String? role,
   }) async {
     developer.log(
-      'Updating user: currentUsername=$currentUsername, newUsername=$newUsername, name=$name',
+      'Updating user: name=$name, email=$email, bio=$bio',
       name: 'hiffi.user',
     );
-    print('✏️ Updating user: $currentUsername');
+    print('✏️ Updating user profile');
 
     try {
-      // If username is being changed, check availability first
-      if (newUsername != null &&
-          newUsername.isNotEmpty &&
-          newUsername != currentUsername) {
-        print('   🔍 Checking username availability: $newUsername');
-        final isAvailable = await checkUsernameAvailability(newUsername);
-        if (!isAvailable) {
-          throw ApiException('Username "$newUsername" is already taken', 400);
-        }
-        print('   ✅ Username "$newUsername" is available');
+      // Note: Username cannot be updated via the API (per USERS_API.md)
+      if (newUsername != null && newUsername.isNotEmpty) {
+        throw ApiException(
+          'Username cannot be updated. This feature is not supported.',
+          400,
+        );
       }
 
       final body = <String, dynamic>{};
       if (name != null && name.isNotEmpty) {
         body['name'] = name;
       }
-      if (newUsername != null &&
-          newUsername.isNotEmpty &&
-          newUsername != currentUsername) {
-        body['username'] = newUsername;
+      if (email != null) {
+        body['email'] = email;
+      }
+      if (bio != null) {
+        body['bio'] = bio;
+      }
+      if (role != null && role.isNotEmpty) {
+        body['role'] = role;
       }
 
+      // Use /users/self endpoint (user identified by JWT token)
       final response = await _apiClient.put(
-        ApiConstants.updateUser(currentUsername),
+        ApiConstants.updateUser,
         body,
         requiresAuth: true,
       );
@@ -254,6 +283,26 @@ class ApiUserRepository implements UserRepository {
 
       if (response.statusCode == 200) {
         final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+        // API returns: {"success": true, "data": {"user": {...}}}
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+          if (userData != null) {
+            final user = UserModel.fromJson({'user': userData});
+            print('   ✅ User updated successfully');
+            print('   📄 Updated user data: ${user.toJson()}');
+            return user;
+          }
+        }
+        // Fallback: try parsing with status: success structure
+        if (responseBody['status'] == 'success' &&
+            responseBody['user'] != null) {
+          final user = UserModel.fromJson(responseBody);
+          print('   ✅ User updated successfully');
+          print('   📄 Updated user data: ${user.toJson()}');
+          return user;
+        }
+        // Final fallback: try parsing user directly
         final user = UserModel.fromJson(responseBody);
         print('   ✅ User updated successfully');
         print('   📄 Updated user data: ${user.toJson()}');
@@ -334,12 +383,21 @@ class ApiUserRepository implements UserRepository {
       );
 
       if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+        // API returns: {"success": true, "data": {"message": "Followed successfully"}}
+        if (json['success'] != true) {
+          final error = json['error'] as String? ?? 'Failed to follow user';
+          throw ApiException(error, response.statusCode);
+        }
+
         print('   ✅ User followed successfully');
       } else {
-        final errorMessage = 'Failed to follow user: ${response.statusCode}';
-        developer.log(errorMessage, name: 'hiffi.user');
-        print('   ❌ $errorMessage');
-        throw ApiException(errorMessage, response.statusCode);
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final error = json['error'] as String? ?? 'Failed to follow user';
+        developer.log(error, name: 'hiffi.user');
+        print('   ❌ $error');
+        throw ApiException(error, response.statusCode);
       }
     } catch (error) {
       developer.log(
@@ -373,12 +431,21 @@ class ApiUserRepository implements UserRepository {
       );
 
       if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+        // API returns: {"success": true, "data": {"message": "Unfollowed successfully"}}
+        if (json['success'] != true) {
+          final error = json['error'] as String? ?? 'Failed to unfollow user';
+          throw ApiException(error, response.statusCode);
+        }
+
         print('   ✅ User unfollowed successfully');
       } else {
-        final errorMessage = 'Failed to unfollow user: ${response.statusCode}';
-        developer.log(errorMessage, name: 'hiffi.user');
-        print('   ❌ $errorMessage');
-        throw ApiException(errorMessage, response.statusCode);
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final error = json['error'] as String? ?? 'Failed to unfollow user';
+        developer.log(error, name: 'hiffi.user');
+        print('   ❌ $error');
+        throw ApiException(error, response.statusCode);
       }
     } catch (error) {
       developer.log(

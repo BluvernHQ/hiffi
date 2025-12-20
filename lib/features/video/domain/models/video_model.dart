@@ -15,6 +15,7 @@ class VideoModel {
     required this.createdAt,
     required this.updatedAt,
     this.userVoteStatus,
+    this.profilePicture,
   });
 
   final String videoId;
@@ -32,6 +33,7 @@ class VideoModel {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? userVoteStatus; // 'upvoted', 'downvoted', or null
+  final String? profilePicture; // Profile picture URL path from API
 
   factory VideoModel.fromJson(Map<String, dynamic> json) {
     return VideoModel(
@@ -54,6 +56,7 @@ class VideoModel {
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       userVoteStatus: json['user_vote_status'] as String?,
+      profilePicture: json['profile_picture'] as String?,
     );
   }
 
@@ -74,6 +77,7 @@ class VideoModel {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       if (userVoteStatus != null) 'user_vote_status': userVoteStatus,
+      if (profilePicture != null) 'profile_picture': profilePicture,
     };
   }
 }

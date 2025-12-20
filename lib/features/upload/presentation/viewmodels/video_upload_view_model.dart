@@ -1,16 +1,19 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../../../core/services/api_client.dart';
+import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/services/notification_service.dart';
+import '../../../../core/services/token_storage_service.dart';
+import '../../../../core/services/workmanager_service.dart';
 import '../../../../core/workers/video_upload_worker.dart';
 import '../../data/models/video_upload_payload.dart';
 import '../../domain/services/video_upload_service.dart';
@@ -21,16 +24,22 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   VideoUploadViewModel({
     required ApiClient apiClient,
     required NotificationService notificationService,
+    NetworkConnectivityService? networkConnectivityService,
   }) : _apiClient = apiClient,
-       _notificationService = notificationService {
+       _notificationService = notificationService,
+       _networkService =
+           networkConnectivityService ?? NetworkConnectivityService() {
     WidgetsBinding.instance.addObserver(this);
+    _initNetworkMonitoring();
   }
 
   final ApiClient _apiClient;
   final NotificationService _notificationService;
+  final NetworkConnectivityService _networkService;
 
   bool _isAppInForeground = true;
   ReceivePort? _receivePort;
+  StreamSubscription<bool>? _connectivitySubscription;
 
   // Form fields
   final TextEditingController titleController = TextEditingController();
@@ -104,22 +113,103 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Initialize network connectivity monitoring
+  void _initNetworkMonitoring() {
+    _connectivitySubscription = _networkService.connectivityStream.listen((
+      isConnected,
+    ) {
+      if (!isConnected && _isUploading && _currentTaskId != null) {
+        // Network lost during upload - cancel the task
+        developer.log(
+          'Network lost during upload, canceling task',
+          name: 'hiffi.video_upload',
+        );
+        _cancelUploadDueToNetwork();
+      }
+    });
+  }
+
+  /// Cancel upload due to network loss
+  Future<void> _cancelUploadDueToNetwork() async {
+    if (_currentTaskId != null) {
+      try {
+        await WorkManagerService.cancelTask(_currentTaskId!);
+        await _notificationService.showNetworkError(
+          taskId: _currentTaskId!,
+          title: 'Upload canceled',
+          body: 'No internet connection. Please try again later.',
+        );
+      } catch (e) {
+        developer.log(
+          'Error canceling upload due to network: $e',
+          name: 'hiffi.video_upload',
+        );
+      }
+    }
+    _currentTaskId = null;
+    _isQueued = false;
+    _isUploading = false;
+    _uploadStatus = UploadStatus.canceled;
+    _uploadProgress = 0;
+    _uploadTotal = 0;
+    _setError(
+      'Upload canceled: No internet connection. Please try again later.',
+    );
+    notifyListeners();
+  }
+
+  /// Check if there's an active upload (prevent duplicates)
+  bool _hasActiveUpload() {
+    return _isUploading || _isQueued || _currentTaskId != null;
+  }
+
   bool get canUpload =>
       titleController.text.trim().isNotEmpty &&
       descriptionController.text.trim().isNotEmpty &&
       _tags.isNotEmpty &&
       _selectedVideo != null &&
-      !_isUploading;
+      !_isUploading &&
+      !_hasActiveUpload();
 
   // Tag APIs
+  static const int maxTagLength = 30;
+  static const int maxTags = 20;
+
   void addTag(String raw) {
-    final tag = raw.trim();
-    if (tag.isEmpty) return;
-    if (_tags.contains(tag)) return;
-    _tags.add(tag);
+    // Support comma and semicolon-separated tags
+    final tagsToAdd = raw
+        .split(RegExp(r'[,;]'))
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+
+    for (final tag in tagsToAdd) {
+      // Stop if we've reached max tags
+      if (_tags.length >= maxTags) break;
+
+      // Normalize tag: trim
+      final normalizedTag = tag.trim();
+      if (normalizedTag.isEmpty) continue;
+
+      // Limit tag length (trim if too long)
+      final finalTag = normalizedTag.length > maxTagLength
+          ? normalizedTag.substring(0, maxTagLength)
+          : normalizedTag;
+
+      // Check for duplicates (case-insensitive)
+      final exists = _tags.any(
+        (existing) => existing.toLowerCase() == finalTag.toLowerCase(),
+      );
+      if (exists) continue;
+
+      _tags.add(finalTag);
+    }
+
     tagInputController.clear();
     notifyListeners();
   }
+
+  bool get canAddMoreTags => _tags.length < maxTags;
 
   void removeTag(String tag) {
     _tags.remove(tag);
@@ -146,6 +236,16 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         _selectedThumbnail =
             null; // Reset custom thumbnail when new video is selected
         _videoThumbnail = null; // Clear old thumbnail
+
+        // Extract filename and set as default title (user can change it)
+        final filePath = result.files.single.path!;
+        final fileName = filePath.split('/').last;
+        // Remove file extension
+        final titleWithoutExtension = fileName.contains('.')
+            ? fileName.substring(0, fileName.lastIndexOf('.'))
+            : fileName;
+        titleController.text = titleWithoutExtension;
+
         notifyListeners();
 
         // Generate thumbnail from video
@@ -225,6 +325,23 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       return false;
     }
 
+    // Check for duplicate uploads
+    if (_hasActiveUpload()) {
+      _setError(
+        'An upload is already in progress. Please wait for it to complete.',
+      );
+      return false;
+    }
+
+    // Check network connectivity before starting upload
+    final isConnected = await _networkService.checkConnectivity();
+    if (!isConnected) {
+      _setError(
+        'No internet connection. Please check your network and try again.',
+      );
+      return false;
+    }
+
     _setError(null);
     _setSuccess(null);
     _setUploading(true);
@@ -235,8 +352,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      final token = await user?.getIdToken();
+      final token = await TokenStorageService.getToken();
       if (token == null || token.isEmpty) {
         _setUploading(false);
         _setError('Authentication required to upload.');
@@ -272,10 +388,19 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       // Initialize notification service
       await _notificationService.initialize();
 
+      // Show upload started notification
+      await _notificationService.showUploadStarted(
+        taskId: taskId,
+        title: 'Upload started',
+        body: 'Preparing to upload video...',
+      );
+
       // Set up listener for background worker updates (for WorkManager fallback)
       _ensureReceivePort();
 
       // Register with WorkManager as backup (in case app terminates)
+      // We'll cancel it immediately if foreground upload starts successfully
+      String? workManagerTaskId;
       try {
         await Workmanager().registerOneOffTask(
           taskId,
@@ -284,6 +409,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
           constraints: Constraints(networkType: NetworkType.connected),
           inputData: payload.toMap(),
         );
+        workManagerTaskId = taskId;
         developer.log(
           'WorkManager backup registered: $taskId',
           name: 'hiffi.video_upload',
@@ -307,6 +433,22 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         name: 'hiffi.video_upload',
       );
       print('🚀 Starting immediate foreground upload: $taskId');
+
+      // Cancel WorkManager task immediately since we're handling upload in foreground
+      // This prevents duplicate uploads from running in parallel
+      if (workManagerTaskId != null) {
+        try {
+          await Workmanager().cancelByUniqueName(workManagerTaskId);
+          print(
+            '📋 Cancelled WorkManager backup task (foreground upload active)',
+          );
+        } catch (e) {
+          developer.log(
+            'Failed to cancel WorkManager task (non-critical): $e',
+            name: 'hiffi.video_upload',
+          );
+        }
+      }
 
       final service = VideoUploadService(apiClient: _apiClient);
       final result = await service.uploadVideo(
@@ -373,13 +515,8 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       );
 
       if (result.success) {
-        // Cancel WorkManager task since we completed successfully in foreground
-        try {
-          await Workmanager().cancelByUniqueName(taskId);
-          print('📋 Cancelled WorkManager backup task (upload completed)');
-        } catch (e) {
-          // Ignore cancellation errors
-        }
+        // WorkManager task was already cancelled when foreground upload started
+        // No need to cancel again
 
         // Show completion notification only if app is backgrounded
         if (!_isAppInForeground) {
@@ -397,10 +534,25 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         _resetFormFields();
         print('🎉 Video upload completed successfully!');
       } else {
-        // Don't cancel WorkManager if foreground upload failed - let it retry in background
-        print(
-          '⚠️ Foreground upload failed, WorkManager backup will handle retry',
-        );
+        // Foreground upload failed - re-register WorkManager task to handle retry
+        // Only if it was cancelled earlier
+        try {
+          await Workmanager().registerOneOffTask(
+            taskId,
+            videoUploadTaskName,
+            existingWorkPolicy: ExistingWorkPolicy.replace,
+            constraints: Constraints(networkType: NetworkType.connected),
+            inputData: payload.toMap(),
+          );
+          print(
+            '⚠️ Foreground upload failed, WorkManager backup re-registered for retry',
+          );
+        } catch (e) {
+          developer.log(
+            'Failed to re-register WorkManager backup: $e',
+            name: 'hiffi.video_upload',
+          );
+        }
 
         // Show error notification only if app is backgrounded
         if (!_isAppInForeground) {
@@ -430,10 +582,16 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       _isQueued = false;
       _setError('Failed to start upload: $error');
 
-      // Don't cancel WorkManager - let it handle the upload as fallback
-      print(
-        '⚠️ Foreground upload exception, WorkManager backup will handle upload',
-      );
+      // If we have a taskId, we might have registered WorkManager - try to cancel it
+      // If the exception happened before payload creation, there's nothing to re-register
+      if (_currentTaskId != null) {
+        try {
+          // Try to cancel any existing WorkManager task
+          await Workmanager().cancelByUniqueName(_currentTaskId!);
+        } catch (e) {
+          // Ignore cancellation errors
+        }
+      }
 
       // Only show notification if app is backgrounded
       if (_currentTaskId != null && !_isAppInForeground) {
@@ -577,6 +735,8 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
+    _networkService.dispose();
     _receivePort?.close();
     ui.IsolateNameServer.removePortNameMapping(videoUploadPortName);
     titleController.dispose();

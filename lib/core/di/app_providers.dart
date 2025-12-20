@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
 
@@ -19,15 +18,14 @@ import '../services/notification_service.dart';
 
 List<SingleChildWidget> buildAppProviders() {
   return [
-    Provider<FirebaseAuth>.value(value: FirebaseAuth.instance),
+    Provider<ApiClient>(
+      create: (context) => ApiClient(),
+      dispose: (_, client) => client.dispose(),
+    ),
     Provider<AuthRepository>(
       create: (context) =>
-          FirebaseAuthRepository(auth: context.read<FirebaseAuth>()),
-    ),
-    Provider<ApiClient>(
-      create: (context) =>
-          ApiClient(firebaseAuth: context.read<FirebaseAuth>()),
-      dispose: (_, client) => client.dispose(),
+          BackendAuthRepository(apiClient: context.read<ApiClient>()),
+      dispose: (_, repo) => (repo as BackendAuthRepository).dispose(),
     ),
     Provider<UserRepository>(
       create: (context) =>

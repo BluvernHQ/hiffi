@@ -56,16 +56,93 @@ class VideoUploadService {
         );
       }
 
-      final bridgeJson =
-          _decodeJson(bridgeResponse.body) as Map<String, dynamic>? ?? {};
+      final responseBody = bridgeResponse.body;
+      print('   📋 Bridge response body length: ${responseBody.length} chars');
+
+      // Print full response for debugging (first 1000 chars)
+      print(
+        '   📋 Full response (first 1000 chars): ${responseBody.length > 1000 ? responseBody.substring(0, 1000) + "..." : responseBody}',
+      );
+
+      // Check if response looks truncated (doesn't end with } or ")
+      if (!responseBody.trim().endsWith('}') &&
+          !responseBody.trim().endsWith('"')) {
+        print(
+          '   ⚠️ WARNING: Response body might be truncated (does not end properly)',
+        );
+        print(
+          '   📋 Response ends with: ${responseBody.substring(responseBody.length - 50)}',
+        );
+      }
+
+      final responseJson = _decodeJson(responseBody) as Map<String, dynamic>?;
+
+      if (responseJson == null) {
+        print('   ❌ Failed to decode bridge response JSON');
+        print('   📋 Full response body: $responseBody');
+        developer.log(
+          'Failed to decode bridge response JSON',
+          name: 'hiffi.video_upload_service',
+        );
+        return VideoUploadResult(
+          success: false,
+          message:
+              'Failed to parse upload bridge response JSON. Response may be truncated or malformed.',
+        );
+      }
+
+      print('   ✅ JSON decoded successfully');
+      print('   📋 Response JSON keys: ${responseJson.keys.toList()}');
+
+      // Handle nested data structure: { "success": true, "data": { "bridge_id": ..., ... } }
+      final dataObj = responseJson['data'];
+      print('   📋 Data object type: ${dataObj.runtimeType}');
+
+      final bridgeJson = dataObj is Map<String, dynamic>
+          ? dataObj
+          : responseJson; // Fallback to root if no 'data' key
+
+      print('   📋 Using bridge JSON keys: ${bridgeJson.keys.toList()}');
+
       final gatewayUrl = bridgeJson['gateway_url'] as String?;
       final gatewayThumbnail = bridgeJson['gateway_url_thumbnail'] as String?;
       final bridgeId = bridgeJson['bridge_id'] as String?;
 
+      print(
+        '   📋 Extracted: gatewayUrl=${gatewayUrl != null ? "✅ (${gatewayUrl.length} chars)" : "❌ null"}',
+      );
+      print(
+        '   📋 Extracted: gatewayThumbnail=${gatewayThumbnail != null ? "✅" : "❌ null"}',
+      );
+      print('   📋 Extracted: bridgeId=${bridgeId != null ? "✅" : "❌ null"}');
+
       if (gatewayUrl == null || bridgeId == null) {
+        print('');
+        print('❌ ============================================');
+        print('❌ PARSING FAILED - MISSING REQUIRED FIELDS');
+        print('❌ ============================================');
+        print('❌ gatewayUrl: ${gatewayUrl ?? "NULL"}');
+        print('❌ bridgeId: ${bridgeId ?? "NULL"}');
+        print('❌ gatewayThumbnail: ${gatewayThumbnail ?? "NULL"}');
+        print('❌ Available keys in bridgeJson: ${bridgeJson.keys.toList()}');
+        print('❌ Response JSON keys: ${responseJson.keys.toList()}');
+        print('❌ Data object is Map: ${dataObj is Map<String, dynamic>}');
+        print('❌ Response body length: ${responseBody.length}');
+        print(
+          '❌ Response body (first 500 chars): ${responseBody.length > 500 ? responseBody.substring(0, 500) + "..." : responseBody}',
+        );
+        print('❌ ============================================');
+        print('');
+        developer.log(
+          'Missing required fields in bridge response',
+          name: 'hiffi.video_upload_service',
+          error:
+              'gatewayUrl: $gatewayUrl, bridgeId: $bridgeId, keys: ${bridgeJson.keys}, responseKeys: ${responseJson.keys}',
+        );
         return VideoUploadResult(
           success: false,
-          message: 'Upload bridge response is missing required fields',
+          message:
+              'Upload bridge response is missing required fields (gateway_url or bridge_id). Check logs for details.',
         );
       }
 

@@ -1,12 +1,17 @@
 class ApiConstants {
-  static const String baseUrl = 'https://hiffi.alterwork.in/api';
+  static const String baseUrl = 'https://beta.hiffi.com/api';
+
+  // Auth endpoints
+  static const String authRegister = '/auth/register';
+  static const String authLogin = '/auth/login';
 
   // User endpoints
   static const String userAvailability = '/users/availability';
-  static const String createUser = '/users/create';
-  static const String getCurrentUser = '/users/self';
+  static const String updateUser =
+      '/users/self'; // Update current user (identified by JWT token)
+  static const String getCurrentUser =
+      '/users/self'; // Deprecated, but still works
   static String getUser(String username) => '/users/$username';
-  static String updateUser(String username) => '/users/$username';
   static String deleteUser(String username) => '/users/$username';
 
   // Video endpoints
@@ -14,7 +19,11 @@ class ApiConstants {
   static String uploadVideoAck(String bridgeId) =>
       '/videos/upload/ack/$bridgeId';
   static const String videoList = '/videos/list';
-  static String getVideoUrl(String videoUrl) => '/$videoUrl';
+  static const String videoListSelf = '/videos/list/self';
+  static String getVideo(String videoId) => '/videos/$videoId';
+  static String deleteVideo(String videoId) => '/videos/delete/$videoId';
+  static String listVideosByUsername(String username) =>
+      '/videos/list/$username';
 
   // Social endpoints
   static String upvoteVideo(String videoId) => '/social/videos/upvote/$videoId';

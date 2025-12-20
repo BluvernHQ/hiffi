@@ -18,15 +18,17 @@ class HomeViewModel extends ChangeNotifier {
     if (user == null) {
       return null;
     }
-    if (user.displayName != null && user.displayName!.isNotEmpty) {
-      return user.displayName;
+    if (user.name != null && user.name!.isNotEmpty) {
+      return user.name;
     }
-    return user.email;
+    return user.username;
   }
 
   String? get currentUsername => _authViewModel.currentUsername;
 
-  Future<void> signOut() {
-    return _authRepository.signOut();
+  Future<void> signOut() async {
+    await _authRepository.signOut();
+    // Clear username after sign out
+    _authViewModel.setCurrentUsername(null);
   }
 }

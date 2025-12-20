@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'core/di/app_providers.dart';
 import 'core/routes/app_router.dart';
+import 'core/services/in_app_notification_service.dart';
 
 class HiffiApp extends StatelessWidget {
   const HiffiApp({super.key});
@@ -20,6 +21,9 @@ class HiffiApp extends StatelessWidget {
             minTextAdapt: true,
             splitScreenMode: true,
             builder: (context, child) {
+              // Set navigator key for in-app notifications from router
+              InAppNotificationService.setNavigatorKey(appRouter.navigatorKey);
+
               return MaterialApp.router(
                 title: 'hiffi',
                 theme: ThemeData(

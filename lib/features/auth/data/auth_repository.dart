@@ -1,52 +1,125 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
+import 'dart:convert';
 
 import '../../../core/exceptions/auth_failure.dart';
+import '../../../core/services/token_storage_service.dart';
+import '../../../core/services/api_client.dart';
+import '../../../core/constants/api_constants.dart';
+import 'auth_user.dart';
 
 abstract class AuthRepository {
-  Stream<User?> authStateChanges();
-  User? get currentUser;
-  Future<void> signIn({required String email, required String password});
+  Stream<AuthUser?> authStateChanges();
+  AuthUser? get currentUser;
+  Future<void> signIn({required String username, required String password});
 
   Future<void> signUp({
     required String name,
     required String username,
-    required String email,
     required String password,
   });
 
   Future<void> signOut();
 }
 
-class FirebaseAuthRepository implements AuthRepository {
-  FirebaseAuthRepository({required FirebaseAuth auth}) : _auth = auth;
+class BackendAuthRepository implements AuthRepository {
+  BackendAuthRepository({required ApiClient apiClient})
+    : _apiClient = apiClient {
+    // Check if user is already logged in on initialization
+    _initializeAuthState();
+  }
 
-  final FirebaseAuth _auth;
+  final ApiClient _apiClient;
+  final StreamController<AuthUser?> _authStateController =
+      StreamController<AuthUser?>.broadcast();
+  AuthUser? _currentUser;
 
   @override
-  Stream<User?> authStateChanges() => _auth.authStateChanges();
+  Stream<AuthUser?> authStateChanges() => _authStateController.stream;
 
   @override
-  User? get currentUser => _auth.currentUser;
+  AuthUser? get currentUser => _currentUser;
+
+  Future<void> _initializeAuthState() async {
+    // Check if token exists and is valid by trying to get current user
+    final token = await TokenStorageService.getToken();
+    if (token != null && token.isNotEmpty) {
+      // Token exists, but we don't validate it here
+      // The app will validate it when making API calls
+      // For now, we'll consider user as logged in if token exists
+      // In a real implementation, you might want to decode the JWT to get user info
+      // or make a lightweight API call to validate the token
+      _currentUser = AuthUser(
+        uid: '',
+      ); // Placeholder, will be updated on first API call
+      _authStateController.add(_currentUser);
+    } else {
+      _currentUser = null;
+      _authStateController.add(null);
+    }
+  }
 
   @override
-  Future<void> signIn({required String email, required String password}) async {
-    if (email.isEmpty || password.isEmpty) {
-      throw const AuthFailure('Please enter your credentials.');
+  Future<void> signIn({
+    required String username,
+    required String password,
+  }) async {
+    if (username.isEmpty || password.isEmpty) {
+      throw const AuthFailure('Username and password are required.');
     }
 
-    final trimmedEmail = email.trim();
-
-    if (!trimmedEmail.contains('@')) {
-      throw const AuthFailure('Please enter a valid email address.');
-    }
+    final trimmedUsername = username.trim().toLowerCase();
 
     try {
-      await _auth.signInWithEmailAndPassword(
-        email: trimmedEmail,
-        password: password,
-      );
-    } on FirebaseAuthException catch (error) {
-      throw AuthFailure(_messageForFirebaseAuthCode(error.code));
+      final response = await _apiClient.post(ApiConstants.authLogin, {
+        'username': trimmedUsername,
+        'password': password,
+      }, requiresAuth: false);
+
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final token = data?['token'] as String?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+
+          if (token == null || token.isEmpty) {
+            throw const AuthFailure('Failed to receive authentication token.');
+          }
+
+          // Save token
+          await TokenStorageService.saveToken(token);
+
+          // Create auth user from response
+          if (userData != null) {
+            _currentUser = AuthUser(
+              uid: userData['uid'] as String? ?? '',
+              username: userData['username'] as String?,
+              name: userData['name'] as String?,
+            );
+          } else {
+            _currentUser = AuthUser(uid: '');
+          }
+
+          // Emit auth state change
+          _authStateController.add(_currentUser);
+        } else {
+          final message = body['message'] as String? ?? 'Login failed.';
+          throw AuthFailure(message);
+        }
+      } else if (response.statusCode == 401) {
+        throw const AuthFailure('Invalid username or password.');
+      } else {
+        final body = jsonDecode(response.body) as Map<String, dynamic>?;
+        final message =
+            body?['message'] as String? ?? 'Login failed. Please try again.';
+        throw AuthFailure(message);
+      }
+    } catch (error) {
+      if (error is AuthFailure) {
+        rethrow;
+      }
+      throw AuthFailure('Failed to sign in: $error');
     }
   }
 
@@ -54,51 +127,101 @@ class FirebaseAuthRepository implements AuthRepository {
   Future<void> signUp({
     required String name,
     required String username,
-    required String email,
     required String password,
   }) async {
-    UserCredential credential;
-    try {
-      credential = await _auth.createUserWithEmailAndPassword(
-        email: email.trim(),
-        password: password,
+    if (username.isEmpty || name.isEmpty || password.isEmpty) {
+      throw const AuthFailure('All fields are required.');
+    }
+
+    final trimmedUsername = username.trim().toLowerCase();
+    final trimmedName = name.trim();
+
+    // Validate username format
+    if (!RegExp(r'^[a-z0-9_]{3,30}$').hasMatch(trimmedUsername)) {
+      throw const AuthFailure(
+        'Username must be between 3 and 30 characters and contain only lowercase letters, numbers, and underscores.',
       );
-    } on FirebaseAuthException catch (error) {
-      throw AuthFailure(_messageForFirebaseAuthCode(error.code));
     }
 
-    final user = credential.user;
-    if (user == null) {
-      throw const AuthFailure('Account creation failed. Please retry.');
+    // Validate name length
+    if (trimmedName.length >= 30) {
+      throw const AuthFailure('Name must be less than 30 characters.');
     }
 
-    // Update display name in Firebase Auth
-    await user.updateDisplayName(name);
+    // Validate password length
+    if (password.length < 6) {
+      throw const AuthFailure('Password must be at least 6 characters.');
+    }
 
-    // Note: User profile creation is now handled by backend API in AuthViewModel
+    try {
+      final response = await _apiClient.post(ApiConstants.authRegister, {
+        'username': trimmedUsername,
+        'name': trimmedName,
+        'password': password,
+      }, requiresAuth: false);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final token = data?['token'] as String?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+
+          if (token == null || token.isEmpty) {
+            throw const AuthFailure('Failed to receive authentication token.');
+          }
+
+          // Save token
+          await TokenStorageService.saveToken(token);
+
+          // Create auth user from response
+          if (userData != null) {
+            _currentUser = AuthUser(
+              uid: userData['uid'] as String? ?? '',
+              username: userData['username'] as String?,
+              name: userData['name'] as String?,
+            );
+          } else {
+            _currentUser = AuthUser(uid: '');
+          }
+
+          // Emit auth state change
+          _authStateController.add(_currentUser);
+        } else {
+          final message = body['message'] as String? ?? 'Registration failed.';
+          throw AuthFailure(message);
+        }
+      } else if (response.statusCode == 409) {
+        throw const AuthFailure('Username already in use.');
+      } else {
+        final body = jsonDecode(response.body) as Map<String, dynamic>?;
+        final message =
+            body?['message'] as String? ??
+            'Registration failed. Please try again.';
+        throw AuthFailure(message);
+      }
+    } catch (error) {
+      if (error is AuthFailure) {
+        rethrow;
+      }
+      throw AuthFailure('Failed to register: $error');
+    }
   }
 
   @override
-  Future<void> signOut() {
-    return _auth.signOut();
+  Future<void> signOut() async {
+    // Delete token
+    await TokenStorageService.deleteToken();
+
+    // Clear current user
+    _currentUser = null;
+
+    // Emit auth state change
+    _authStateController.add(null);
   }
 
-  String _messageForFirebaseAuthCode(String code) {
-    switch (code) {
-      case 'user-not-found':
-        return 'No account found with those credentials.';
-      case 'wrong-password':
-        return 'Incorrect password. Please try again.';
-      case 'invalid-email':
-        return 'That email address looks invalid.';
-      case 'email-already-in-use':
-        return 'That email is already associated with an account.';
-      case 'weak-password':
-        return 'Please choose a stronger password.';
-      case 'too-many-requests':
-        return 'Too many attempts. Please wait and try again.';
-      default:
-        return 'Authentication failed. ($code)';
-    }
+  void dispose() {
+    _authStateController.close();
   }
 }

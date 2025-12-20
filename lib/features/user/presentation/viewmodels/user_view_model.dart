@@ -11,7 +11,9 @@ class UserViewModel extends ChangeNotifier {
 
   final UserRepository _userRepository;
 
-  UserModel? _currentUser;
+  UserModel?
+  _currentUser; // The logged-in user (should never be overwritten by loadUser)
+  UserModel? _viewedUser; // The user being viewed in profile pages
   bool _isLoading = false;
   bool _isCheckingAvailability = false;
   String? _errorMessage;
@@ -19,6 +21,30 @@ class UserViewModel extends ChangeNotifier {
   bool? _isUsernameAvailable;
 
   UserModel? get currentUser => _currentUser;
+  UserModel? get viewedUser => _viewedUser;
+
+  /// Clear the current user (useful when logging out)
+  void clearCurrentUser() {
+    developer.log(
+      'clearCurrentUser() called - clearing both _currentUser and _viewedUser',
+      name: 'hiffi.user',
+    );
+    _currentUser = null;
+    _viewedUser = null;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Clear the viewed user (useful when navigating away from profile pages)
+  void clearViewedUser() {
+    developer.log(
+      'clearViewedUser() called - clearing _viewedUser',
+      name: 'hiffi.user',
+    );
+    _viewedUser = null;
+    notifyListeners();
+  }
+
   bool get isLoading => _isLoading;
   bool get isCheckingAvailability => _isCheckingAvailability;
   String? get errorMessage => _errorMessage;
@@ -133,48 +159,79 @@ class UserViewModel extends ChangeNotifier {
   Future<void> loadUser(String username) async {
     _setLoading(true);
     _setError(null);
+    _viewedUser = null; // Clear previous viewed user
+    notifyListeners(); // Notify that we're starting to load
 
     try {
       developer.log('Loading user: $username', name: 'hiffi.user');
-      _currentUser = await _userRepository.getUser(username);
+      // Load the viewed user without overwriting currentUser
+      final loadedUser = await _userRepository.getUser(username);
       developer.log(
-        'User loaded successfully: ${_currentUser?.username}',
+        'User loaded successfully: ${loadedUser.username}',
         name: 'hiffi.user',
       );
+      // Set viewed user and clear errors
+      _viewedUser = loadedUser;
+      _errorMessage = null;
+      _isLoading = false;
+      developer.log(
+        'Viewed user set: ${_viewedUser?.username}, isLoading: $_isLoading',
+        name: 'hiffi.user',
+      );
+      notifyListeners(); // Notify listeners that user is loaded
     } catch (error) {
       developer.log(
         'Failed to load user: $error',
         name: 'hiffi.user',
         error: error,
       );
+      // Clear viewed user on error
+      _viewedUser = null;
+      _isLoading = false;
       if (error is ApiException) {
-        _setError(error.message);
+        _errorMessage = error.message;
       } else {
-        _setError('Failed to load user: $error');
+        _errorMessage = 'Failed to load user: $error';
       }
-    } finally {
-      _setLoading(false);
+      notifyListeners(); // Notify listeners of error
     }
   }
 
   Future<void> updateUser({
     required String currentUsername,
-    String? newUsername,
+    String? newUsername, // Deprecated: username cannot be updated via API
     String? name,
+    String? email,
+    String? bio,
+    String? role,
   }) async {
     _setLoading(true);
     _setError(null);
 
     try {
       developer.log(
-        'Updating user: currentUsername=$currentUsername, newUsername=$newUsername, name=$name',
+        'Updating user: name=$name, email=$email, bio=$bio',
         name: 'hiffi.user',
       );
+      // Note: username cannot be updated via API (per USERS_API.md)
+      if (newUsername != null && newUsername.isNotEmpty) {
+        throw ApiException(
+          'Username cannot be updated. This feature is not supported.',
+          400,
+        );
+      }
       _currentUser = await _userRepository.updateUser(
         currentUsername: currentUsername,
-        newUsername: newUsername,
+        newUsername: null, // Username updates not supported
         name: name,
+        email: email,
+        bio: bio,
+        role: role,
       );
+      // Also update viewedUser if it matches the current user
+      if (_viewedUser?.username == currentUsername) {
+        _viewedUser = _currentUser;
+      }
       developer.log(
         'User updated successfully: ${_currentUser?.username}',
         name: 'hiffi.user',
@@ -231,7 +288,7 @@ class UserViewModel extends ChangeNotifier {
       await _userRepository.followUser(username);
 
       // Reload user to get updated follow status
-      if (_currentUser?.username == username) {
+      if (_viewedUser?.username == username) {
         // If viewing the user being followed, reload to update isFollowing
         await loadUser(username);
       } else {
@@ -266,7 +323,7 @@ class UserViewModel extends ChangeNotifier {
       await _userRepository.unfollowUser(username);
 
       // Reload user to get updated follow status
-      if (_currentUser?.username == username) {
+      if (_viewedUser?.username == username) {
         // If viewing the user being unfollowed, reload to update isFollowing
         await loadUser(username);
       } else {
@@ -285,6 +342,49 @@ class UserViewModel extends ChangeNotifier {
         _setError(error.message);
       } else {
         _setError('Failed to unfollow user: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> becomeCreator() async {
+    if (_currentUser == null) {
+      throw ApiException('User must be logged in to become a creator', 401);
+    }
+
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      developer.log('Updating user role to creator', name: 'hiffi.user');
+      _currentUser = await _userRepository.updateUser(
+        currentUsername: _currentUser!.username,
+        newUsername: null,
+        name: null,
+        email: null,
+        bio: null,
+        role: 'creator',
+      );
+      // Also update viewedUser if it matches the current user
+      if (_viewedUser?.username == _currentUser?.username) {
+        _viewedUser = _currentUser;
+      }
+      developer.log(
+        'User role updated to creator successfully',
+        name: 'hiffi.user',
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to become creator: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to become creator: $error');
       }
       rethrow;
     } finally {

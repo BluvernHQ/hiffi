@@ -74,6 +74,7 @@ class ReplyModel {
     required this.repliedTo,
     required this.repliedAt,
     required this.reply,
+    this.replyByUsername,
   });
 
   final String replyId;
@@ -81,6 +82,7 @@ class ReplyModel {
   final String repliedTo;
   final DateTime repliedAt;
   final String reply;
+  final String? replyByUsername; // Username of the user who replied
 
   factory ReplyModel.fromJson(Map<String, dynamic> json) {
     return ReplyModel(
@@ -89,6 +91,7 @@ class ReplyModel {
       repliedTo: json['replied_to'] as String,
       repliedAt: DateTime.parse(json['replied_at'] as String),
       reply: json['reply'] as String,
+      replyByUsername: json['reply_by_username'] as String?,
     );
   }
 
@@ -99,6 +102,7 @@ class ReplyModel {
       'replied_to': repliedTo,
       'replied_at': repliedAt.toIso8601String(),
       'reply': reply,
+      if (replyByUsername != null) 'reply_by_username': replyByUsername,
     };
   }
 }

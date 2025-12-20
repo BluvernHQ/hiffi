@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../user/data/user_repository.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
+import '../../../../core/widgets/shimmer_widgets.dart';
 import '../viewmodels/video_upload_view_model.dart';
 
 class VideoUploadPage extends StatefulWidget {
@@ -15,13 +17,46 @@ class VideoUploadPage extends StatefulWidget {
 }
 
 class _VideoUploadPageState extends State<VideoUploadPage> {
+  bool _isCheckingCreator = true;
+  bool _isCreator = false;
+
   @override
   void initState() {
     super.initState();
-    // Clear any previous success/error state when page opens
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<VideoUploadViewModel>().clear();
+    // Check if user is creator and clear any previous success/error state
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _checkCreatorStatus();
+      if (mounted) {
+        context.read<VideoUploadViewModel>().clear();
+      }
     });
+  }
+
+  Future<void> _checkCreatorStatus() async {
+    try {
+      final userRepository = context.read<UserRepository>();
+      final currentUser = await userRepository.getCurrentUser();
+
+      if (mounted) {
+        setState(() {
+          _isCreator = currentUser.role == 'creator';
+          _isCheckingCreator = false;
+        });
+
+        // Redirect to become creator page if not a creator
+        if (!_isCreator) {
+          context.go('/become-creator');
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isCheckingCreator = false;
+        });
+        // If error, still redirect to become creator page
+        context.go('/become-creator');
+      }
+    }
   }
 
   void _showExitConfirmation(
@@ -44,8 +79,14 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
             onPressed: () async {
               await viewModel.cancelUpload();
               viewModel.clear();
-              Navigator.of(context).pop();
-              context.pop();
+              Navigator.of(context).pop(); // Close dialog
+              // If there's a route to pop back to, pop it
+              // Otherwise, navigate to home
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go('/home');
+              }
             },
             child: const Text('Discard'),
           ),
@@ -56,6 +97,19 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Show loading while checking creator status
+    if (_isCheckingCreator) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Upload Video')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // If not creator, show nothing (will redirect)
+    if (!_isCreator) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     final viewModel = context.watch<VideoUploadViewModel>();
 
     if (viewModel.shouldPopAfterSuccess) {
@@ -82,7 +136,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
               ? null
               : () {
                   if (viewModel.uploadStatus == UploadStatus.success) {
-                    context.pop();
+                    // If there's a route to pop back to, pop it
+                    // Otherwise, navigate to home
+                    if (context.canPop()) {
+                      context.pop();
+                    } else {
+                      context.go('/home');
+                    }
                   } else {
                     _showExitConfirmation(context, viewModel);
                   }
@@ -199,11 +259,23 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
               const SizedBox(height: 24),
 
               // Tags Field
-              Text(
-                'Tags',
-                style: Theme.of(
-                  context,
-                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
+              Row(
+                children: [
+                  Text(
+                    'Tags',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (viewModel.tags.isEmpty)
+                    Text(
+                      '(Required)',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               Container(
@@ -228,7 +300,10 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                       children: [
                         ...viewModel.tags.map(
                           (tag) => Chip(
-                            label: Text(tag),
+                            label: Text(
+                              tag,
+                              style: const TextStyle(fontSize: 13),
+                            ),
                             backgroundColor: Theme.of(
                               context,
                             ).colorScheme.primaryContainer,
@@ -242,26 +317,106 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                             onDeleted: viewModel.isUploading
                                 ? null
                                 : () => viewModel.removeTag(tag),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 200,
-                          child: TextField(
-                            controller: viewModel.tagInputController,
-                            enabled: !viewModel.isUploading,
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              border: InputBorder.none,
-                              hintText: 'Add a tag and press Enter',
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
                             ),
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (value) {
-                              if (!viewModel.isUploading) {
-                                viewModel.addTag(value);
-                              }
-                            },
                           ),
                         ),
+                        if (viewModel.canAddMoreTags)
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextField(
+                              controller: viewModel.tagInputController,
+                              enabled: !viewModel.isUploading,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                                hintText: viewModel.tags.isEmpty
+                                    ? 'Add tags (comma or semicolon separated, press Enter)'
+                                    : 'Add more tags...',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withOpacity(0.6),
+                                ),
+                              ),
+                              textInputAction: TextInputAction.done,
+                              onChanged: (value) {
+                                // Auto-add tags when comma or semicolon is typed
+                                if (value.endsWith(',') ||
+                                    value.endsWith(';')) {
+                                  final tagToAdd = value
+                                      .substring(0, value.length - 1)
+                                      .trim();
+                                  if (tagToAdd.isNotEmpty &&
+                                      viewModel.canAddMoreTags) {
+                                    viewModel.addTag(tagToAdd);
+                                  }
+                                }
+                              },
+                              onSubmitted: (value) {
+                                if (!viewModel.isUploading &&
+                                    value.trim().isNotEmpty &&
+                                    viewModel.canAddMoreTags) {
+                                  viewModel.addTag(value);
+                                }
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        if (viewModel.tags.isNotEmpty)
+                          Text(
+                            '${viewModel.tags.length} tag${viewModel.tags.length == 1 ? '' : 's'}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withOpacity(0.7),
+                                  fontSize: 12,
+                                ),
+                          ),
+                        if (viewModel.tags.isNotEmpty &&
+                            !viewModel.canAddMoreTags) ...[
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.info_outline,
+                            size: 14,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              'Maximum tags reached (20)',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                    fontSize: 12,
+                                  ),
+                            ),
+                          ),
+                        ] else if (viewModel.tags.isEmpty)
+                          Expanded(
+                            child: Text(
+                              'Separate multiple tags with commas (e.g., gaming, funny, tutorial)',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withOpacity(0.7),
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                            ),
+                          ),
                       ],
                     ),
                   ],
@@ -531,16 +686,7 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                   ),
                 ),
                 child: viewModel.isUploading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
+                    ? const InlineShimmer(width: 20, height: 20)
                     : const Text(
                         'Upload Video',
                         style: TextStyle(
@@ -588,7 +734,6 @@ class _VideoPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fileName = videoFile.path.split('/').last;
     final fileSize = videoFile.lengthSync();
     final fileSizeMB = (fileSize / (1024 * 1024)).toStringAsFixed(2);
 
@@ -642,6 +787,7 @@ class _VideoPreviewCard extends StatelessWidget {
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
+                                      // Keep progress indicator for upload progress
                                       CircularProgressIndicator(
                                         valueColor:
                                             AlwaysStoppedAnimation<Color>(
@@ -804,65 +950,40 @@ class _VideoPreviewCard extends StatelessWidget {
           // Video Info
           Padding(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.videocam,
-                      size: 20,
+                Text(
+                  '$fileSizeMB MB',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const Spacer(),
+                if (onReplaceVideo != null)
+                  TextButton.icon(
+                    onPressed: onReplaceVideo,
+                    icon: Icon(
+                      Icons.swap_horiz,
+                      size: 18,
                       color: Theme.of(context).colorScheme.primary,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        fileName,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    label: Text(
+                      'Replace Video',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(
-                      '$fileSizeMB MB',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
                       ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    const Spacer(),
-                    if (onReplaceVideo != null)
-                      TextButton.icon(
-                        onPressed: onReplaceVideo,
-                        icon: Icon(
-                          Icons.swap_horiz,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        label: Text(
-                          'Replace Video',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                  ],
-                ),
+                  ),
               ],
             ),
           ),

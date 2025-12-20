@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import 'in_app_notification_service.dart';
 
 class NotificationService {
   NotificationService();
@@ -15,6 +18,16 @@ class NotificationService {
 
   bool _initialized = false;
   bool _pluginActuallyInitialized = false;
+
+  /// Check if app is in foreground
+  bool _isAppInForeground() {
+    final navigatorKey = InAppNotificationService.navigatorKey;
+    if (navigatorKey?.currentContext == null) return false;
+
+    // Check if app lifecycle state is resumed
+    final binding = WidgetsBinding.instance;
+    return binding.lifecycleState == AppLifecycleState.resumed;
+  }
 
   Future<void> initialize({bool skipPermissionRequest = false}) async {
     if (_initialized) return;
@@ -119,6 +132,18 @@ class NotificationService {
   }) async {
     await initialize();
 
+    // If app is in foreground, show in-app notification
+    if (_isAppInForeground()) {
+      InAppNotificationService.showProgress(
+        message: body,
+        title: title,
+        progress: progress,
+        maxProgress: maxProgress,
+      );
+      return;
+    }
+
+    // If app is in background, show local notification
     // Skip if plugin wasn't actually initialized (e.g., in background worker)
     if (!_pluginActuallyInitialized) return;
 
@@ -156,6 +181,18 @@ class NotificationService {
   }) async {
     await initialize();
 
+    // If app is in foreground, show in-app notification
+    if (_isAppInForeground()) {
+      InAppNotificationService.showNotification(
+        message: body,
+        title: title,
+        isSuccess: success,
+        duration: const Duration(seconds: 5),
+      );
+      return;
+    }
+
+    // If app is in background, show local notification
     // Skip if plugin wasn't actually initialized (e.g., in background worker)
     if (!_pluginActuallyInitialized) return;
 
@@ -184,5 +221,96 @@ class NotificationService {
   Future<void> cancel(String taskId) async {
     await initialize();
     await _plugin.cancel(taskId.hashCode);
+  }
+
+  /// Show notification when upload is canceled due to no internet
+  Future<void> showNetworkError({
+    required String taskId,
+    String title = 'Upload canceled',
+    String body = 'No internet connection. Please try again later.',
+  }) async {
+    await initialize();
+
+    // If app is in foreground, show in-app notification
+    if (_isAppInForeground()) {
+      InAppNotificationService.showNotification(
+        message: body,
+        title: title,
+        isSuccess: false,
+        duration: const Duration(seconds: 5),
+      );
+      return;
+    }
+
+    // If app is in background, show local notification
+    // Skip if plugin wasn't actually initialized (e.g., in background worker)
+    if (!_pluginActuallyInitialized) return;
+
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        _uploadChannelId,
+        _uploadChannelName,
+        channelDescription: _uploadChannelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: !kIsWeb,
+      );
+
+      await _plugin.show(
+        taskId.hashCode,
+        title,
+        body,
+        NotificationDetails(android: androidDetails),
+      );
+    } catch (e) {
+      // Silently fail - notifications are optional
+      debugPrint('Failed to show network error notification: $e');
+    }
+  }
+
+  /// Show notification when upload starts
+  Future<void> showUploadStarted({
+    required String taskId,
+    String title = 'Upload started',
+    String body = 'Preparing to upload video...',
+  }) async {
+    await initialize();
+
+    // If app is in foreground, show in-app notification
+    if (_isAppInForeground()) {
+      InAppNotificationService.showNotification(
+        message: body,
+        title: title,
+        isSuccess: true,
+        duration: const Duration(seconds: 3),
+      );
+      return;
+    }
+
+    // If app is in background, show local notification
+    // Skip if plugin wasn't actually initialized (e.g., in background worker)
+    if (!_pluginActuallyInitialized) return;
+
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        _uploadChannelId,
+        _uploadChannelName,
+        channelDescription: _uploadChannelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        ongoing: true,
+        onlyAlertOnce: true,
+      );
+
+      await _plugin.show(
+        taskId.hashCode,
+        title,
+        body,
+        NotificationDetails(android: androidDetails),
+      );
+    } catch (e) {
+      // Silently fail - notifications are optional
+      debugPrint('Failed to show upload started notification: $e');
+    }
   }
 }

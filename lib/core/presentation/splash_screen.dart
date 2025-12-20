@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/shimmer_widgets.dart';
+
 class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
 
@@ -13,7 +15,11 @@ class SplashScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: const [
-            CircularProgressIndicator(),
+            ShimmerLoading(
+              width: 60,
+              height: 60,
+              borderRadius: BorderRadius.all(Radius.circular(30)),
+            ),
             SizedBox(height: 16),
             Text('Loading hiffi...'),
           ],

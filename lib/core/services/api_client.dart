@@ -3,57 +3,65 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/io_client.dart';
 
 import '../constants/api_constants.dart';
+import 'token_storage_service.dart';
 
 class ApiClient {
-  ApiClient({required FirebaseAuth firebaseAuth})
-    : _firebaseAuth = firebaseAuth;
-
-  final FirebaseAuth _firebaseAuth;
+  ApiClient();
   final http.Client _client = http.Client();
+
+  // Custom HTTP client for uploads with relaxed certificate validation (dev only)
+  http.Client? _uploadClient;
+
+  http.Client get _uploadHttpClient {
+    _uploadClient ??= _createUploadClient();
+    return _uploadClient!;
+  }
+
+  http.Client _createUploadClient() {
+    final httpClient = HttpClient();
+    // Allow bad certificates for development (handles hostname mismatch issues)
+    // WARNING: Only use this for development environments
+    httpClient
+        .badCertificateCallback = (X509Certificate cert, String host, int port) {
+      // For development, allow certificates even if hostname doesn't match
+      // In production, you should validate the certificate properly
+      print(
+        '   ⚠️ Certificate validation: Allowing certificate for $host:$port (dev mode)',
+      );
+      return true;
+    };
+    return IOClient(httpClient);
+  }
 
   Future<String?> _getIdToken({bool forceRefresh = false}) async {
     try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) {
-        developer.log('No current user for API request', name: 'hiffi.api');
-        print('   ⚠️ No current Firebase user');
-        return null;
-      }
+      developer.log('Getting JWT token from storage', name: 'hiffi.api');
+      print('   🔑 Getting JWT token from storage...');
 
-      developer.log(
-        'Getting Firebase ID token (forceRefresh: $forceRefresh)',
-        name: 'hiffi.api',
-      );
-      print(
-        '   🔑 Getting Firebase ID token${forceRefresh ? " (forced refresh)" : ""}...',
-      );
-
-      final token = forceRefresh
-          ? await user.getIdToken(true)
-          : await user.getIdToken();
+      final token = await TokenStorageService.getToken();
 
       if (token == null || token.isEmpty) {
-        developer.log('ID token is null or empty', name: 'hiffi.api');
-        print('   ⚠️ ID token is null or empty');
+        developer.log('JWT token is null or empty', name: 'hiffi.api');
+        print('   ⚠️ JWT token is null or empty');
         return null;
       }
 
       developer.log(
-        'Retrieved Firebase ID token (length: ${token.length})',
+        'Retrieved JWT token (length: ${token.length})',
         name: 'hiffi.api',
       );
-      print('   ✅ ID token retrieved (${token.length} chars)');
+      print('   ✅ JWT token retrieved (${token.length} chars)');
       return token;
     } catch (error) {
       developer.log(
-        'Failed to get ID token: $error',
+        'Failed to get JWT token: $error',
         name: 'hiffi.api',
         error: error,
       );
-      print('   ❌ Failed to get ID token: $error');
+      print('   ❌ Failed to get JWT token: $error');
       return null;
     }
   }
@@ -61,6 +69,7 @@ class ApiClient {
   Future<http.Response> get(
     String endpoint, {
     bool requiresAuth = false,
+    bool optionalAuth = false,
   }) async {
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
@@ -73,26 +82,31 @@ class ApiClient {
       'User-Agent': 'Hiffi-Flutter-App/1.0',
     };
 
-    if (requiresAuth) {
-      // Use cached token first (Firebase SDK handles token refresh automatically)
+    if (requiresAuth || optionalAuth) {
+      // Get JWT token from storage
       final token = await _getIdToken(forceRefresh: false);
-      if (token == null) {
+      if (token != null && token.isNotEmpty) {
+        // Trim token to remove any whitespace and ensure clean format
+        final cleanToken = token.trim();
+        headers['Authorization'] = 'Bearer $cleanToken';
+        print('   🔑 Using Bearer token (cached)');
+        // Log first and last few chars of token for debugging (not full token for security)
+        if (cleanToken.length > 20) {
+          print(
+            '   🔍 Token preview: ${cleanToken.substring(0, 10)}...${cleanToken.substring(cleanToken.length - 10)}',
+          );
+        }
+      } else if (requiresAuth) {
+        // Only throw if auth is required (not optional)
         developer.log(
           'No token available for authenticated request',
           name: 'hiffi.api',
         );
         print('   ❌ No token available');
-        throw Exception('Authentication required: No Firebase token available');
-      }
-      // Trim token to remove any whitespace and ensure clean format
-      final cleanToken = token.trim();
-      headers['Authorization'] = 'Bearer $cleanToken';
-      print('   🔑 Using Bearer token (cached)');
-      // Log first and last few chars of token for debugging (not full token for security)
-      if (cleanToken.length > 20) {
-        print(
-          '   🔍 Token preview: ${cleanToken.substring(0, 10)}...${cleanToken.substring(cleanToken.length - 10)}',
-        );
+        throw Exception('Authentication required: No JWT token available');
+      } else {
+        // Optional auth - no token available, continue without auth
+        print('   ℹ️ No token available (optional auth - continuing without)');
       }
     }
 
@@ -107,30 +121,12 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, try once more with refreshed token
+      // If 401, token might be expired - user needs to login again
       if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Retrying with refreshed token...');
-        final refreshedToken = await _getIdToken(forceRefresh: true);
-        if (refreshedToken != null) {
-          headers['Authorization'] = 'Bearer ${refreshedToken.trim()}';
-          print('   🔄 Retrying request with refreshed token...');
-          final retryResponse = await _client.get(url, headers: headers);
-          developer.log(
-            'GET $url (retry) - Status: ${retryResponse.statusCode}',
-            name: 'hiffi.api',
-          );
-          print('   ✅ Retry Response: ${retryResponse.statusCode}');
-          return retryResponse;
-        }
-        print('   ⚠️ 401 Unauthorized - Response headers: ${response.headers}');
-        print('   ⚠️ Request headers sent: $headers');
-        print(
-          '   ⚠️ Full Authorization header value: ${headers['Authorization']?.substring(0, 50)}...',
-        );
-        print(
-          '   💡 Compare this with Postman - check if token format matches exactly',
-        );
+        print('   ⚠️ 401 Unauthorized - Token may be expired');
+        print('   💡 User needs to login again to get a new token');
       }
+      // For optional auth, 401 is acceptable - endpoint may require auth but we tried without it
 
       return response;
     } catch (error) {
@@ -158,7 +154,7 @@ class ApiClient {
     };
 
     if (requiresAuth) {
-      // Use cached token first (Firebase SDK handles token refresh automatically)
+      // Get JWT token from storage
       final token = idToken ?? await _getIdToken(forceRefresh: false);
       if (token == null) {
         developer.log(
@@ -166,12 +162,12 @@ class ApiClient {
           name: 'hiffi.api',
         );
         print('   ❌ No token available');
-        throw Exception('Authentication required: No Firebase token available');
+        throw Exception('Authentication required: No JWT token available');
       }
       // Trim token to remove any whitespace and ensure clean format
       final cleanToken = token.trim();
       headers['Authorization'] = 'Bearer $cleanToken';
-      print('   🔑 Using Bearer token (cached)');
+      print('   🔑 Using Bearer token');
       // Log first and last few chars of token for debugging (not full token for security)
       if (cleanToken.length > 20) {
         print(
@@ -195,33 +191,10 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, try once more with refreshed token
+      // If 401, token might be expired - user needs to login again
       if (response.statusCode == 401 && requiresAuth && idToken == null) {
-        print('   ⚠️ 401 Unauthorized - Retrying with refreshed token...');
-        final refreshedToken = await _getIdToken(forceRefresh: true);
-        if (refreshedToken != null) {
-          headers['Authorization'] = 'Bearer ${refreshedToken.trim()}';
-          print('   🔄 Retrying request with refreshed token...');
-          final retryResponse = await _client.post(
-            url,
-            headers: headers,
-            body: jsonEncode(body),
-          );
-          developer.log(
-            'POST $url (retry) - Status: ${retryResponse.statusCode}',
-            name: 'hiffi.api',
-          );
-          print('   ✅ Retry Response: ${retryResponse.statusCode}');
-          return retryResponse;
-        }
-        print('   ⚠️ 401 Unauthorized - Response headers: ${response.headers}');
-        print('   ⚠️ Request headers sent: $headers');
-        print(
-          '   ⚠️ Full Authorization header value: ${headers['Authorization']?.substring(0, 50)}...',
-        );
-        print(
-          '   💡 Compare this with Postman - check if token format matches exactly',
-        );
+        print('   ⚠️ 401 Unauthorized - Token may be expired');
+        print('   💡 User needs to login again to get a new token');
       }
 
       return response;
@@ -254,7 +227,7 @@ class ApiClient {
     };
 
     if (requiresAuth) {
-      // Use cached token first (Firebase SDK handles token refresh automatically)
+      // Get JWT token from storage
       final token = await _getIdToken(forceRefresh: false);
       if (token == null) {
         developer.log(
@@ -262,12 +235,12 @@ class ApiClient {
           name: 'hiffi.api',
         );
         print('   ❌ No token available');
-        throw Exception('Authentication required: No Firebase token available');
+        throw Exception('Authentication required: No JWT token available');
       }
       // Trim token to remove any whitespace and ensure clean format
       final cleanToken = token.trim();
       headers['Authorization'] = 'Bearer $cleanToken';
-      print('   🔑 Using Bearer token (cached)');
+      print('   🔑 Using Bearer token');
       // Log first and last few chars of token for debugging (not full token for security)
       if (cleanToken.length > 20) {
         print(
@@ -291,25 +264,10 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, try once more with refreshed token
+      // If 401, token might be expired - user needs to login again
       if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Retrying with refreshed token...');
-        final refreshedToken = await _getIdToken(forceRefresh: true);
-        if (refreshedToken != null) {
-          headers['Authorization'] = 'Bearer ${refreshedToken.trim()}';
-          print('   🔄 Retrying request with refreshed token...');
-          final retryResponse = await _client.put(
-            url,
-            headers: headers,
-            body: jsonEncode(body),
-          );
-          developer.log(
-            'PUT $url (retry) - Status: ${retryResponse.statusCode}',
-            name: 'hiffi.api',
-          );
-          print('   ✅ Retry Response: ${retryResponse.statusCode}');
-          return retryResponse;
-        }
+        print('   ⚠️ 401 Unauthorized - Token may be expired');
+        print('   💡 User needs to login again to get a new token');
       }
 
       return response;
@@ -336,7 +294,7 @@ class ApiClient {
     };
 
     if (requiresAuth) {
-      // Use cached token first (Firebase SDK handles token refresh automatically)
+      // Get JWT token from storage
       final token = await _getIdToken(forceRefresh: false);
       if (token == null) {
         developer.log(
@@ -344,12 +302,12 @@ class ApiClient {
           name: 'hiffi.api',
         );
         print('   ❌ No token available');
-        throw Exception('Authentication required: No Firebase token available');
+        throw Exception('Authentication required: No JWT token available');
       }
       // Trim token to remove any whitespace and ensure clean format
       final cleanToken = token.trim();
       headers['Authorization'] = 'Bearer $cleanToken';
-      print('   🔑 Using Bearer token (cached)');
+      print('   🔑 Using Bearer token');
       // Log first and last few chars of token for debugging (not full token for security)
       if (cleanToken.length > 20) {
         print(
@@ -369,21 +327,10 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, try once more with refreshed token
+      // If 401, token might be expired - user needs to login again
       if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Retrying with refreshed token...');
-        final refreshedToken = await _getIdToken(forceRefresh: true);
-        if (refreshedToken != null) {
-          headers['Authorization'] = 'Bearer ${refreshedToken.trim()}';
-          print('   🔄 Retrying request with refreshed token...');
-          final retryResponse = await _client.delete(url, headers: headers);
-          developer.log(
-            'DELETE $url (retry) - Status: ${retryResponse.statusCode}',
-            name: 'hiffi.api',
-          );
-          print('   ✅ Retry Response: ${retryResponse.statusCode}');
-          return retryResponse;
-        }
+        print('   ⚠️ 401 Unauthorized - Token may be expired');
+        print('   💡 User needs to login again to get a new token');
       }
 
       return response;
@@ -425,6 +372,14 @@ class ApiClient {
           contentType: contentType,
           onProgress: onProgress,
         );
+      } on HandshakeException catch (e) {
+        lastError = e;
+        print('   ⚠️ SSL/TLS handshake error: $e');
+        if (attempt < maxRetries) {
+          print('   🔄 Will retry with custom certificate handling...');
+          continue;
+        }
+        rethrow;
       } on SocketException catch (e) {
         lastError = e;
         final isConnectionReset =
@@ -478,9 +433,10 @@ class ApiClient {
       request.headers['Content-Type'] = contentType;
     }
     request.headers['Content-Length'] = total.toString();
-    // Add x-amz-acl header if it's in the signed headers (required by DigitalOcean Spaces)
-    // The signed URL includes this in X-Amz-SignedHeaders, so we must include it
-    request.headers['x-amz-acl'] = 'public-read';
+    // Note: Do NOT add x-amz-acl header unless it's explicitly in the signed headers
+    // Adding unsigned headers will cause SignatureDoesNotMatch errors
+    // The presigned URL signature is calculated based on specific headers
+    // Only include headers that are part of the signature
 
     // Stream file by chunks and report progress
     const int chunkSize = 64 * 1024; // 64KiB
@@ -488,8 +444,9 @@ class ApiClient {
     int sent = 0;
 
     // Start sending the request first, then stream data
+    // Use custom upload client with relaxed certificate validation for dev
     print('   🚀 Starting request send...');
-    final responseFuture = _client.send(request);
+    final responseFuture = _uploadHttpClient.send(request);
 
     try {
       print('   📖 Reading and streaming file in chunks...');
@@ -570,5 +527,6 @@ class ApiClient {
 
   void dispose() {
     _client.close();
+    _uploadClient?.close();
   }
 }

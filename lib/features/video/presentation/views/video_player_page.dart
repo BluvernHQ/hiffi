@@ -8,6 +8,9 @@ import 'package:video_player/video_player.dart';
 import '../../domain/models/comment_model.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
+import '../../../auth/data/auth_repository.dart';
+import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/data/user_repository.dart';
 import '../../../user/domain/models/user_model.dart';
 
@@ -20,7 +23,8 @@ class VideoPlayerPage extends StatefulWidget {
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
-class _VideoPlayerPageState extends State<VideoPlayerPage> {
+class _VideoPlayerPageState extends State<VideoPlayerPage>
+    with WidgetsBindingObserver {
   VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
   bool _isLoading = true;
@@ -57,6 +61,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _upvoteCount = widget.video.videoUpvotes;
     _downvoteCount = widget.video.videoDownvotes;
 
@@ -72,8 +77,51 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
 
     _fetchAndInitializePlayer();
-    _loadComments();
     _loadUserAndFollowStatus();
+    // Only load comments if user is authenticated
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser != null) {
+      _loadComments();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Pause video if navigating away - check if route is still current
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      _pauseVideo();
+    }
+  }
+
+  @override
+  void deactivate() {
+    super.deactivate();
+    // Pause video when widget is deactivated (navigating away)
+    _pauseVideo();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      _pauseVideo();
+    }
+  }
+
+  void _pauseVideo() {
+    try {
+      if (_videoPlayerController != null &&
+          _videoPlayerController!.value.isPlaying) {
+        _videoPlayerController!.pause();
+      }
+      _chewieController?.pause();
+    } catch (e) {
+      debugPrint('Error pausing video: $e');
+    }
   }
 
   Future<void> _loadUserAndFollowStatus() async {
@@ -98,7 +146,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         try {
           _videoOwner = await userRepository.getUser(widget.video.userUsername);
           setState(() {
-            _isFollowing = _videoOwner?.isFollowing ?? false;
+            // Following status is already set from getVideoInfo response
+            // We just load the user profile for display purposes
+            // Don't overwrite _isFollowing here as it's already set from video info
             _isLoadingFollowStatus = false;
           });
         } catch (e) {
@@ -181,6 +231,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pauseVideo();
     _videoPlayerController?.removeListener(_videoPlayerListener);
     _commentController.dispose();
     for (final controller in _replyControllers.values) {
@@ -194,37 +246,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   Future<void> _fetchAndInitializePlayer() async {
     try {
-      // Fetch the video URL from the API
+      // Fetch the video info from the API (includes URL, upvoted, downvoted, following status)
       final videoRepository = context.read<VideoRepository>();
-      _videoUrlFromApi = await videoRepository.getVideoUrl(
-        widget.video.videoUrl,
+      final videoInfo = await videoRepository.getVideoInfo(
+        widget.video.videoId,
       );
 
-      if (_videoUrlFromApi == null || _videoUrlFromApi!.isEmpty) {
+      if (videoInfo.videoUrl.isEmpty) {
         throw Exception('Failed to get video URL from API');
       }
 
-      // Fetch vote status if not already in the video model
-      if (widget.video.userVoteStatus == null) {
-        try {
-          final voteStatus = await videoRepository.getUserVoteStatus(
-            widget.video.videoId,
-          );
-          if (mounted && voteStatus != null) {
-            setState(() {
-              if (voteStatus == 'upvoted') {
-                _isUpvoted = true;
-                _isDownvoted = false;
-              } else if (voteStatus == 'downvoted') {
-                _isUpvoted = false;
-                _isDownvoted = true;
-              }
-            });
-          }
-        } catch (e) {
-          // Silently fail - vote status is optional
-          debugPrint('Failed to fetch vote status: $e');
-        }
+      _videoUrlFromApi = videoInfo.videoUrl;
+
+      // Update UI state with the video info (upvoted, downvoted, following)
+      if (mounted) {
+        setState(() {
+          _isUpvoted = videoInfo.upvoted;
+          _isDownvoted = videoInfo.downvoted;
+          _isFollowing = videoInfo.following;
+        });
       }
 
       await _initializePlayer();
@@ -243,12 +283,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
     try {
       // Configure video player for progressive download/streaming
-      // This allows the video to start playing as soon as enough data is buffered
+      // VideoPlayerController.networkUrl automatically uses HTTP range requests
+      // to enable progressive loading - video starts playing as soon as enough data is buffered
+      // This means the video doesn't need to be fully downloaded before playback begins
       _videoPlayerController = VideoPlayerController.networkUrl(
         Uri.parse(_videoUrlFromApi!),
         httpHeaders: {
           // Accept video content types for better streaming support
           'Accept': 'video/*',
+          // Workers URL requires x-api-key header
+          ...ImageUtils.getVideoHeaders(),
         },
         // Configure for progressive playback
         videoPlayerOptions: VideoPlayerOptions(
@@ -260,15 +304,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       );
 
       // Initialize the controller
-      // This returns as soon as metadata is available, not when full video is loaded
+      // initialize() returns as soon as video metadata is available (duration, dimensions)
+      // NOT when the full video is downloaded - this enables progressive loading
+      // The player will automatically buffer chunks as needed while playing
       await _videoPlayerController!.initialize();
 
       // Add listener to track buffering state
       _videoPlayerController!.addListener(_videoPlayerListener);
 
       // Start playing immediately after initialization
-      // The video will buffer progressively while playing
-      // This is the key: we don't wait for full buffering before starting playback
+      // With progressive loading enabled, playback begins as soon as enough data is buffered
+      // The player continues downloading ahead of the playback position in the background
+      // This provides a smooth viewing experience without waiting for the full video to download
       await _videoPlayerController!.play();
 
       _chewieController = ChewieController(
@@ -287,12 +334,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           backgroundColor: Colors.grey.withOpacity(0.3),
           bufferedColor: Colors.grey.withOpacity(0.5),
         ),
-        placeholder: Container(
-          color: Colors.black,
-          child: Center(
-            child: CircularProgressIndicator(color: const Color(0xFF9146FF)),
-          ),
-        ),
+        placeholder: const VideoPlayerShimmer(),
         errorBuilder: (context, errorMessage) {
           return Center(
             child: Column(
@@ -517,678 +559,791 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => context.pop(),
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.black.withOpacity(0.5),
-            padding: const EdgeInsets.all(8),
-          ),
-        ),
-        systemOverlayStyle: Theme.of(context).appBarTheme.systemOverlayStyle,
-      ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            // Video Player Section
-            SliverToBoxAdapter(
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: _isLoading
-                    ? Container(
-                        color: Colors.black,
-                        child: Center(
-                          child: CircularProgressIndicator(
-                            color: const Color(0xFFFF6B35),
-                          ),
-                        ),
-                      )
-                    : _hasError
-                    ? Container(
-                        color: Colors.black,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(
-                                Icons.error_outline,
-                                color: Colors.white,
-                                size: 48,
-                              ),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'Failed to load video',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              ElevatedButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _isLoading = true;
-                                    _hasError = false;
-                                  });
-                                  _fetchAndInitializePlayer();
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFF6B35),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 24,
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  elevation: 0,
-                                ),
-                                child: const Text(
-                                  'Retry',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : Chewie(controller: _chewieController!),
-              ),
+    return PopScope(
+      onPopInvoked: (didPop) {
+        if (didPop) {
+          _pauseVideo();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () {
+              _pauseVideo();
+              context.pop();
+            },
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.black.withOpacity(0.5),
+              padding: const EdgeInsets.all(8),
             ),
-            // Video Info Section
-            SliverToBoxAdapter(
-              child: Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Title
-                    Text(
-                      widget.video.videoTitle,
-                      style: const TextStyle(
-                        color: Color(0xFF1A1A1A),
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        height: 1.3,
-                        letterSpacing: -0.3,
+          ),
+          systemOverlayStyle: Theme.of(context).appBarTheme.systemOverlayStyle,
+        ),
+        body: SafeArea(
+          top: false,
+          bottom: false,
+          child: CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              // Video Player Section
+              SliverToBoxAdapter(
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: _isLoading
+                      ? const VideoPlayerShimmer()
+                      : _hasError
+                      ? Container(
+                          color: Colors.black,
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.error_outline,
+                                  color: Colors.white,
+                                  size: 48,
+                                ),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'Failed to load video',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 24),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isLoading = true;
+                                      _hasError = false;
+                                    });
+                                    _fetchAndInitializePlayer();
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFF6B35),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 24,
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                  child: const Text(
+                                    'Retry',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : Chewie(controller: _chewieController!),
+                ),
+              ),
+              // Video Info Section
+              SliverToBoxAdapter(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title
+                      Text(
+                        widget.video.videoTitle,
+                        style: const TextStyle(
+                          color: Color(0xFF1A1A1A),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                          letterSpacing: -0.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 8),
-                    // Stats Row (Views and Date)
-                    Row(
-                      children: [
-                        Text(
-                          '${_formatCount(widget.video.videoViews)} views',
-                          style: const TextStyle(
-                            color: Color(0xFF6B6B6B),
-                            fontSize: 13,
+                      const SizedBox(height: 8),
+                      // Stats Row (Views and Date)
+                      Row(
+                        children: [
+                          Text(
+                            '${_formatCount(widget.video.videoViews)} views',
+                            style: const TextStyle(
+                              color: Color(0xFF6B6B6B),
+                              fontSize: 13,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          width: 3,
-                          height: 3,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF6B6B6B),
-                            shape: BoxShape.circle,
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF6B6B6B),
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _formatDate(widget.video.createdAt),
-                          style: const TextStyle(
-                            color: Color(0xFF6B6B6B),
-                            fontSize: 13,
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatDate(widget.video.createdAt),
+                            style: const TextStyle(
+                              color: Color(0xFF6B6B6B),
+                              fontSize: 13,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    // Action Buttons Row
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _VideoActionButton(
-                            icon: _isUpvoted
-                                ? Icons.thumb_up
-                                : Icons.thumb_up_outlined,
-                            label: _formatCount(_upvoteCount),
-                            isActive: _isUpvoted,
-                            onTap: () async {
-                              // Optimistic update
-                              final wasUpvoted = _isUpvoted;
-                              final previousUpvoteCount = _upvoteCount;
-                              final wasDownvoted = _isDownvoted;
-                              final previousDownvoteCount = _downvoteCount;
-
-                              setState(() {
-                                if (_isUpvoted) {
-                                  _isUpvoted = false;
-                                  _upvoteCount--;
-                                } else {
-                                  if (_isDownvoted) {
-                                    _isDownvoted = false;
-                                    _downvoteCount--;
-                                  }
-                                  _isUpvoted = true;
-                                  _upvoteCount++;
-                                }
-                              });
-
-                              // Call API
-                              try {
-                                final videoRepository = context
-                                    .read<VideoRepository>();
-                                await videoRepository.upvoteVideo(
-                                  widget.video.videoId,
-                                );
-                              } catch (e) {
-                                // Revert on error
-                                if (mounted) {
-                                  setState(() {
-                                    _isUpvoted = wasUpvoted;
-                                    _upvoteCount = previousUpvoteCount;
-                                    _isDownvoted = wasDownvoted;
-                                    _downvoteCount = previousDownvoteCount;
-                                  });
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Action Buttons Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _VideoActionButton(
+                              icon: _isUpvoted
+                                  ? Icons.thumb_up
+                                  : Icons.thumb_up_outlined,
+                              label: _formatCount(_upvoteCount),
+                              isActive: _isUpvoted,
+                              onTap: () async {
+                                final authRepository = context
+                                    .read<AuthRepository>();
+                                if (authRepository.currentUser == null) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text(
-                                        'Failed to upvote: ${e.toString()}',
+                                      content: const Text(
+                                        'Please sign in to vote',
                                       ),
-                                      backgroundColor: Colors.red,
+                                      action: SnackBarAction(
+                                        label: 'Sign In',
+                                        onPressed: () {
+                                          context.push('/login');
+                                        },
+                                      ),
+                                      backgroundColor: Colors.orange,
                                     ),
                                   );
+                                  return;
                                 }
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _VideoActionButton(
-                            icon: _isDownvoted
-                                ? Icons.thumb_down
-                                : Icons.thumb_down_outlined,
-                            label: _formatCount(_downvoteCount),
-                            isActive: _isDownvoted,
-                            onTap: () async {
-                              // Optimistic update
-                              final wasDownvoted = _isDownvoted;
-                              final previousDownvoteCount = _downvoteCount;
-                              final wasUpvoted = _isUpvoted;
-                              final previousUpvoteCount = _upvoteCount;
 
-                              setState(() {
-                                if (_isDownvoted) {
-                                  _isDownvoted = false;
-                                  _downvoteCount--;
-                                } else {
+                                // Optimistic update
+                                final wasUpvoted = _isUpvoted;
+                                final previousUpvoteCount = _upvoteCount;
+                                final wasDownvoted = _isDownvoted;
+                                final previousDownvoteCount = _downvoteCount;
+
+                                setState(() {
                                   if (_isUpvoted) {
                                     _isUpvoted = false;
                                     _upvoteCount--;
+                                  } else {
+                                    if (_isDownvoted) {
+                                      _isDownvoted = false;
+                                      _downvoteCount--;
+                                    }
+                                    _isUpvoted = true;
+                                    _upvoteCount++;
                                   }
-                                  _isDownvoted = true;
-                                  _downvoteCount++;
-                                }
-                              });
+                                });
 
-                              // Call API
-                              try {
-                                final videoRepository = context
-                                    .read<VideoRepository>();
-                                await videoRepository.downvoteVideo(
-                                  widget.video.videoId,
-                                );
-                              } catch (e) {
-                                // Revert on error
-                                if (mounted) {
-                                  setState(() {
-                                    _isDownvoted = wasDownvoted;
-                                    _downvoteCount = previousDownvoteCount;
-                                    _isUpvoted = wasUpvoted;
-                                    _upvoteCount = previousUpvoteCount;
-                                  });
+                                // Call API
+                                try {
+                                  final videoRepository = context
+                                      .read<VideoRepository>();
+                                  await videoRepository.upvoteVideo(
+                                    widget.video.videoId,
+                                  );
+                                } catch (e) {
+                                  // Revert on error
+                                  if (mounted) {
+                                    setState(() {
+                                      _isUpvoted = wasUpvoted;
+                                      _upvoteCount = previousUpvoteCount;
+                                      _isDownvoted = wasDownvoted;
+                                      _downvoteCount = previousDownvoteCount;
+                                    });
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Failed to upvote: ${e.toString()}',
+                                        ),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _VideoActionButton(
+                              icon: _isDownvoted
+                                  ? Icons.thumb_down
+                                  : Icons.thumb_down_outlined,
+                              label: _formatCount(_downvoteCount),
+                              isActive: _isDownvoted,
+                              onTap: () async {
+                                final authRepository = context
+                                    .read<AuthRepository>();
+                                if (authRepository.currentUser == null) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content: Text(
-                                        'Failed to downvote: ${e.toString()}',
+                                      content: const Text(
+                                        'Please sign in to vote',
                                       ),
-                                      backgroundColor: Colors.red,
+                                      action: SnackBarAction(
+                                        label: 'Sign In',
+                                        onPressed: () {
+                                          context.push('/login');
+                                        },
+                                      ),
+                                      backgroundColor: Colors.orange,
                                     ),
                                   );
+                                  return;
                                 }
-                              }
+
+                                // Optimistic update
+                                final wasDownvoted = _isDownvoted;
+                                final previousDownvoteCount = _downvoteCount;
+                                final wasUpvoted = _isUpvoted;
+                                final previousUpvoteCount = _upvoteCount;
+
+                                setState(() {
+                                  if (_isDownvoted) {
+                                    _isDownvoted = false;
+                                    _downvoteCount--;
+                                  } else {
+                                    if (_isUpvoted) {
+                                      _isUpvoted = false;
+                                      _upvoteCount--;
+                                    }
+                                    _isDownvoted = true;
+                                    _downvoteCount++;
+                                  }
+                                });
+
+                                // Call API
+                                try {
+                                  final videoRepository = context
+                                      .read<VideoRepository>();
+                                  await videoRepository.downvoteVideo(
+                                    widget.video.videoId,
+                                  );
+                                } catch (e) {
+                                  // Revert on error
+                                  if (mounted) {
+                                    setState(() {
+                                      _isDownvoted = wasDownvoted;
+                                      _downvoteCount = previousDownvoteCount;
+                                      _isUpvoted = wasUpvoted;
+                                      _upvoteCount = previousUpvoteCount;
+                                    });
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Failed to downvote: ${e.toString()}',
+                                        ),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _VideoActionButton(
+                              icon: Icons.share_outlined,
+                              label: 'Share',
+                              onTap: () {
+                                _showShareDialog(context);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.more_vert,
+                              color: Color(0xFF6B6B6B),
+                              size: 20,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 40,
+                              minHeight: 40,
+                            ),
+                            onPressed: () {
+                              // TODO: Show more options
                             },
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _VideoActionButton(
-                            icon: Icons.share_outlined,
-                            label: 'Share',
-                            onTap: () {
-                              _showShareDialog(context);
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.more_vert,
-                            color: Color(0xFF6B6B6B),
-                            size: 20,
-                          ),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 40,
-                            minHeight: 40,
-                          ),
-                          onPressed: () {
-                            // TODO: Show more options
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            // Channel Section
-            SliverToBoxAdapter(
-              child: Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        if (widget.video.userUsername.isNotEmpty) {
-                          context.push('/users/${widget.video.userUsername}');
-                        }
-                      },
-                      child: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: const Color(0xFFFF6B35),
-                        child: Text(
-                          widget.video.userUsername.isNotEmpty
-                              ? widget.video.userUsername[0].toUpperCase()
-                              : 'U',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
+              // Channel Section
+              SliverToBoxAdapter(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Row(
+                    children: [
+                      GestureDetector(
                         onTap: () {
                           if (widget.video.userUsername.isNotEmpty) {
                             context.push('/users/${widget.video.userUsername}');
                           }
                         },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.video.userUsername.isNotEmpty
-                                  ? widget.video.userUsername
-                                  : 'Unknown User',
-                              style: const TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
+                        child: CircleAvatar(
+                          radius: 20,
+                          backgroundColor: const Color(0xFFFF6B35),
+                          child: Text(
+                            widget.video.userUsername.isNotEmpty
+                                ? widget.video.userUsername[0].toUpperCase()
+                                : 'U',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                    // Show follow button only if not own video and username is available
-                    if (_currentUser != null &&
-                        _currentUser!.username != widget.video.userUsername &&
-                        widget.video.userUsername.isNotEmpty)
-                      _isLoadingFollowStatus
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : ElevatedButton(
-                              onPressed: _handleFollowUnfollow,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _isFollowing
-                                    ? Colors.grey[300]
-                                    : const Color(0xFFFF6B35),
-                                foregroundColor: _isFollowing
-                                    ? Colors.black87
-                                    : Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                minimumSize: const Size(0, 36),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: Text(
-                                _isFollowing ? 'Unfollow' : 'Follow',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ),
-                  ],
-                ),
-              ),
-            ),
-            // Description Section (Collapsible)
-            if (widget.video.videoDescription.isNotEmpty ||
-                widget.video.videoTags.isNotEmpty)
-              SliverToBoxAdapter(
-                child: Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Description
-                      if (widget.video.videoDescription.isNotEmpty)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.video.videoDescription,
-                              style: const TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 14,
-                                height: 1.5,
-                              ),
-                              maxLines: _isDescriptionExpanded ? null : 2,
-                              overflow: _isDescriptionExpanded
-                                  ? null
-                                  : TextOverflow.ellipsis,
-                            ),
-                            if (widget.video.videoDescription.length > 100)
-                              TextButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _isDescriptionExpanded =
-                                        !_isDescriptionExpanded;
-                                  });
-                                },
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(0, 28),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                child: Text(
-                                  _isDescriptionExpanded
-                                      ? 'Show less'
-                                      : 'Show more',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                    color: Color(0xFFFF6B35),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      // Tags
-                      if (widget.video.videoTags.isNotEmpty) ...[
-                        if (widget.video.videoDescription.isNotEmpty)
-                          const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: widget.video.videoTags.map((tag) {
-                            return InkWell(
-                              onTap: () {
-                                // TODO: Navigate to tag search
-                              },
-                              borderRadius: BorderRadius.circular(16),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFFFF6B35,
-                                  ).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: const Color(
-                                      0xFFFF6B35,
-                                    ).withOpacity(0.3),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Text(
-                                  '#$tag',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFFFF6B35),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            // Divider
-            SliverToBoxAdapter(
-              child: Container(height: 8, color: const Color(0xFFF5F5F5)),
-            ),
-            // Comments Section
-            SliverToBoxAdapter(
-              child: Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Comment Count Header
-                    Row(
-                      children: [
-                        Text(
-                          '${_formatCount(widget.video.videoComments)} Comments',
-                          style: const TextStyle(
-                            color: Color(0xFF1A1A1A),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const Spacer(),
-                        TextButton.icon(
-                          onPressed: () {
-                            // TODO: Sort comments
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            if (widget.video.userUsername.isNotEmpty) {
+                              context.push(
+                                '/users/${widget.video.userUsername}',
+                              );
+                            }
                           },
-                          icon: const Icon(
-                            Icons.sort,
-                            size: 16,
-                            color: Color(0xFF6B6B6B),
-                          ),
-                          label: const Text(
-                            'Sort',
-                            style: TextStyle(
-                              color: Color(0xFF6B6B6B),
-                              fontSize: 13,
-                            ),
-                          ),
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            minimumSize: const Size(0, 32),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    // Comment Input
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        CircleAvatar(
-                          radius: 18,
-                          backgroundColor: const Color(0xFFFF6B35),
-                          child: const Icon(
-                            Icons.person,
-                            size: 20,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _commentController,
-                            decoration: InputDecoration(
-                              hintText: 'Add a comment...',
-                              filled: true,
-                              fillColor: const Color(0xFFFAFAFA),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: BorderSide.none,
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                borderSide: const BorderSide(
-                                  color: Color(0xFFFF6B35),
-                                  width: 1.5,
-                                ),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 10,
-                              ),
-                              hintStyle: const TextStyle(
-                                color: Color(0xFF6B6B6B),
-                                fontSize: 14,
-                              ),
-                              suffixIcon: _commentController.text.isNotEmpty
-                                  ? IconButton(
-                                      icon: const Icon(
-                                        Icons.send,
-                                        color: Color(0xFFFF6B35),
-                                        size: 20,
-                                      ),
-                                      onPressed: _isPostingComment
-                                          ? null
-                                          : _postComment,
-                                      padding: const EdgeInsets.only(right: 8),
-                                    )
-                                  : null,
-                            ),
-                            style: const TextStyle(
-                              color: Color(0xFF1A1A1A),
-                              fontSize: 14,
-                            ),
-                            maxLines: null,
-                            minLines: 1,
-                            textInputAction: TextInputAction.send,
-                            onChanged: (value) {
-                              setState(() {});
-                            },
-                            onSubmitted: (value) {
-                              if (value.trim().isNotEmpty &&
-                                  !_isPostingComment) {
-                                _postComment();
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    // Comments List
-                    if (_isLoadingComments && _comments.isEmpty)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 32.0),
-                          child: CircularProgressIndicator(
-                            color: Color(0xFFFF6B35),
-                          ),
-                        ),
-                      )
-                    else if (_comments.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 32.0),
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFAFAFA),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: const Icon(
-                                  Icons.comment_outlined,
-                                  size: 48,
-                                  color: Color(0xFF6B6B6B),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'No comments yet',
-                                style: TextStyle(
+                              Text(
+                                widget.video.userUsername.isNotEmpty
+                                    ? widget.video.userUsername
+                                    : 'Unknown User',
+                                style: const TextStyle(
                                   color: Color(0xFF1A1A1A),
-                                  fontSize: 18,
+                                  fontSize: 15,
                                   fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Start the conversation.',
-                                style: TextStyle(
-                                  color: Color(0xFF6B6B6B),
-                                  fontSize: 14,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      )
-                    else
-                      ..._comments.map(
-                        (comment) => _buildCommentWidget(comment),
                       ),
-                  ],
+                      // Show follow button only if not own video and username is available
+                      if (_currentUser != null &&
+                          _currentUser!.username != widget.video.userUsername &&
+                          widget.video.userUsername.isNotEmpty)
+                        _isLoadingFollowStatus
+                            ? const InlineShimmer(width: 16, height: 16)
+                            : ElevatedButton(
+                                onPressed: _handleFollowUnfollow,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFFF6B35),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  minimumSize: const Size(0, 36),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                  elevation: 0,
+                                ),
+                                child: Text(
+                                  _isFollowing ? 'Following' : 'Follow',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+              // Description Section (Collapsible)
+              if (widget.video.videoDescription.isNotEmpty ||
+                  widget.video.videoTags.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Description
+                        if (widget.video.videoDescription.isNotEmpty)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.video.videoDescription,
+                                style: const TextStyle(
+                                  color: Color(0xFF1A1A1A),
+                                  fontSize: 14,
+                                  height: 1.5,
+                                ),
+                                maxLines: _isDescriptionExpanded ? null : 2,
+                                overflow: _isDescriptionExpanded
+                                    ? null
+                                    : TextOverflow.ellipsis,
+                              ),
+                              if (widget.video.videoDescription.length > 100)
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isDescriptionExpanded =
+                                          !_isDescriptionExpanded;
+                                    });
+                                  },
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: const Size(0, 28),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: Text(
+                                    _isDescriptionExpanded
+                                        ? 'Show less'
+                                        : 'Show more',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: Color(0xFFFF6B35),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        // Tags
+                        if (widget.video.videoTags.isNotEmpty) ...[
+                          if (widget.video.videoDescription.isNotEmpty)
+                            const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: widget.video.videoTags.map((tag) {
+                              return InkWell(
+                                onTap: () {
+                                  // TODO: Navigate to tag search
+                                },
+                                borderRadius: BorderRadius.circular(16),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFFFF6B35,
+                                    ).withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: const Color(
+                                        0xFFFF6B35,
+                                      ).withOpacity(0.3),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '#$tag',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFFFF6B35),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              // Divider
+              SliverToBoxAdapter(
+                child: Container(height: 8, color: const Color(0xFFF5F5F5)),
+              ),
+              // Comments Section
+              Builder(
+                builder: (context) {
+                  final authRepository = context.read<AuthRepository>();
+                  final isAuthenticated = authRepository.currentUser != null;
+
+                  if (!isAuthenticated) {
+                    // Show sign-in prompt for unauthenticated users
+                    return SliverToBoxAdapter(
+                      child: Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFAFAFA),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.comment_outlined,
+                                size: 48,
+                                color: Color(0xFF6B6B6B),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Sign in to view and post comments',
+                              style: TextStyle(
+                                color: Color(0xFF1A1A1A),
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Join the conversation by signing in.',
+                              style: TextStyle(
+                                color: Color(0xFF6B6B6B),
+                                fontSize: 14,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 20),
+                            FilledButton(
+                              onPressed: () {
+                                context.push('/login');
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFFF6B35),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 32,
+                                  vertical: 12,
+                                ),
+                              ),
+                              child: const Text('Sign In'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+
+                  // Show comments section for authenticated users
+                  return SliverToBoxAdapter(
+                    child: Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Comment Count Header
+                          Row(
+                            children: [
+                              Text(
+                                '${_formatCount(widget.video.videoComments)} Comments',
+                                style: const TextStyle(
+                                  color: Color(0xFF1A1A1A),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed: () {
+                                  // TODO: Sort comments
+                                },
+                                icon: const Icon(
+                                  Icons.sort,
+                                  size: 16,
+                                  color: Color(0xFF6B6B6B),
+                                ),
+                                label: const Text(
+                                  'Sort',
+                                  style: TextStyle(
+                                    color: Color(0xFF6B6B6B),
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  minimumSize: const Size(0, 32),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Comment Input
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              CircleAvatar(
+                                radius: 18,
+                                backgroundColor: const Color(0xFFFF6B35),
+                                child: const Icon(
+                                  Icons.person,
+                                  size: 20,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextField(
+                                  controller: _commentController,
+                                  decoration: InputDecoration(
+                                    hintText: 'Add a comment...',
+                                    filled: true,
+                                    fillColor: const Color(0xFFFAFAFA),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(24),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(24),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(24),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFFFF6B35),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 10,
+                                    ),
+                                    hintStyle: const TextStyle(
+                                      color: Color(0xFF6B6B6B),
+                                      fontSize: 14,
+                                    ),
+                                    suffixIcon:
+                                        _commentController.text.isNotEmpty
+                                        ? IconButton(
+                                            icon: const Icon(
+                                              Icons.send,
+                                              color: Color(0xFFFF6B35),
+                                              size: 20,
+                                            ),
+                                            onPressed: _isPostingComment
+                                                ? null
+                                                : _postComment,
+                                            padding: const EdgeInsets.only(
+                                              right: 8,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  style: const TextStyle(
+                                    color: Color(0xFF1A1A1A),
+                                    fontSize: 14,
+                                  ),
+                                  maxLines: null,
+                                  minLines: 1,
+                                  textInputAction: TextInputAction.send,
+                                  onChanged: (value) {
+                                    setState(() {});
+                                  },
+                                  onSubmitted: (value) {
+                                    if (value.trim().isNotEmpty &&
+                                        !_isPostingComment) {
+                                      _postComment();
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          // Comments List
+                          if (_isLoadingComments && _comments.isEmpty)
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 32.0),
+                                child: CircularProgressIndicator(
+                                  color: Color(0xFFFF6B35),
+                                ),
+                              ),
+                            )
+                          else if (_comments.isEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 32.0,
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(20),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFAFAFA),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Icon(
+                                        Icons.comment_outlined,
+                                        size: 48,
+                                        color: Color(0xFF6B6B6B),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Text(
+                                      'No comments yet',
+                                      style: TextStyle(
+                                        color: Color(0xFF1A1A1A),
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'Start the conversation.',
+                                      style: TextStyle(
+                                        color: Color(0xFF6B6B6B),
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            ..._comments.map(
+                              (comment) => _buildCommentWidget(comment),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
