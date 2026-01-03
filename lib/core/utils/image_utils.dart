@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Utility functions for handling image URLs, especially profile pictures
 class ImageUtils {
   // Base URL for profile images
@@ -8,6 +10,31 @@ class ImageUtils {
   // TODO: Move this to environment variables or secure storage
   static const String profileImageApiKey = 'SECRET_KEY';
 
+  /// Checks if a URL is a valid image URL (not a placeholder)
+  static bool isValidImageUrl(String? url) {
+    if (url == null || url.trim().isEmpty) {
+      debugPrint('ImageUtils.isValidImageUrl: URL is null or empty');
+      return false;
+    }
+
+    final trimmedUrl = url.trim().toLowerCase();
+
+    // Filter out known placeholder/invalid URLs
+    final invalidUrls = [
+      'https://example.com/newpic.jpg',
+      'http://example.com/newpic.jpg',
+      'example.com/newpic.jpg',
+    ];
+
+    final isValid = !invalidUrls.contains(trimmedUrl);
+    if (!isValid) {
+      debugPrint(
+        'ImageUtils.isValidImageUrl: URL "$trimmedUrl" is in invalid list',
+      );
+    }
+    return isValid;
+  }
+
   /// Constructs a profile image URL from a profile picture path
   ///
   /// The profile_picture field from the API contains a path like:
@@ -15,22 +42,74 @@ class ImageUtils {
   ///
   /// This function constructs the full URL:
   /// https://black-paper-83cf.hiffi.workers.dev/ProfileProto/users/...
-  static String? getProfileImageUrl(String? profilePicture) {
-    if (profilePicture == null || profilePicture.isEmpty) {
+  ///
+  /// [cacheBust] - Optional timestamp to bust cache (useful after image updates)
+  static String? getProfileImageUrl(String? profilePicture, {int? cacheBust}) {
+    if (profilePicture == null || profilePicture.trim().isEmpty) {
       return null;
     }
 
-    // Ensure path starts with / if it doesn't already
-    final path = profilePicture.startsWith('/')
-        ? profilePicture
-        : '/$profilePicture';
+    final trimmedPicture = profilePicture.trim();
 
-    return '$profileImageBaseUrl$path';
+    // Filter out invalid placeholder URLs
+    if (!isValidImageUrl(trimmedPicture)) {
+      return null;
+    }
+
+    // If it's already a full URL (starts with http:// or https://), return as-is
+    if (trimmedPicture.startsWith('http://') ||
+        trimmedPicture.startsWith('https://')) {
+      // Add cache-busting parameter if provided
+      if (cacheBust != null) {
+        final separator = trimmedPicture.contains('?') ? '&' : '?';
+        return '$trimmedPicture$separator v=$cacheBust';
+      }
+      return trimmedPicture;
+    }
+
+    // Ensure path starts with / if it doesn't already
+    final path = trimmedPicture.startsWith('/')
+        ? trimmedPicture
+        : '/$trimmedPicture';
+
+    final baseUrl = '$profileImageBaseUrl$path';
+
+    // Add cache-busting parameter if provided (for iOS cache issues)
+    if (cacheBust != null) {
+      return '$baseUrl?v=$cacheBust';
+    }
+
+    return baseUrl;
   }
 
   /// Gets headers required for profile image requests
-  static Map<String, String> getProfileImageHeaders() {
-    return {'x-api-key': profileImageApiKey};
+  ///
+  /// Headers are needed for all Hiffi profile images, whether they're:
+  /// - Paths (e.g., "ProfileProto/users/...")
+  /// - Full URLs from the Hiffi Workers domain
+  static Map<String, String>? getProfileImageHeaders(String? url) {
+    if (url == null || url.isEmpty) {
+      return null;
+    }
+
+    // Check if URL is from Hiffi Workers domain (full URL)
+    if (url.contains(profileImageBaseUrl) ||
+        url.contains('hiffi.workers.dev')) {
+      return {'x-api-key': profileImageApiKey};
+    }
+
+    // Check if URL is a path (starts with ProfileProto or thumbnails)
+    // These paths will be processed by getProfileImageUrl and need headers
+    final trimmedUrl = url.trim();
+    if (trimmedUrl.startsWith('ProfileProto/') ||
+        trimmedUrl.startsWith('/ProfileProto/') ||
+        trimmedUrl.startsWith('thumbnails/') ||
+        trimmedUrl.startsWith('/thumbnails/')) {
+      return {'x-api-key': profileImageApiKey};
+    }
+
+    // For any other URLs (external domains), don't add headers
+    return null;
   }
 
   /// Constructs a video URL for accessing videos via Cloudflare Workers
@@ -60,6 +139,12 @@ class ImageUtils {
   static String? getVideoThumbnailUrl(String? videoThumbnail) {
     if (videoThumbnail == null || videoThumbnail.isEmpty) {
       return null;
+    }
+
+    // If it's already a full URL (starts with http:// or https://), return as-is
+    if (videoThumbnail.startsWith('http://') ||
+        videoThumbnail.startsWith('https://')) {
+      return videoThumbnail;
     }
 
     // Ensure path starts with / if it doesn't already

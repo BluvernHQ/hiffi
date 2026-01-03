@@ -12,12 +12,16 @@ class VideoInfo {
   final bool upvoted;
   final bool downvoted;
   final bool following;
+  final String? profilePicture;
+  final VideoModel? video; // Full video object if available
 
   VideoInfo({
     required this.videoUrl,
     required this.upvoted,
     required this.downvoted,
     required this.following,
+    this.profilePicture,
+    this.video,
   });
 }
 
@@ -33,6 +37,16 @@ abstract class VideoRepository {
     required int offset,
     String? seed,
   });
+  Future<List<VideoModel>> getFollowingVideos({
+    required int limit,
+    required int offset,
+    String? seed,
+  });
+  Future<List<VideoModel>> getVideosByUsername({
+    required String username,
+    required int limit,
+    required int offset,
+  });
   Future<VideoInfo> getVideoInfo(String videoId);
   Future<String> getVideoUrl(
     String videoId,
@@ -41,17 +55,18 @@ abstract class VideoRepository {
   Future<void> downvoteVideo(String videoId);
   Future<String?> getUserVoteStatus(String videoId);
   Future<void> postComment(String videoId, String comment);
-  Future<List<CommentModel>> getComments(
+  Future<CommentsResponse> getComments(
     String videoId, {
     required int page,
     required int limit,
   });
   Future<void> postReply(String commentId, String reply);
-  Future<List<ReplyModel>> getReplies(
+  Future<RepliesResponse> getReplies(
     String commentId, {
     required int page,
     required int limit,
   });
+  Future<void> deleteVideo(String videoId);
 }
 
 class VideoRepositoryImpl implements VideoRepository {
@@ -66,7 +81,7 @@ class VideoRepositoryImpl implements VideoRepository {
     String? searchQuery,
     String? seed,
   }) async {
-    // API uses GET with query parameters: limit, offset, seed
+    // API uses GET with query parameters: limit, offset, seed, search
     // Convert page to offset (offset = (page - 1) * limit)
     final offset = (page - 1) * limit;
 
@@ -75,6 +90,11 @@ class VideoRepositoryImpl implements VideoRepository {
       'limit': limit.toString(),
       'offset': offset.toString(),
     };
+
+    // Add search query if provided
+    if (searchQuery != null && searchQuery.trim().isNotEmpty) {
+      queryParams['search'] = searchQuery.trim();
+    }
 
     // Use provided seed or generate a random one for deterministic random pagination
     final seedToUse = seed ?? _generateRandomSeed();
@@ -244,6 +264,183 @@ class VideoRepositoryImpl implements VideoRepository {
   }
 
   @override
+  Future<List<VideoModel>> getFollowingVideos({
+    required int limit,
+    required int offset,
+    String? seed,
+  }) async {
+    // Build query parameters
+    final queryParams = <String, String>{
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    };
+
+    // Use provided seed or generate a random one for deterministic random pagination
+    final seedToUse = seed ?? _generateRandomSeed();
+    queryParams['seed'] = seedToUse;
+
+    final queryString = queryParams.entries
+        .map(
+          (e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+        )
+        .join('&');
+
+    final endpoint = '${ApiConstants.videoListFollowing}?$queryString';
+
+    // Authentication is required for /videos/list/following
+    final response = await _apiClient.get(endpoint, requiresAuth: true);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch following videos: ${response.statusCode}',
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    // API returns: {"success": true, "data": {"videos": [{"video": {...}, "following": true}]}}
+    if (json['success'] == true) {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data != null) {
+        final videosJson = data['videos'] as List<dynamic>? ?? [];
+        final videos = <VideoModel>[];
+
+        for (final item in videosJson) {
+          try {
+            final itemMap = item as Map<String, dynamic>;
+            // Extract video object from nested structure
+            final videoJson = itemMap['video'] as Map<String, dynamic>?;
+
+            if (videoJson != null) {
+              // Extract profile_picture from outer item (not from video object)
+              final profilePicture = itemMap['profile_picture'] as String?;
+
+              // Add profile_picture to videoJson before parsing
+              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              if (profilePicture != null) {
+                videoJsonWithProfile['profile_picture'] = profilePicture;
+              }
+
+              final video = VideoModel.fromJson(videoJsonWithProfile);
+              videos.add(video);
+            } else {
+              // Fallback: treat entire item as video object if no nested 'video' key
+              final video = VideoModel.fromJson(itemMap);
+              videos.add(video);
+            }
+          } catch (e) {
+            // Log error but continue parsing other videos
+            print('⚠️ Error parsing video: $e');
+            print('   Item: $item');
+          }
+        }
+
+        return videos;
+      }
+    }
+
+    // Fallback for old format: {"status": "success", "videos": [...]}
+    if (json['status'] == 'success' || json['videos'] != null) {
+      final videosJson = json['videos'] as List<dynamic>? ?? [];
+      return videosJson
+          .map(
+            (videoJson) =>
+                VideoModel.fromJson(videoJson as Map<String, dynamic>),
+          )
+          .toList();
+    }
+
+    throw Exception('Unexpected response format: ${json.keys}');
+  }
+
+  @override
+  Future<List<VideoModel>> getVideosByUsername({
+    required String username,
+    required int limit,
+    required int offset,
+  }) async {
+    // Build query parameters
+    final queryParams = <String, String>{
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    };
+
+    final queryString = queryParams.entries
+        .map(
+          (e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+        )
+        .join('&');
+
+    final endpoint =
+        '${ApiConstants.listVideosByUsername(username)}?$queryString';
+
+    // Authentication is optional - provides additional info if authenticated
+    final response = await _apiClient.get(endpoint, optionalAuth: true);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch videos: ${response.statusCode}');
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    // API returns: {"success": true, "data": {"videos": [{"video": {...}, "following": true}]}}
+    if (json['success'] == true) {
+      final data = json['data'] as Map<String, dynamic>?;
+      if (data != null) {
+        final videosJson = data['videos'] as List<dynamic>? ?? [];
+        final videos = <VideoModel>[];
+
+        for (final item in videosJson) {
+          try {
+            final itemMap = item as Map<String, dynamic>;
+            // Extract video object from nested structure
+            final videoJson = itemMap['video'] as Map<String, dynamic>?;
+
+            if (videoJson != null) {
+              // Extract profile_picture from outer item (not from video object)
+              final profilePicture = itemMap['profile_picture'] as String?;
+
+              // Add profile_picture to videoJson before parsing
+              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              if (profilePicture != null) {
+                videoJsonWithProfile['profile_picture'] = profilePicture;
+              }
+
+              final video = VideoModel.fromJson(videoJsonWithProfile);
+              videos.add(video);
+            } else {
+              // Fallback: treat entire item as video object if no nested 'video' key
+              final video = VideoModel.fromJson(itemMap);
+              videos.add(video);
+            }
+          } catch (e) {
+            // Log error but continue parsing other videos
+            print('⚠️ Error parsing video: $e');
+            print('   Item: $item');
+          }
+        }
+
+        return videos;
+      }
+    }
+
+    // Fallback for old format: {"status": "success", "videos": [...]}
+    if (json['status'] == 'success' || json['videos'] != null) {
+      final videosJson = json['videos'] as List<dynamic>? ?? [];
+      return videosJson
+          .map(
+            (videoJson) =>
+                VideoModel.fromJson(videoJson as Map<String, dynamic>),
+          )
+          .toList();
+    }
+
+    throw Exception('Unexpected response format: ${json.keys}');
+  }
+
+  @override
   Future<VideoInfo> getVideoInfo(String videoId) async {
     // API endpoint: GET /videos/{videoID}
     // Authentication is optional - provides additional info if authenticated
@@ -258,17 +455,36 @@ class VideoRepositoryImpl implements VideoRepository {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
-    // API returns: {"success": true, "data": {"video_url": "...", "upvoted": false, "downvoted": false, "following": false}}
+    // New API format: {"success": true, "data": {"video_url": "...", "upvoted": false, "downvoted": false, "following": false, "profile_picture": "", "video": {...}}}
     if (json['success'] == true) {
       final data = json['data'] as Map<String, dynamic>?;
       if (data != null) {
         final videoUrlFromApi = data['video_url'] as String?;
         if (videoUrlFromApi != null && videoUrlFromApi.isNotEmpty) {
+          // Parse the nested video object if available
+          VideoModel? videoModel;
+          final videoJson = data['video'] as Map<String, dynamic>?;
+          if (videoJson != null) {
+            try {
+              // Merge profile_picture from data level into video object for VideoModel
+              final videoData = Map<String, dynamic>.from(videoJson);
+              if (data['profile_picture'] != null) {
+                videoData['profile_picture'] = data['profile_picture'];
+              }
+              videoModel = VideoModel.fromJson(videoData);
+            } catch (e) {
+              // If parsing fails, continue without video object
+              // This maintains backward compatibility
+            }
+          }
+
           return VideoInfo(
             videoUrl: videoUrlFromApi,
             upvoted: data['upvoted'] as bool? ?? false,
             downvoted: data['downvoted'] as bool? ?? false,
             following: data['following'] as bool? ?? false,
+            profilePicture: data['profile_picture'] as String?,
+            video: videoModel,
           );
         }
       }
@@ -283,6 +499,8 @@ class VideoRepositoryImpl implements VideoRepository {
           upvoted: false,
           downvoted: false,
           following: false,
+          profilePicture: null,
+          video: null,
         );
       }
     }
@@ -295,6 +513,8 @@ class VideoRepositoryImpl implements VideoRepository {
         upvoted: false,
         downvoted: false,
         following: false,
+        profilePicture: null,
+        video: null,
       );
     }
 
@@ -385,7 +605,7 @@ class VideoRepositoryImpl implements VideoRepository {
   }
 
   @override
-  Future<List<CommentModel>> getComments(
+  Future<CommentsResponse> getComments(
     String videoId, {
     required int page,
     required int limit,
@@ -419,27 +639,7 @@ class VideoRepositoryImpl implements VideoRepository {
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
     // API returns: {"success": true, "data": {"comments": [...], "limit": 20, "offset": 0, "count": 150}}
-    if (json['success'] == true) {
-      final data = json['data'] as Map<String, dynamic>?;
-      if (data != null) {
-        final commentsJson = data['comments'] as List<dynamic>? ?? [];
-        return commentsJson
-            .map(
-              (commentJson) =>
-                  CommentModel.fromJson(commentJson as Map<String, dynamic>),
-            )
-            .toList();
-      }
-    }
-
-    // Fallback for old format
-    final commentsJson = json['comments'] as List<dynamic>? ?? [];
-    return commentsJson
-        .map(
-          (commentJson) =>
-              CommentModel.fromJson(commentJson as Map<String, dynamic>),
-        )
-        .toList();
+    return CommentsResponse.fromJson(json);
   }
 
   @override
@@ -462,7 +662,7 @@ class VideoRepositoryImpl implements VideoRepository {
   }
 
   @override
-  Future<List<ReplyModel>> getReplies(
+  Future<RepliesResponse> getReplies(
     String commentId, {
     required int page,
     required int limit,
@@ -495,27 +695,27 @@ class VideoRepositoryImpl implements VideoRepository {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
 
-    // API returns: {"success": true, "data": {"replies": [...], "limit": 20, "offset": 0, "count": 25}}
-    if (json['success'] == true) {
-      final data = json['data'] as Map<String, dynamic>?;
-      if (data != null) {
-        final repliesJson = data['replies'] as List<dynamic>? ?? [];
-        return repliesJson
-            .map(
-              (replyJson) =>
-                  ReplyModel.fromJson(replyJson as Map<String, dynamic>),
-            )
-            .toList();
-      }
+    return RepliesResponse.fromJson(json);
+  }
+
+  @override
+  Future<void> deleteVideo(String videoId) async {
+    final response = await _apiClient.delete(
+      ApiConstants.deleteVideo(videoId),
+      requiresAuth: true,
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw Exception('Failed to delete video: ${response.statusCode}');
     }
 
-    // Fallback for old format
-    final repliesJson = json['replies'] as List<dynamic>? ?? [];
-    return repliesJson
-        .map(
-          (replyJson) => ReplyModel.fromJson(replyJson as Map<String, dynamic>),
-        )
-        .toList();
+    final responseBody = response.body.isNotEmpty
+        ? jsonDecode(response.body)
+        : null;
+    if (responseBody != null && responseBody['success'] == false) {
+      final error = responseBody['error'] as String? ?? 'Unknown error';
+      throw Exception('Delete video failed: $error');
+    }
   }
 
   /// Generates a random alphanumeric seed for video pagination

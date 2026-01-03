@@ -1,5 +1,6 @@
 import 'dart:developer' as developer;
 import 'dart:convert';
+import 'dart:io';
 
 import '../../../core/exceptions/api_exception.dart';
 import '../../../core/services/api_client.dart';
@@ -21,7 +22,10 @@ abstract class UserRepository {
     String? email,
     String? bio,
     String? role,
+    String? profilePicture,
   });
+  Future<Map<String, dynamic>> getProfilePhotoUploadUrl();
+  Future<void> uploadProfilePhoto(String gatewayUrl, File imageFile);
   Future<void> deleteUser(String username);
   Future<void> followUser(String username);
   Future<void> unfollowUser(String username);
@@ -239,6 +243,7 @@ class ApiUserRepository implements UserRepository {
     String? email,
     String? bio,
     String? role,
+    String? profilePicture,
   }) async {
     developer.log(
       'Updating user: name=$name, email=$email, bio=$bio',
@@ -267,6 +272,9 @@ class ApiUserRepository implements UserRepository {
       }
       if (role != null && role.isNotEmpty) {
         body['role'] = role;
+      }
+      if (profilePicture != null) {
+        body['profile_picture'] = profilePicture;
       }
 
       // Use /users/self endpoint (user identified by JWT token)
@@ -324,6 +332,101 @@ class ApiUserRepository implements UserRepository {
         rethrow;
       }
       throw ApiException('Failed to update user: $error', null);
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> getProfilePhotoUploadUrl() async {
+    developer.log('Getting profile photo upload URL', name: 'hiffi.user');
+    print('📸 Getting profile photo upload URL');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.profilePhotoUpload,
+        {},
+        requiresAuth: true,
+      );
+
+      developer.log(
+        'Profile photo upload URL response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200) {
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
+          if (data != null) {
+            final gatewayUrl = data['gateway_url'] as String?;
+            final path = data['path'] as String?;
+            if (gatewayUrl != null && path != null) {
+              print('   ✅ Profile photo upload URL received');
+              return {'gateway_url': gatewayUrl, 'path': path};
+            }
+          }
+        }
+        throw ApiException('Invalid response format', response.statusCode);
+      } else {
+        final errorMessage =
+            'Failed to get profile photo upload URL: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        throw ApiException(errorMessage, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to get profile photo upload URL: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error getting profile photo upload URL: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException(
+        'Failed to get profile photo upload URL: $error',
+        null,
+      );
+    }
+  }
+
+  @override
+  Future<void> uploadProfilePhoto(String gatewayUrl, File imageFile) async {
+    developer.log('Uploading profile photo', name: 'hiffi.user');
+    print('📤 Uploading profile photo to gateway');
+
+    try {
+      final response = await _apiClient.uploadFileToGateway(
+        gatewayUrl,
+        imageFile,
+        contentType: 'image/jpeg',
+      );
+
+      developer.log(
+        'Profile photo upload response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        print('   ✅ Profile photo uploaded successfully');
+      } else {
+        final errorMessage =
+            'Failed to upload profile photo: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        throw ApiException(errorMessage, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to upload profile photo: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error uploading profile photo: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException('Failed to upload profile photo: $error', null);
     }
   }
 

@@ -12,8 +12,10 @@ import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
-import '../../../video/domain/repositories/video_repository.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
+import '../../../search/presentation/widgets/search_overlay.dart';
+import '../../../../core/widgets/main_scaffold.dart';
+import '../../../../core/widgets/app_sidebar.dart';
 import '../viewmodels/home_view_model.dart';
 
 class HomePage extends StatefulWidget {
@@ -27,10 +29,7 @@ class _HomePageState extends State<HomePage> {
   StreamSubscription? _authSubscription;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  Timer? _searchDebounce;
   bool _isSearchActive = false;
-  List<VideoModel> _searchSuggestions = [];
-  bool _isLoadingSuggestions = false;
 
   @override
   void initState() {
@@ -46,84 +45,11 @@ class _HomePageState extends State<HomePage> {
     _authSubscription?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _searchDebounce?.cancel();
     super.dispose();
-  }
-
-  Future<void> _loadSearchSuggestions(String query) async {
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchSuggestions = [];
-        _isLoadingSuggestions = false;
-      });
-      return;
-    }
-
-    // Only show loading if we don't have suggestions yet or query changed significantly
-    if (_searchSuggestions.isEmpty ||
-        !_searchController.text.toLowerCase().startsWith(
-          _searchSuggestions.isNotEmpty
-              ? _searchSuggestions.first.videoTitle.toLowerCase().substring(
-                  0,
-                  _searchSuggestions.first.videoTitle.length > query.length
-                      ? query.length
-                      : _searchSuggestions.first.videoTitle.length,
-                )
-              : '',
-        )) {
-      setState(() {
-        _isLoadingSuggestions = true;
-      });
-    }
-
-    try {
-      final videoRepository = context.read<VideoRepository>();
-      final suggestions = await videoRepository.getVideos(
-        page: 1,
-        limit: 5, // Show 5 suggestions
-        searchQuery: query,
-      );
-
-      if (mounted && _searchController.text == query) {
-        setState(() {
-          _searchSuggestions = suggestions;
-          _isLoadingSuggestions = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _searchSuggestions = [];
-          _isLoadingSuggestions = false;
-        });
-      }
-    }
   }
 
   void _onSearchChanged(String query) {
     setState(() {}); // Update UI to show/hide clear button
-
-    _searchDebounce?.cancel();
-
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchSuggestions = [];
-        _isLoadingSuggestions = false;
-      });
-      return;
-    }
-
-    // Load suggestions immediately as user types (with shorter debounce for better UX)
-    _loadSearchSuggestions(query);
-
-    // Perform full search after debounce (only if user stops typing)
-    _searchDebounce = Timer(const Duration(milliseconds: 1000), () {
-      if (!mounted) return;
-      final videoViewModel = context.read<VideoViewModel>();
-      if (query.trim().isNotEmpty) {
-        videoViewModel.search(query);
-      }
-    });
   }
 
   void _onSuggestionTap(VideoModel video) {
@@ -131,10 +57,21 @@ class _HomePageState extends State<HomePage> {
     _searchFocusNode.unfocus();
     setState(() {
       _isSearchActive = false;
-      _searchSuggestions = [];
     });
     // Navigate to video player
     context.push('/video/${video.videoId}', extra: video);
+  }
+
+  void _onViewAllResults() {
+    final query = _searchController.text.trim();
+    if (query.isNotEmpty) {
+      context.push('/search?q=${Uri.encodeComponent(query)}');
+      _searchController.clear();
+      _searchFocusNode.unfocus();
+      setState(() {
+        _isSearchActive = false;
+      });
+    }
   }
 
   void _clearSearch() {
@@ -146,11 +83,8 @@ class _HomePageState extends State<HomePage> {
     } else {
       _searchController.clear();
       _searchFocusNode.unfocus();
-      final videoViewModel = context.read<VideoViewModel>();
-      videoViewModel.clearSearch();
       setState(() {
         _isSearchActive = false;
-        _searchSuggestions = [];
       });
     }
   }
@@ -271,8 +205,19 @@ class _HomePageState extends State<HomePage> {
       });
     }
 
+    // If we got a 401 error, sign out to clear auth state and prevent infinite loops
+    if (userViewModel.hasUnauthorizedError && isAuthenticated) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        homeViewModel.signOut();
+      });
+    }
+
     // Load user data if authenticated and not already loaded
-    if (isAuthenticated && user == null && !userViewModel.isLoading) {
+    // Don't retry if there's a 401 error (unauthorized) to prevent infinite loops
+    if (isAuthenticated &&
+        user == null &&
+        !userViewModel.isLoading &&
+        !userViewModel.hasUnauthorizedError) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         userViewModel.loadCurrentUser();
       });
@@ -290,8 +235,32 @@ class _HomePageState extends State<HomePage> {
           }
         }
       },
-      child: Scaffold(
+      child: MainScaffold(
         appBar: AppBar(
+          leading: Builder(
+            builder: (context) {
+              // Only show menu icon if user is authenticated and sidebar is available
+              final authRepository = context.read<AuthRepository>();
+              final isAuthenticated = authRepository.currentUser != null;
+
+              if (!isAuthenticated) {
+                // Return empty widget to hide the icon completely for logged-out users
+                return const SizedBox.shrink();
+              }
+
+              final sidebar = AppSidebar.of(context);
+              // If sidebar is not available (shouldn't happen when authenticated, but be safe)
+              if (sidebar == null) {
+                return const SizedBox.shrink();
+              }
+
+              return IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: sidebar.toggleSidebar,
+                tooltip: 'Menu',
+              );
+            },
+          ),
           title: _isSearchActive
               ? TextField(
                   controller: _searchController,
@@ -316,16 +285,18 @@ class _HomePageState extends State<HomePage> {
                   onChanged: _onSearchChanged,
                   onSubmitted: (value) {
                     if (value.trim().isNotEmpty) {
-                      final videoViewModel = context.read<VideoViewModel>();
-                      videoViewModel.search(value);
+                      context.push(
+                        '/search?q=${Uri.encodeComponent(value.trim())}',
+                      );
+                      _searchController.clear();
                       _searchFocusNode.unfocus();
                       setState(() {
-                        _searchSuggestions = [];
+                        _isSearchActive = false;
                       });
                     }
                   },
                 )
-              : const Text('Home'),
+              : SizedBox.shrink(),
           actions: [
             if (!_isSearchActive)
               IconButton(
@@ -350,8 +321,27 @@ class _HomePageState extends State<HomePage> {
               ),
             if (user != null)
               IconButton(
-                onPressed: () {
-                  homeViewModel.signOut();
+                onPressed: () async {
+                  final shouldSignOut = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Sign Out'),
+                      content: const Text('Are you sure you want to sign out?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('Sign Out'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (shouldSignOut == true && mounted) {
+                    homeViewModel.signOut();
+                  }
                 },
                 tooltip: 'Sign out',
                 icon: const Icon(Icons.logout),
@@ -359,360 +349,245 @@ class _HomePageState extends State<HomePage> {
             else if (!_isSearchActive)
               TextButton(
                 onPressed: () {
-                  context.push('/login');
+                  context.push('/signup');
                 },
-                child: const Text('Sign In'),
+                child: const Text('Sign Up'),
               ),
           ],
         ),
-        body: userViewModel.isLoading && user == null
-            ? VideoListShimmer(itemCount: 6)
-            : Stack(
-                children: [
-                  RefreshIndicator(
-                    onRefresh: () async {
-                      await context.read<UserViewModel>().loadCurrentUser();
-                      await context.read<VideoViewModel>().refresh();
-                    },
-                    child: CustomScrollView(
-                      slivers: [
-                        // Compact Profile Section or Sign In Button
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            child: user != null
-                                ? _CompactProfileSection(
-                                    user: user,
-                                    onProfileTap: () {
-                                      context.push('/users/${user.username}');
-                                    },
-                                    onUploadTap: () {
-                                      // Redirect to become creator if not a creator
-                                      if (user.role != 'creator') {
-                                        context.push('/become-creator');
-                                      } else {
-                                        context.push('/upload/video');
-                                      }
-                                    },
-                                  )
-                                : _SignInPrompt(
-                                    onSignInTap: () {
-                                      context.push('/login');
-                                    },
-                                  ),
-                          ),
-                        ),
-                        // Search indicator
-                        if (_isSearchActive &&
-                            videoViewModel.searchQuery != null)
+        child: SafeArea(
+          child: userViewModel.isLoading && user == null
+              ? VideoListShimmer(itemCount: 6)
+              : Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: () async {
+                        await context.read<UserViewModel>().loadCurrentUser();
+                        await context.read<VideoViewModel>().refresh();
+                      },
+                      child: CustomScrollView(
+                        slivers: [
+                          // Compact Profile Section or Sign In Button
                           SliverToBoxAdapter(
-                            child: Container(
+                            child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 16,
-                                vertical: 8,
+                                vertical: 12,
                               ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.search,
-                                    size: 16,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Searching for "${videoViewModel.searchQuery}"',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ],
-                              ),
+                              child: user != null
+                                  ? _CompactProfileSection(
+                                      user: user,
+                                      onProfileTap: () {
+                                        context.push('/users/${user.username}');
+                                      },
+                                      onUploadTap: () {
+                                        // Redirect to become creator if not a creator
+                                        if (user.role != 'creator') {
+                                          context.push('/become-creator');
+                                        } else {
+                                          context.push('/upload/video');
+                                        }
+                                      },
+                                    )
+                                  : _SignInPrompt(
+                                      onSignInTap: () {
+                                        // Pass current route as return route
+                                        const currentRoute = '/home';
+                                        context.push(
+                                          '/login?returnTo=${Uri.encodeComponent(currentRoute)}',
+                                        );
+                                      },
+                                    ),
                             ),
                           ),
-                        // Video Feed
-                        if (videoViewModel.isLoading &&
-                            videoViewModel.videos.isEmpty)
-                          SliverFillRemaining(
-                            child: VideoListShimmer(itemCount: 6),
-                          )
-                        else if (videoViewModel.errorMessage != null &&
-                            videoViewModel.videos.isEmpty)
-                          SliverFillRemaining(
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.error_outline,
-                                    size: 48,
-                                    color: Theme.of(context).colorScheme.error,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    videoViewModel.errorMessage!,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodyMedium,
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      videoViewModel.refresh();
-                                    },
-                                    child: const Text('Retry'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        else if (videoViewModel.videos.isEmpty)
-                          SliverFillRemaining(
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    _isSearchActive
-                                        ? Icons.search_off
-                                        : Icons.video_library_outlined,
-                                    size: 48,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withOpacity(0.5),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    _isSearchActive
-                                        ? 'No videos found'
-                                        : 'No videos yet',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant
-                                              .withOpacity(0.6),
-                                        ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  if (_isSearchActive) ...[
-                                    const SizedBox(height: 8),
+                          // Search indicator
+                          if (_isSearchActive &&
+                              videoViewModel.searchQuery != null)
+                            SliverToBoxAdapter(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.search,
+                                      size: 16,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 8),
                                     Text(
-                                      'Try a different search term',
+                                      'Searching for "${videoViewModel.searchQuery}"',
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodySmall
                                           ?.copyWith(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant
-                                                .withOpacity(0.5),
-                                          ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          )
-                        else
-                          SliverPadding(
-                            padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
-                            sliver: SliverGrid(
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: 12.h,
-                                crossAxisSpacing: 12.w,
-                                // Calculate aspect ratio based on screen size
-                                // Thumbnail (16:9) + spacing + text section (60h)
-                                childAspectRatio: _calculateAspectRatio(
-                                  context,
-                                ),
-                              ),
-                              delegate: SliverChildBuilderDelegate(
-                                (context, index) {
-                                  if (index >= videoViewModel.videos.length) {
-                                    // Load more if available (schedule after build to avoid setState during build)
-                                    if (videoViewModel.hasMore &&
-                                        !videoViewModel.isLoading) {
-                                      WidgetsBinding.instance
-                                          .addPostFrameCallback((_) {
-                                            videoViewModel.loadVideos();
-                                          });
-                                    }
-                                    return videoViewModel.isLoading
-                                        ? const Center(
-                                            child: InlineShimmer(
-                                              width: 40,
-                                              height: 40,
-                                            ),
-                                          )
-                                        : const SizedBox.shrink();
-                                  }
-                                  final video = videoViewModel.videos[index];
-                                  return _GridVideoCard(video: video);
-                                },
-                                childCount:
-                                    videoViewModel.videos.length +
-                                    (videoViewModel.hasMore ? 1 : 0),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  // Search Suggestions Overlay (Twitch-like) - positioned directly below AppBar
-                  if (_isSearchActive && _searchController.text.isNotEmpty)
-                    Positioned(
-                      top:
-                          0, // Position at top of body (right below AppBar, no gap)
-                      left: 0,
-                      right: 0,
-                      child: Material(
-                        elevation: 8,
-                        color: Colors.white,
-                        borderRadius: const BorderRadius.only(
-                          bottomLeft: Radius.circular(8),
-                          bottomRight: Radius.circular(8),
-                        ),
-                        child: Container(
-                          constraints: const BoxConstraints(maxHeight: 400),
-                          decoration: BoxDecoration(
-                            borderRadius: const BorderRadius.only(
-                              bottomLeft: Radius.circular(8),
-                              bottomRight: Radius.circular(8),
-                            ),
-                            border: Border(
-                              bottom: BorderSide(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.outline.withOpacity(0.2),
-                                width: 1,
-                              ),
-                            ),
-                          ),
-                          child: _isLoadingSuggestions
-                              ? const Padding(
-                                  padding: EdgeInsets.all(16.0),
-                                  child: Center(
-                                    child: VideoListShimmer(
-                                      itemCount: 3,
-                                      isGrid: false,
-                                    ),
-                                  ),
-                                )
-                              : _searchSuggestions.isEmpty
-                              ? _buildNoResultsState(context)
-                              : Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Results count header
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 12,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.surfaceContainerHighest,
-                                        border: Border(
-                                          bottom: BorderSide(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .outline
-                                                .withOpacity(0.1),
-                                            width: 1,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.search,
-                                            size: 16,
                                             color: Theme.of(
                                               context,
                                             ).colorScheme.onSurfaceVariant,
                                           ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            '${_searchSuggestions.length} ${_searchSuggestions.length == 1 ? 'result' : 'results'}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurfaceVariant,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                          ),
-                                          const Spacer(),
-                                          TextButton(
-                                            onPressed: () {
-                                              final videoViewModel = context
-                                                  .read<VideoViewModel>();
-                                              videoViewModel.search(
-                                                _searchController.text,
-                                              );
-                                              _searchFocusNode.unfocus();
-                                              setState(() {
-                                                _searchSuggestions = [];
-                                              });
-                                            },
-                                            style: TextButton.styleFrom(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
-                                                  ),
-                                              minimumSize: Size.zero,
-                                              tapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                            ),
-                                            child: const Text('View all'),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    // Suggestions list
-                                    Flexible(
-                                      child: ListView.builder(
-                                        shrinkWrap: true,
-                                        padding: EdgeInsets.zero,
-                                        itemCount: _searchSuggestions.length,
-                                        itemBuilder: (context, index) {
-                                          final video =
-                                              _searchSuggestions[index];
-                                          return _SearchSuggestionItem(
-                                            video: video,
-                                            searchQuery: _searchController.text,
-                                            onTap: () =>
-                                                _onSuggestionTap(video),
-                                          );
-                                        },
-                                      ),
                                     ),
                                   ],
                                 ),
-                        ),
+                              ),
+                            ),
+                          // Video Feed
+                          if (videoViewModel.isLoading &&
+                              videoViewModel.videos.isEmpty)
+                            SliverFillRemaining(
+                              child: VideoListShimmer(itemCount: 6),
+                            )
+                          else if (videoViewModel.errorMessage != null &&
+                              videoViewModel.videos.isEmpty)
+                            SliverFillRemaining(
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.error_outline,
+                                      size: 48,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.error,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      videoViewModel.errorMessage!,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyMedium,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        videoViewModel.refresh();
+                                      },
+                                      child: const Text('Retry'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else if (videoViewModel.videos.isEmpty)
+                            SliverFillRemaining(
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      _isSearchActive
+                                          ? Icons.search_off
+                                          : Icons.video_library_outlined,
+                                      size: 48,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
+                                          .withOpacity(0.5),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      _isSearchActive
+                                          ? 'No videos found'
+                                          : 'No videos yet',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant
+                                                .withOpacity(0.6),
+                                          ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    if (_isSearchActive) ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Try a different search term',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant
+                                                  .withOpacity(0.5),
+                                            ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            SliverPadding(
+                              padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
+                              sliver: SliverGrid(
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 12.h,
+                                  crossAxisSpacing: 12.w,
+                                  // Calculate aspect ratio based on screen size
+                                  // Thumbnail (16:9) + spacing + text section (60h)
+                                  childAspectRatio: _calculateAspectRatio(
+                                    context,
+                                  ),
+                                ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) {
+                                    if (index >= videoViewModel.videos.length) {
+                                      // Load more if available (schedule after build to avoid setState during build)
+                                      if (videoViewModel.hasMore &&
+                                          !videoViewModel.isLoading) {
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                              videoViewModel.loadVideos();
+                                            });
+                                      }
+                                      return videoViewModel.isLoading
+                                          ? const Center(
+                                              child: InlineShimmer(
+                                                width: 40,
+                                                height: 40,
+                                              ),
+                                            )
+                                          : const SizedBox.shrink();
+                                    }
+                                    final video = videoViewModel.videos[index];
+                                    return _GridVideoCard(video: video);
+                                  },
+                                  childCount:
+                                      videoViewModel.videos.length +
+                                      (videoViewModel.hasMore ? 1 : 0),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                ],
-              ),
+                    // Search Suggestions Overlay (Twitch-like) - positioned directly below AppBar
+                    if (_isSearchActive && _searchController.text.isNotEmpty)
+                      Positioned(
+                        top:
+                            0, // Position at top of body (right below AppBar, no gap)
+                        left: 0,
+                        right: 0,
+                        child: SearchOverlay(
+                          query: _searchController.text,
+                          onQueryChanged: _onSearchChanged,
+                          onResultTap: _onSuggestionTap,
+                          onViewAllResults: _onViewAllResults,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -746,19 +621,25 @@ class _CompactProfileSection extends StatelessWidget {
                   final profileUrl =
                       user.profilePicture != null &&
                           user.profilePicture!.isNotEmpty
-                      ? ImageUtils.getProfileImageUrl(user.profilePicture!)
+                      ? ImageUtils.getProfileImageUrl(
+                          user.profilePicture!,
+                          cacheBust: user.updatedAt?.millisecondsSinceEpoch,
+                        )
                       : null;
                   final avatarUrl =
-                      user.avatarUrl != null && user.avatarUrl!.isNotEmpty
+                      user.avatarUrl != null &&
+                          user.avatarUrl!.isNotEmpty &&
+                          ImageUtils.isValidImageUrl(user.avatarUrl)
                       ? user.avatarUrl
                       : null;
 
                   if (profileUrl != null) {
                     return NetworkImage(
                       profileUrl,
-                      headers: ImageUtils.getProfileImageHeaders(),
+                      headers: ImageUtils.getProfileImageHeaders(profileUrl),
                     );
-                  } else if (avatarUrl != null) {
+                  } else if (avatarUrl != null &&
+                      ImageUtils.isValidImageUrl(avatarUrl)) {
                     return NetworkImage(avatarUrl);
                   }
                   return null;
@@ -815,7 +696,9 @@ class _CompactProfileSection extends StatelessWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        user.name.isNotEmpty ? user.name : user.username,
+                        user.name.isNotEmpty
+                            ? user.name
+                            : user.username.toLowerCase(),
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w600),
                         maxLines: 1,
@@ -854,7 +737,7 @@ class _CompactProfileSection extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '@${user.username}',
+                  '@${user.username.toLowerCase()}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(
                       context,
@@ -1155,12 +1038,16 @@ class _GridVideoCard extends StatelessWidget {
                                   video.profilePicture!.isNotEmpty
                               ? ImageUtils.getProfileImageUrl(
                                   video.profilePicture!,
+                                  cacheBust:
+                                      video.updatedAt.millisecondsSinceEpoch,
                                 )
                               : null;
                           return profileUrl != null
                               ? NetworkImage(
                                   profileUrl,
-                                  headers: ImageUtils.getProfileImageHeaders(),
+                                  headers: ImageUtils.getProfileImageHeaders(
+                                    profileUrl,
+                                  ),
                                 )
                               : null;
                         }(),
@@ -1185,7 +1072,7 @@ class _GridVideoCard extends StatelessWidget {
                       Flexible(
                         child: Text(
                           video.userUsername.isNotEmpty
-                              ? video.userUsername
+                              ? video.userUsername.toLowerCase()
                               : 'Unknown',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
@@ -1391,13 +1278,16 @@ class _SearchSuggestionItem extends StatelessWidget {
                                     video.profilePicture!.isNotEmpty
                                 ? ImageUtils.getProfileImageUrl(
                                     video.profilePicture!,
+                                    cacheBust:
+                                        video.updatedAt.millisecondsSinceEpoch,
                                   )
                                 : null;
                             return profileUrl != null
                                 ? NetworkImage(
                                     profileUrl,
-                                    headers:
-                                        ImageUtils.getProfileImageHeaders(),
+                                    headers: ImageUtils.getProfileImageHeaders(
+                                      profileUrl,
+                                    ),
                                   )
                                 : null;
                           }(),
@@ -1422,7 +1312,7 @@ class _SearchSuggestionItem extends StatelessWidget {
                         Flexible(
                           child: Text(
                             video.userUsername.isNotEmpty
-                                ? video.userUsername
+                                ? video.userUsername.toLowerCase()
                                 : 'Unknown',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(

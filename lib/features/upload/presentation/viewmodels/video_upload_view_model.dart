@@ -31,6 +31,13 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
            networkConnectivityService ?? NetworkConnectivityService() {
     WidgetsBinding.instance.addObserver(this);
     _initNetworkMonitoring();
+    // Add listeners to text controllers to notify when text changes
+    titleController.addListener(() {
+      notifyListeners();
+    });
+    descriptionController.addListener(() {
+      notifyListeners();
+    });
   }
 
   final ApiClient _apiClient;
@@ -45,6 +52,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   final TextEditingController titleController = TextEditingController();
   final TextEditingController descriptionController = TextEditingController();
   final TextEditingController tagInputController = TextEditingController();
+  final FocusNode tagFocusNode = FocusNode();
 
   // File selections
   File? _selectedVideo;
@@ -207,6 +215,14 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
 
     tagInputController.clear();
     notifyListeners();
+
+    // Re-request focus after clearing to allow continuous tag entry
+    // Use post frame callback to ensure the field exists if it was rebuilt
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (tagFocusNode.canRequestFocus) {
+        tagFocusNode.requestFocus();
+      }
+    });
   }
 
   bool get canAddMoreTags => _tags.length < maxTags;
@@ -675,6 +691,16 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Check if there's any data filled in the form
+  bool get hasData {
+    return _selectedVideo != null ||
+        titleController.text.trim().isNotEmpty ||
+        descriptionController.text.trim().isNotEmpty ||
+        _tags.isNotEmpty ||
+        _selectedThumbnail != null ||
+        _videoThumbnail != null;
+  }
+
   void clear() {
     titleController.clear();
     descriptionController.clear();
@@ -742,6 +768,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     titleController.dispose();
     descriptionController.dispose();
     tagInputController.dispose();
+    tagFocusNode.dispose();
     super.dispose();
   }
 }

@@ -14,6 +14,7 @@ abstract class AuthRepository {
 
   Future<void> signUp({
     required String name,
+    required String email,
     required String username,
     required String password,
   });
@@ -96,6 +97,7 @@ class BackendAuthRepository implements AuthRepository {
               uid: userData['uid'] as String? ?? '',
               username: userData['username'] as String?,
               name: userData['name'] as String?,
+              profilePicture: userData['profile_picture'] as String?,
             );
           } else {
             _currentUser = AuthUser(uid: '');
@@ -126,15 +128,25 @@ class BackendAuthRepository implements AuthRepository {
   @override
   Future<void> signUp({
     required String name,
+    required String email,
     required String username,
     required String password,
   }) async {
-    if (username.isEmpty || name.isEmpty || password.isEmpty) {
+    if (username.isEmpty || name.isEmpty || email.isEmpty || password.isEmpty) {
       throw const AuthFailure('All fields are required.');
     }
 
     final trimmedUsername = username.trim().toLowerCase();
     final trimmedName = name.trim();
+    final trimmedEmail = email.trim().toLowerCase();
+
+    // Validate email format
+    final emailRegex = RegExp(
+      r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+    );
+    if (!emailRegex.hasMatch(trimmedEmail)) {
+      throw const AuthFailure('Please enter a valid email address.');
+    }
 
     // Validate username format
     if (!RegExp(r'^[a-z0-9_]{3,30}$').hasMatch(trimmedUsername)) {
@@ -157,6 +169,7 @@ class BackendAuthRepository implements AuthRepository {
       final response = await _apiClient.post(ApiConstants.authRegister, {
         'username': trimmedUsername,
         'name': trimmedName,
+        'email': trimmedEmail,
         'password': password,
       }, requiresAuth: false);
 
@@ -181,6 +194,7 @@ class BackendAuthRepository implements AuthRepository {
               uid: userData['uid'] as String? ?? '',
               username: userData['username'] as String?,
               name: userData['name'] as String?,
+              profilePicture: userData['profile_picture'] as String?,
             );
           } else {
             _currentUser = AuthUser(uid: '');

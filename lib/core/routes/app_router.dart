@@ -8,12 +8,14 @@ import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/presentation/viewmodels/auth_view_model.dart';
 import '../../features/auth/presentation/views/auth_page.dart';
 import '../../features/home/presentation/views/home_page.dart';
+import '../../features/following/presentation/views/following_page.dart';
 
 import '../../features/upload/presentation/views/video_upload_page.dart';
 import '../../features/user/presentation/views/become_creator_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
+import '../../features/search/presentation/views/search_results_page.dart';
 
 class AppRouter {
   AppRouter({required AuthRepository authRepository})
@@ -25,21 +27,37 @@ class AppRouter {
 
     router = GoRouter(
       navigatorKey: _navigatorKey,
-      initialLocation: '/login',
+      initialLocation: '/home',
       refreshListenable: _refreshListenable,
       debugLogDiagnostics: true,
       routes: [
         GoRoute(
           path: '/login',
-          builder: (context, state) =>
-              const AuthPage(initialMode: AuthMode.signIn),
+          builder: (context, state) {
+            // Get return route from query parameters
+            final returnRoute = state.uri.queryParameters['returnTo'];
+            return AuthPage(
+              initialMode: AuthMode.signIn,
+              returnRoute: returnRoute,
+            );
+          },
         ),
         GoRoute(
           path: '/signup',
-          builder: (context, state) =>
-              const AuthPage(initialMode: AuthMode.signUp),
+          builder: (context, state) {
+            // Get return route from query parameters
+            final returnRoute = state.uri.queryParameters['returnTo'];
+            return AuthPage(
+              initialMode: AuthMode.signUp,
+              returnRoute: returnRoute,
+            );
+          },
         ),
         GoRoute(path: '/home', builder: (context, state) => const HomePage()),
+        GoRoute(
+          path: '/following',
+          builder: (context, state) => const FollowingPage(),
+        ),
 
         GoRoute(
           path: '/upload/video',
@@ -59,12 +77,37 @@ class AppRouter {
         GoRoute(
           path: '/video/:videoId',
           builder: (context, state) {
-            final video = state.extra as VideoModel?;
+            final videoId = state.pathParameters['videoId'] ?? '';
+            // Try to get video from extra first, then from cache
+            var video = state.extra as VideoModel?;
+            bool returningFromAuth = false;
+
             if (video == null) {
-              // Redirect to home if video not found
-              return const HomePage();
+              // Try to get from VideoPlayerPage cache (e.g., after returning from auth)
+              final cachedVideo = VideoPlayerPage.getCachedVideo(videoId);
+              if (cachedVideo != null) {
+                video = cachedVideo;
+                returningFromAuth = true; // Mark that we're returning from auth
+                // Clear cache after use
+                VideoPlayerPage.clearCache();
+              }
             }
-            return VideoPlayerPage(video: video);
+            if (video == null) {
+              // If no video provided and not in cache, throw error
+              throw Exception('VideoModel is required');
+            }
+            return VideoPlayerPage(
+              video: video,
+              videoId: videoId,
+              returningFromAuth: returningFromAuth,
+            );
+          },
+        ),
+        GoRoute(
+          path: '/search',
+          builder: (context, state) {
+            final query = state.uri.queryParameters['q'] ?? '';
+            return SearchResultsPage(query: query);
           },
         ),
       ],
@@ -87,17 +130,28 @@ class AppRouter {
             state.uri.path == '/upload' || state.uri.path == '/upload/video';
         final onProfile = state.uri.path.startsWith('/users/');
         final onHome = state.uri.path == '/home';
+        final onFollowing = state.uri.path == '/following';
         final onVideo = state.uri.path.startsWith('/video/');
+        final onSearch = state.uri.path == '/search';
 
         if (!isLoggedIn) {
           // Allow access to home, video player, upload pages, and auth pages without authentication
-          // Profile pages require authentication - redirect to login
+          // Profile pages require authentication - redirect to home (login is optional)
           if (onProfile) {
-            return '/login';
+            return '/home';
           }
-          return (loggingIn || signingUp || uploading || onHome || onVideo)
-              ? null
-              : '/login';
+          // Allow access to these pages without authentication
+          if (loggingIn ||
+              signingUp ||
+              uploading ||
+              onHome ||
+              onFollowing ||
+              onVideo ||
+              onSearch) {
+            return null;
+          }
+          // For any other route, redirect to home
+          return '/home';
         }
 
         // If logged in and on login/signup page, redirect to home

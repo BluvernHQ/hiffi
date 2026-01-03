@@ -1,4 +1,5 @@
 import 'dart:developer' as developer;
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/api_exception.dart';
@@ -19,6 +20,8 @@ class UserViewModel extends ChangeNotifier {
   String? _errorMessage;
   String? _usernameAvailabilityMessage;
   bool? _isUsernameAvailable;
+  bool _hasUnauthorizedError =
+      false; // Track if we got a 401 to prevent retry loops
 
   UserModel? get currentUser => _currentUser;
   UserModel? get viewedUser => _viewedUser;
@@ -32,6 +35,7 @@ class UserViewModel extends ChangeNotifier {
     _currentUser = null;
     _viewedUser = null;
     _errorMessage = null;
+    _hasUnauthorizedError = false;
     notifyListeners();
   }
 
@@ -50,6 +54,7 @@ class UserViewModel extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get usernameAvailabilityMessage => _usernameAvailabilityMessage;
   bool? get isUsernameAvailable => _isUsernameAvailable;
+  bool get hasUnauthorizedError => _hasUnauthorizedError;
 
   Future<bool> checkUsernameAvailability(String username) async {
     if (username.trim().isEmpty) {
@@ -148,8 +153,20 @@ class UserViewModel extends ChangeNotifier {
       );
       if (error is ApiException) {
         _setError(error.message);
+        // If 401 Unauthorized, clear the current user and set flag to prevent infinite retry loops
+        if (error.statusCode == 401) {
+          developer.log(
+            '401 Unauthorized - clearing current user to prevent retry loop',
+            name: 'hiffi.user',
+          );
+          _currentUser = null;
+          _hasUnauthorizedError = true;
+        } else {
+          _hasUnauthorizedError = false;
+        }
       } else {
         _setError('Failed to load current user: $error');
+        _hasUnauthorizedError = false;
       }
     } finally {
       _setLoading(false);
@@ -204,13 +221,14 @@ class UserViewModel extends ChangeNotifier {
     String? email,
     String? bio,
     String? role,
+    String? profilePicture,
   }) async {
     _setLoading(true);
     _setError(null);
 
     try {
       developer.log(
-        'Updating user: name=$name, email=$email, bio=$bio',
+        'Updating user: name=$name, email=$email, bio=$bio, profilePicture=$profilePicture',
         name: 'hiffi.user',
       );
       // Note: username cannot be updated via API (per USERS_API.md)
@@ -227,6 +245,7 @@ class UserViewModel extends ChangeNotifier {
         email: email,
         bio: bio,
         role: role,
+        profilePicture: profilePicture,
       );
       // Also update viewedUser if it matches the current user
       if (_viewedUser?.username == currentUsername) {
@@ -246,6 +265,92 @@ class UserViewModel extends ChangeNotifier {
         _setError(error.message);
       } else {
         _setError('Failed to update user: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> removeProfilePicture() async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      developer.log('Removing profile picture', name: 'hiffi.user');
+
+      if (_currentUser == null) {
+        throw ApiException('No logged-in user found.', 401);
+      }
+
+      // We send an empty string to signify removal
+      _currentUser = await _userRepository.updateUser(
+        currentUsername: _currentUser!.username,
+        profilePicture: '',
+      );
+
+      // Also update viewedUser if it matches the current user
+      if (_viewedUser?.username == _currentUser?.username) {
+        _viewedUser = _currentUser;
+      }
+
+      developer.log('Profile picture removed successfully', name: 'hiffi.user');
+    } catch (error) {
+      developer.log(
+        'Failed to remove profile picture: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to remove profile picture: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> uploadProfilePicture(File imageFile) async {
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      developer.log('Uploading profile picture', name: 'hiffi.user');
+
+      if (_currentUser == null) {
+        throw ApiException('No logged-in user found.', 401);
+      }
+
+      // Step 1: Get upload URL
+      final uploadData = await _userRepository.getProfilePhotoUploadUrl();
+      final gatewayUrl = uploadData['gateway_url'] as String;
+      final path = uploadData['path'] as String;
+
+      // Step 2: Upload image to gateway
+      await _userRepository.uploadProfilePhoto(gatewayUrl, imageFile);
+
+      // Step 3: Update user profile with the path
+      await updateUser(
+        currentUsername: _currentUser!.username,
+        profilePicture: path,
+      );
+
+      developer.log(
+        'Profile picture uploaded successfully',
+        name: 'hiffi.user',
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to upload profile picture: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to upload profile picture: $error');
       }
       rethrow;
     } finally {

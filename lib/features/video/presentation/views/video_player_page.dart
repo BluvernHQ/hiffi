@@ -1,23 +1,55 @@
-import 'package:chewie/chewie.dart';
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
 
-import '../../domain/models/comment_model.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
 import '../../../auth/data/auth_repository.dart';
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/data/user_repository.dart';
 import '../../../user/domain/models/user_model.dart';
+import 'package:hiffi/features/video/presentation/controllers/video_comments_controller.dart';
+import 'package:hiffi/features/video/presentation/widgets/video_comments_section.dart';
+import 'package:hiffi/core/utils/image_utils.dart';
+import 'package:hiffi/core/widgets/hiffi_image.dart';
+import '../widgets/hls_video_player.dart';
+import '../controllers/hls_player_controller.dart';
 
 class VideoPlayerPage extends StatefulWidget {
-  const VideoPlayerPage({super.key, required this.video});
+  const VideoPlayerPage({
+    super.key,
+    required this.video,
+    this.videoId,
+    this.returningFromAuth = false,
+  });
+
+  // Simple cache to store video temporarily when navigating away for authentication
+  static VideoModel? _cachedVideo;
+  static String? _cachedVideoId;
+
+  static void cacheVideo(String videoId, VideoModel video) {
+    _cachedVideo = video;
+    _cachedVideoId = videoId;
+  }
+
+  static VideoModel? getCachedVideo(String videoId) {
+    if (_cachedVideoId == videoId) {
+      return _cachedVideo;
+    }
+    return null;
+  }
+
+  static void clearCache() {
+    _cachedVideo = null;
+    _cachedVideoId = null;
+  }
 
   final VideoModel video;
+  final String? videoId;
+  final bool returningFromAuth; // True if returning from auth pages
 
   @override
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
@@ -25,11 +57,9 @@ class VideoPlayerPage extends StatefulWidget {
 
 class _VideoPlayerPageState extends State<VideoPlayerPage>
     with WidgetsBindingObserver {
-  VideoPlayerController? _videoPlayerController;
-  ChewieController? _chewieController;
+  late VideoModel _video;
   bool _isLoading = true;
   bool _hasError = false;
-  bool _isBuffering = false;
   bool _isDescriptionExpanded = false;
   bool _isUpvoted = false;
   bool _isDownvoted = false;
@@ -44,33 +74,58 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   UserModel? _currentUser;
 
   // Comments state
-  final TextEditingController _commentController = TextEditingController();
-  final Map<String, TextEditingController> _replyControllers = {};
-  List<CommentModel> _comments = [];
-  bool _isLoadingComments = false;
-  bool _isPostingComment = false;
-  int _currentCommentPage = 1;
-  static const int _commentPageLimit = 20;
-  final Map<String, bool> _expandedReplies =
-      {}; // Track which comments have expanded replies
-  final Map<String, List<ReplyModel>> _commentReplies =
-      {}; // Cache replies per comment
-  final Map<String, bool> _loadingReplies =
-      {}; // Track which comments are loading replies
+  late VideoCommentsController _commentsController;
+
+  // Player key - changing this forces Flutter to dispose and recreate the player
+  // When videoId changes, this key changes, forcing complete disposal and recreation
+  Key _playerKey = const ValueKey('player');
+
+  // Flag to prevent autoplay when navigating away
+  bool _isNavigatingAway = false;
+
+  // Flag to prevent autoplay when returning from auth (video should be paused)
+  bool _isReturningFromAuth = false;
+
+  // Suggested videos for autoplay
+  List<VideoModel> _suggestedVideos = [];
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _upvoteCount = widget.video.videoUpvotes;
-    _downvoteCount = widget.video.videoDownvotes;
+
+    _video = widget.video;
+
+    // Set flag if returning from auth - video should not autoplay
+    _isReturningFromAuth = widget.returningFromAuth;
+    if (_isReturningFromAuth) {
+      debugPrint('VideoPlayerPage: Returning from auth - video will be paused');
+      // When returning from auth, we want to restore the position where it was paused
+      // So we don't clear the position here - it will be loaded from SharedPreferences
+    } else {
+      // If NOT returning from auth (normal navigation), clear saved position
+      // This ensures videos start from beginning when navigating normally
+      HlsPlayerController.clearPlaybackPosition(_video.videoId);
+      debugPrint(
+        'VideoPlayerPage: Cleared saved position for normal navigation',
+      );
+    }
+
+    _commentsController = VideoCommentsController(
+      repository: context.read<VideoRepository>(),
+      videoId: _video.videoId,
+      userRepository: context.read<UserRepository>(),
+    );
+
+    _upvoteCount = _video.videoUpvotes;
+    _downvoteCount = _video.videoDownvotes;
 
     // Initialize vote status based on user's current vote
-    if (widget.video.userVoteStatus != null) {
-      if (widget.video.userVoteStatus == 'upvoted') {
+    if (_video.userVoteStatus != null) {
+      if (_video.userVoteStatus == 'upvoted') {
         _isUpvoted = true;
         _isDownvoted = false;
-      } else if (widget.video.userVoteStatus == 'downvoted') {
+      } else if (_video.userVoteStatus == 'downvoted') {
         _isUpvoted = false;
         _isDownvoted = true;
       }
@@ -78,28 +133,34 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     _fetchAndInitializePlayer();
     _loadUserAndFollowStatus();
-    // Only load comments if user is authenticated
-    final authRepository = context.read<AuthRepository>();
-    if (authRepository.currentUser != null) {
-      _loadComments();
-    }
+
+    // 5️⃣ Fetch lightweight preview data
+    _commentsController.fetchLatestComment();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Pause video if navigating away - check if route is still current
-    final route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) {
-      _pauseVideo();
-    }
+    // Note: We removed the pause logic here because it was incorrectly
+    // pausing the video when modal bottom sheets (like comments) are shown.
+    // Video pausing is already handled in:
+    // - didChangeAppLifecycleState (app goes to background)
+    // - dispose() (page is being disposed)
+    // - Navigation callbacks (when explicitly navigating away)
+    // Modal overlays like bottom sheets should not pause the video.
   }
 
   @override
   void deactivate() {
-    super.deactivate();
-    // Pause video when widget is deactivated (navigating away)
+    debugPrint(
+      'VideoPlayerPage: deactivate() called - widget being removed from tree',
+    );
+    // Widget is being removed from tree - ensure video is paused and position saved
+    // This happens when navigating away (e.g., to auth pages)
+    // Note: _pauseVideo() is async, but deactivate can't be async
+    // Position will be saved when controller is disposed
     _pauseVideo();
+    super.deactivate();
   }
 
   @override
@@ -112,16 +173,137 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  void _pauseVideo() {
-    try {
-      if (_videoPlayerController != null &&
-          _videoPlayerController!.value.isPlaying) {
-        _videoPlayerController!.pause();
-      }
-      _chewieController?.pause();
-    } catch (e) {
-      debugPrint('Error pausing video: $e');
+  Future<void> _pauseVideo() async {
+    // Pause video when navigating away or app goes to background
+    // Actually pause the player controller immediately and save position
+    if (_videoUrlFromApi != null) {
+      debugPrint(
+        'VideoPlayerPage: _pauseVideo() called - pausing player and saving position',
+      );
+      await HlsVideoPlayer.pausePlayer(_video.videoId);
     }
+
+    // Set flag to prevent autoplay on rebuild
+    if (!_isNavigatingAway) {
+      setState(() {
+        _isNavigatingAway = true;
+      });
+    }
+  }
+
+  /// Resumes video playback (e.g., when canceling a dialog)
+  Future<void> _resumeVideo() async {
+    if (_videoUrlFromApi != null) {
+      debugPrint('VideoPlayerPage: _resumeVideo() called - resuming player');
+      await HlsVideoPlayer.playPlayer(_video.videoId);
+
+      // Reset navigation flag to allow normal playback
+      if (_isNavigatingAway) {
+        setState(() {
+          _isNavigatingAway = false;
+        });
+      }
+    }
+  }
+
+  /// Handles back navigation - ensures video is paused and navigates appropriately
+  void _handleBackNavigation() {
+    debugPrint('VideoPlayerPage: Back button pressed');
+
+    // Ensure video is paused before navigating
+    _pauseVideo();
+
+    // Navigate back or to home if there's nothing to pop
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      // If there's nothing to pop, navigate to home
+      context.go('/home');
+    }
+  }
+
+  /// Called when the current video ends - automatically plays next suggested video
+  void _onVideoEnded() {
+    debugPrint('VideoPlayerPage: Video ended, checking for next video...');
+
+    if (_suggestedVideos.isEmpty) {
+      debugPrint('VideoPlayerPage: No suggested videos available for autoplay');
+      return;
+    }
+
+    // Find the next video in the suggested list (first one that's not the current video)
+    VideoModel? nextVideo;
+    for (final video in _suggestedVideos) {
+      if (video.videoId != _video.videoId) {
+        nextVideo = video;
+        break;
+      }
+    }
+
+    if (nextVideo == null) {
+      debugPrint('VideoPlayerPage: No next video found in suggested videos');
+      return;
+    }
+
+    debugPrint(
+      'VideoPlayerPage: Autoplaying next video: ${nextVideo.videoId} - ${nextVideo.videoTitle}',
+    );
+
+    // Replace current video with next suggested video
+    _replaceVideo(nextVideo);
+  }
+
+  /// Replaces the current video with a new one.
+  /// This properly disposes the old player and creates a new one.
+  Future<void> _replaceVideo(VideoModel newVideo) async {
+    debugPrint(
+      'VideoPlayerPage: Replacing video ${_video.videoId} with ${newVideo.videoId}',
+    );
+
+    // Clear saved position for the new video so it starts from beginning
+    // This ensures new videos (from suggested list) always start at 0:00
+    await HlsPlayerController.clearPlaybackPosition(newVideo.videoId);
+
+    // Reset navigation flags for new video
+    _isNavigatingAway = false;
+    _isReturningFromAuth = false;
+
+    // Update player key to force disposal of old player
+    setState(() {
+      _playerKey = ValueKey('player_${newVideo.videoId}');
+      _video = newVideo;
+      _isLoading = true;
+      _hasError = false;
+      _isDescriptionExpanded = false;
+      _videoUrlFromApi = null;
+
+      // Reset vote state
+      _upvoteCount = newVideo.videoUpvotes;
+      _downvoteCount = newVideo.videoDownvotes;
+      _isUpvoted = false;
+      _isDownvoted = false;
+      if (newVideo.userVoteStatus == 'upvoted') {
+        _isUpvoted = true;
+      } else if (newVideo.userVoteStatus == 'downvoted') {
+        _isDownvoted = true;
+      }
+
+      // Update comments controller for new video
+      _commentsController.dispose();
+      _commentsController = VideoCommentsController(
+        repository: context.read<VideoRepository>(),
+        videoId: newVideo.videoId,
+        userRepository: context.read<UserRepository>(),
+      );
+    });
+
+    // Fetch new video info and initialize player
+    await _fetchAndInitializePlayer();
+    await _loadUserAndFollowStatus();
+    _commentsController.fetchLatestComment();
+
+    // Note: Suggested videos will be reloaded automatically via didUpdateWidget
+    // in _SuggestedVideosSection, which will update _suggestedVideos via onVideosLoaded
   }
 
   Future<void> _loadUserAndFollowStatus() async {
@@ -137,14 +319,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
 
       // Only load follow status if it's not the current user's video
-      if (widget.video.userUsername.isNotEmpty &&
-          _currentUser?.username != widget.video.userUsername) {
+      if (_video.userUsername.isNotEmpty &&
+          _currentUser?.username != _video.userUsername) {
         setState(() {
           _isLoadingFollowStatus = true;
         });
 
         try {
-          _videoOwner = await userRepository.getUser(widget.video.userUsername);
+          _videoOwner = await userRepository.getUser(_video.userUsername);
           setState(() {
             // Following status is already set from getVideoInfo response
             // We just load the user profile for display purposes
@@ -172,9 +354,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _handleFollowUnfollow() async {
-    if (widget.video.userUsername.isEmpty) return;
-    if (_currentUser?.username == widget.video.userUsername)
-      return; // Can't follow yourself
+    if (_video.userUsername.isEmpty) return;
+
+    // Check if user is signed in
+    if (_currentUser == null) {
+      // Show sign in/sign up dialog
+      _showSignInRequiredDialog();
+      return;
+    }
+
+    // Can't follow yourself
+    if (_currentUser!.username == _video.userUsername) {
+      return;
+    }
 
     final wasFollowing = _isFollowing;
 
@@ -187,13 +379,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       final userRepository = context.read<UserRepository>();
 
       if (wasFollowing) {
-        await userRepository.unfollowUser(widget.video.userUsername);
+        await userRepository.unfollowUser(_video.userUsername);
       } else {
-        await userRepository.followUser(widget.video.userUsername);
+        await userRepository.followUser(_video.userUsername);
       }
 
       // Reload user to get updated follow status
-      _videoOwner = await userRepository.getUser(widget.video.userUsername);
+      _videoOwner = await userRepository.getUser(_video.userUsername);
       setState(() {
         _isFollowing = _videoOwner?.isFollowing ?? false;
       });
@@ -216,41 +408,139 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  void _videoPlayerListener() {
-    if (!mounted) return;
-    final controller = _videoPlayerController;
-    if (controller == null) return;
+  /// Shows a dialog prompting the user to sign in or sign up
+  void _showSignInRequiredDialog() {
+    // Pause video immediately when dialog is shown (position will be saved)
+    _pauseVideo();
 
-    final isBuffering = controller.value.isBuffering;
-    if (_isBuffering != isBuffering) {
-      setState(() {
-        _isBuffering = isBuffering;
-      });
-    }
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text(
+            'Sign In Required',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+          ),
+          content: const Text(
+            'You need to sign in to follow users. Would you like to sign in or create an account?',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                // Resume video playback when cancel is pressed
+                await _resumeVideo();
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  color: Color(0xFF6B6B6B),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                // Pause video and save position before navigating to auth page
+                await _pauseVideo();
+                // Store current video in cache for restoration after auth
+                VideoPlayerPage.cacheVideo(_video.videoId, _video);
+                // Get current route and pass it as return route
+                final currentRoute = '/video/${_video.videoId}';
+                // Use context.go instead of push to replace current route
+                // This ensures the video page is properly disposed
+                if (mounted) {
+                  context.go(
+                    '/login?returnTo=${Uri.encodeComponent(currentRoute)}',
+                  );
+                }
+              },
+              child: const Text(
+                'Sign In',
+                style: TextStyle(
+                  color: Color(0xFFFF6B35),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                // Pause video and save position before navigating to auth page
+                await _pauseVideo();
+                // Store current video in cache for restoration after auth
+                VideoPlayerPage.cacheVideo(_video.videoId, _video);
+                // Get current route and pass it as return route
+                final currentRoute = '/video/${_video.videoId}';
+                // Use context.go instead of push to replace current route
+                // This ensures the video page is properly disposed
+                if (mounted) {
+                  context.go(
+                    '/signup?returnTo=${Uri.encodeComponent(currentRoute)}',
+                  );
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF6B35),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'Sign Up',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
   void dispose() {
+    debugPrint('VideoPlayerPage: dispose() called - cleaning up resources');
+
+    // Remove lifecycle observer
     WidgetsBinding.instance.removeObserver(this);
+
+    // Ensure video is paused before disposing
     _pauseVideo();
-    _videoPlayerController?.removeListener(_videoPlayerListener);
-    _commentController.dispose();
-    for (final controller in _replyControllers.values) {
-      controller.dispose();
-    }
-    _replyControllers.clear();
-    _chewieController?.dispose();
-    _videoPlayerController?.dispose();
+
+    // Dispose comments controller
+    _commentsController.dispose();
+
+    // The HlsVideoPlayer widget will be disposed automatically when removed from tree
+    // The key change ensures proper disposal when video is replaced
+    // This guarantees no memory leaks or background audio
     super.dispose();
+
+    debugPrint(
+      'VideoPlayerPage: dispose() complete - all resources cleaned up',
+    );
+  }
+
+  void _openCommentsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) =>
+          CommentsBottomSheet(controller: _commentsController),
+    );
   }
 
   Future<void> _fetchAndInitializePlayer() async {
     try {
       // Fetch the video info from the API (includes URL, upvoted, downvoted, following status)
       final videoRepository = context.read<VideoRepository>();
-      final videoInfo = await videoRepository.getVideoInfo(
-        widget.video.videoId,
-      );
+      final videoInfo = await videoRepository.getVideoInfo(_video.videoId);
 
       if (videoInfo.videoUrl.isEmpty) {
         throw Exception('Failed to get video URL from API');
@@ -261,105 +551,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       // Update UI state with the video info (upvoted, downvoted, following)
       if (mounted) {
         setState(() {
+          if (videoInfo.video != null) {
+            _video = videoInfo.video!;
+            _upvoteCount = _video.videoUpvotes;
+            _downvoteCount = _video.videoDownvotes;
+          }
+          // Update profile picture if available from VideoInfo
+          // This ensures we use the most up-to-date profile picture from the API
+          if (videoInfo.profilePicture != null &&
+              videoInfo.profilePicture!.isNotEmpty) {
+            _video = _video.copyWith(profilePicture: videoInfo.profilePicture);
+          }
           _isUpvoted = videoInfo.upvoted;
           _isDownvoted = videoInfo.downvoted;
           _isFollowing = videoInfo.following;
-        });
-      }
-
-      await _initializePlayer();
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _hasError = true;
-        });
-      }
-    }
-  }
-
-  Future<void> _initializePlayer() async {
-    if (_videoUrlFromApi == null) return;
-
-    try {
-      // Configure video player for progressive download/streaming
-      // VideoPlayerController.networkUrl automatically uses HTTP range requests
-      // to enable progressive loading - video starts playing as soon as enough data is buffered
-      // This means the video doesn't need to be fully downloaded before playback begins
-      _videoPlayerController = VideoPlayerController.networkUrl(
-        Uri.parse(_videoUrlFromApi!),
-        httpHeaders: {
-          // Accept video content types for better streaming support
-          'Accept': 'video/*',
-          // Workers URL requires x-api-key header
-          ...ImageUtils.getVideoHeaders(),
-        },
-        // Configure for progressive playback
-        videoPlayerOptions: VideoPlayerOptions(
-          // Don't mix with other audio sources
-          mixWithOthers: false,
-          // Don't allow background playback
-          allowBackgroundPlayback: false,
-        ),
-      );
-
-      // Initialize the controller
-      // initialize() returns as soon as video metadata is available (duration, dimensions)
-      // NOT when the full video is downloaded - this enables progressive loading
-      // The player will automatically buffer chunks as needed while playing
-      await _videoPlayerController!.initialize();
-
-      // Add listener to track buffering state
-      _videoPlayerController!.addListener(_videoPlayerListener);
-
-      // Start playing immediately after initialization
-      // With progressive loading enabled, playback begins as soon as enough data is buffered
-      // The player continues downloading ahead of the playback position in the background
-      // This provides a smooth viewing experience without waiting for the full video to download
-      await _videoPlayerController!.play();
-
-      _chewieController = ChewieController(
-        videoPlayerController: _videoPlayerController!,
-        autoPlay: true,
-        looping: false,
-        aspectRatio: _videoPlayerController!.value.aspectRatio,
-        showControls: true,
-        // Configure for better buffering experience
-        allowFullScreen: true,
-        allowMuting: true,
-        allowPlaybackSpeedChanging: true,
-        materialProgressColors: ChewieProgressColors(
-          playedColor: const Color(0xFF9146FF),
-          handleColor: const Color(0xFF9146FF),
-          backgroundColor: Colors.grey.withOpacity(0.3),
-          bufferedColor: Colors.grey.withOpacity(0.5),
-        ),
-        placeholder: const VideoPlayerShimmer(),
-        errorBuilder: (context, errorMessage) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline, color: Colors.white, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  'Error loading video',
-                  style: TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  errorMessage,
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          );
-        },
-      );
-
-      if (mounted) {
-        setState(() {
           _isLoading = false;
         });
       }
@@ -373,196 +578,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  Future<void> _loadComments() async {
-    if (_isLoadingComments) return;
-
-    setState(() {
-      _isLoadingComments = true;
-    });
-
-    try {
-      final videoRepository = context.read<VideoRepository>();
-      final comments = await videoRepository.getComments(
-        widget.video.videoId,
-        page: _currentCommentPage,
-        limit: _commentPageLimit,
-      );
-
-      if (mounted) {
-        setState(() {
-          if (_currentCommentPage == 1) {
-            _comments = comments;
-          } else {
-            _comments.addAll(comments);
-          }
-          _isLoadingComments = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoadingComments = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load comments: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _postComment() async {
-    final commentText = _commentController.text.trim();
-    if (commentText.isEmpty || _isPostingComment) return;
-
-    setState(() {
-      _isPostingComment = true;
-    });
-
-    try {
-      final videoRepository = context.read<VideoRepository>();
-      await videoRepository.postComment(widget.video.videoId, commentText);
-
-      // Clear the input
-      _commentController.clear();
-
-      // Reload comments to show the new one
-      _currentCommentPage = 1;
-      await _loadComments();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Comment posted successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to post comment: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isPostingComment = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadReplies(
-    String commentId, {
-    bool forceRefresh = false,
-  }) async {
-    if (!forceRefresh && _commentReplies.containsKey(commentId)) {
-      // Already loaded, skip unless forcing refresh
-      return;
-    }
-
-    if (_loadingReplies[commentId] == true) {
-      // Already loading, skip
-      return;
-    }
-
-    setState(() {
-      _loadingReplies[commentId] = true;
-    });
-
-    try {
-      final videoRepository = context.read<VideoRepository>();
-      final replies = await videoRepository.getReplies(
-        commentId,
-        page: 1,
-        limit: 50, // Load all replies for now
-      );
-
-      if (mounted) {
-        setState(() {
-          _commentReplies[commentId] = replies;
-          _loadingReplies[commentId] = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Failed to load replies: $e');
-      if (mounted) {
-        setState(() {
-          _loadingReplies[commentId] = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load replies: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _postReply(String commentId) async {
-    final replyController = _replyControllers[commentId];
-    if (replyController == null) return;
-
-    final replyText = replyController.text.trim();
-    if (replyText.isEmpty) return;
-
-    try {
-      final videoRepository = context.read<VideoRepository>();
-      await videoRepository.postReply(commentId, replyText);
-
-      // Clear the input
-      replyController.clear();
-
-      // Force reload replies to show the new one
-      await _loadReplies(commentId, forceRefresh: true);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Reply posted successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to post reply: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  void _toggleReplies(String commentId) {
-    setState(() {
-      if (_expandedReplies[commentId] == true) {
-        _expandedReplies[commentId] = false;
-      } else {
-        _expandedReplies[commentId] = true;
-        // Load replies if not already loaded
-        if (!_commentReplies.containsKey(commentId)) {
-          _loadReplies(commentId);
-        }
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     return PopScope(
+      canPop: false, // Handle navigation manually
       onPopInvoked: (didPop) {
-        if (didPop) {
-          _pauseVideo();
+        if (!didPop) {
+          // Back was pressed but navigation was prevented
+          _handleBackNavigation();
         }
       },
       child: Scaffold(
@@ -574,8 +596,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () {
-              _pauseVideo();
-              context.pop();
+              _handleBackNavigation();
             },
             style: IconButton.styleFrom(
               backgroundColor: Colors.black.withOpacity(0.5),
@@ -586,7 +607,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         ),
         body: SafeArea(
           top: false,
-          bottom: false,
           child: CustomScrollView(
             physics: const BouncingScrollPhysics(),
             slivers: [
@@ -648,7 +668,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             ),
                           ),
                         )
-                      : Chewie(controller: _chewieController!),
+                      : _videoUrlFromApi != null
+                      ? HlsVideoPlayer(
+                          key: _playerKey, // Key forces disposal when changed
+                          videoId: _video.videoId,
+                          baseVideoUrl: _videoUrlFromApi!,
+                          autoPlay:
+                              !_isNavigatingAway &&
+                              !_isReturningFromAuth, // Don't autoplay if navigating away or returning from auth
+                          initialMuted: false,
+                          onVideoEnded: _onVideoEnded,
+                        )
+                      : const SizedBox.shrink(),
                 ),
               ),
               // Video Info Section
@@ -661,7 +692,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     children: [
                       // Title
                       Text(
-                        widget.video.videoTitle,
+                        _video.videoTitle,
                         style: const TextStyle(
                           color: Color(0xFF1A1A1A),
                           fontSize: 18,
@@ -677,7 +708,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       Row(
                         children: [
                           Text(
-                            '${_formatCount(widget.video.videoViews)} views',
+                            '${_formatCount(_video.videoViews)} views',
                             style: const TextStyle(
                               color: Color(0xFF6B6B6B),
                               fontSize: 13,
@@ -694,7 +725,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            _formatDate(widget.video.createdAt),
+                            _formatDate(_video.createdAt),
                             style: const TextStyle(
                               color: Color(0xFF6B6B6B),
                               fontSize: 13,
@@ -704,10 +735,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       ),
                       const SizedBox(height: 12),
                       // Action Buttons Row
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _VideoActionButton(
+                      // Interaction Buttons (Like, Dislike)
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF5F5F5),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _VideoActionButton(
                               icon: _isUpvoted
                                   ? Icons.thumb_up
                                   : Icons.thumb_up_outlined,
@@ -759,7 +796,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   final videoRepository = context
                                       .read<VideoRepository>();
                                   await videoRepository.upvoteVideo(
-                                    widget.video.videoId,
+                                    _video.videoId,
                                   );
                                 } catch (e) {
                                   // Revert on error
@@ -782,14 +819,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _VideoActionButton(
+                            Container(
+                              width: 1,
+                              height: 20,
+                              color: Colors.grey[300],
+                            ),
+                            _VideoActionButton(
                               icon: _isDownvoted
                                   ? Icons.thumb_down
                                   : Icons.thumb_down_outlined,
-                              label: _formatCount(_downvoteCount),
+                              label: '', // Dislike usually doesn't show count
                               isActive: _isDownvoted,
                               onTap: () async {
                                 final authRepository = context
@@ -837,7 +876,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   final videoRepository = context
                                       .read<VideoRepository>();
                                   await videoRepository.downvoteVideo(
-                                    widget.video.videoId,
+                                    _video.videoId,
                                   );
                                 } catch (e) {
                                   // Revert on error
@@ -860,34 +899,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _VideoActionButton(
-                              icon: Icons.share_outlined,
-                              label: 'Share',
-                              onTap: () {
-                                _showShareDialog(context);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.more_vert,
-                              color: Color(0xFF6B6B6B),
-                              size: 20,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 40,
-                              minHeight: 40,
-                            ),
-                            onPressed: () {
-                              // TODO: Show more options
-                            },
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -902,41 +915,30 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     children: [
                       GestureDetector(
                         onTap: () {
-                          if (widget.video.userUsername.isNotEmpty) {
-                            context.push('/users/${widget.video.userUsername}');
+                          if (_video.userUsername.isNotEmpty) {
+                            context.push('/users/${_video.userUsername}');
                           }
                         },
-                        child: CircleAvatar(
-                          radius: 20,
-                          backgroundColor: const Color(0xFFFF6B35),
-                          child: Text(
-                            widget.video.userUsername.isNotEmpty
-                                ? widget.video.userUsername[0].toUpperCase()
-                                : 'U',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
+                        child: HiffiAvatar(
+                          imageUrl: _video.profilePicture,
+                          size: 40,
+                          fallbackText: _video.userUsername,
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: GestureDetector(
                           onTap: () {
-                            if (widget.video.userUsername.isNotEmpty) {
-                              context.push(
-                                '/users/${widget.video.userUsername}',
-                              );
+                            if (_video.userUsername.isNotEmpty) {
+                              context.push('/users/${_video.userUsername}');
                             }
                           },
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                widget.video.userUsername.isNotEmpty
-                                    ? widget.video.userUsername
+                                _video.userUsername.isNotEmpty
+                                    ? _video.userUsername
                                     : 'Unknown User',
                                 style: const TextStyle(
                                   color: Color(0xFF1A1A1A),
@@ -948,17 +950,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                           ),
                         ),
                       ),
-                      // Show follow button only if not own video and username is available
-                      if (_currentUser != null &&
-                          _currentUser!.username != widget.video.userUsername &&
-                          widget.video.userUsername.isNotEmpty)
+                      // Show follow button if not own video and username is available
+                      // Show button even when user is signed out
+                      if (_video.userUsername.isNotEmpty &&
+                          (_currentUser == null ||
+                              _currentUser!.username != _video.userUsername))
                         _isLoadingFollowStatus
                             ? const InlineShimmer(width: 16, height: 16)
                             : ElevatedButton(
                                 onPressed: _handleFollowUnfollow,
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFF6B35),
-                                  foregroundColor: Colors.white,
+                                  backgroundColor: _isFollowing
+                                      ? const Color(0xFFF5F5F5)
+                                      : const Color(0xFFFF6B35),
+                                  foregroundColor: _isFollowing
+                                      ? Colors.black87
+                                      : Colors.white,
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 16,
                                     vertical: 8,
@@ -982,8 +989,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                 ),
               ),
               // Description Section (Collapsible)
-              if (widget.video.videoDescription.isNotEmpty ||
-                  widget.video.videoTags.isNotEmpty)
+              if (_video.videoDescription.isNotEmpty ||
+                  _video.videoTags.isNotEmpty)
                 SliverToBoxAdapter(
                   child: Container(
                     color: Colors.white,
@@ -992,12 +999,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Description
-                        if (widget.video.videoDescription.isNotEmpty)
+                        if (_video.videoDescription.isNotEmpty)
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                widget.video.videoDescription,
+                                _video.videoDescription,
                                 style: const TextStyle(
                                   color: Color(0xFF1A1A1A),
                                   fontSize: 14,
@@ -1008,7 +1015,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                     ? null
                                     : TextOverflow.ellipsis,
                               ),
-                              if (widget.video.videoDescription.length > 100)
+                              if (_video.videoDescription.length > 100)
                                 TextButton(
                                   onPressed: () {
                                     setState(() {
@@ -1036,13 +1043,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             ],
                           ),
                         // Tags
-                        if (widget.video.videoTags.isNotEmpty) ...[
-                          if (widget.video.videoDescription.isNotEmpty)
+                        if (_video.videoTags.isNotEmpty) ...[
+                          if (_video.videoDescription.isNotEmpty)
                             const SizedBox(height: 12),
                           Wrap(
                             spacing: 6,
                             runSpacing: 6,
-                            children: widget.video.videoTags.map((tag) {
+                            children: _video.videoTags.map((tag) {
                               return InkWell(
                                 onTap: () {
                                   // TODO: Navigate to tag search
@@ -1070,7 +1077,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                     style: const TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
-                                      color: const Color(0xFFFF6B35),
+                                      color: Color(0xFFFF6B35),
                                     ),
                                   ),
                                 ),
@@ -1150,457 +1157,41 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     );
                   }
 
-                  // Show comments section for authenticated users
+                  // 1️⃣ Inline Comment Experience
                   return SliverToBoxAdapter(
-                    child: Container(
-                      color: Colors.white,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Comment Count Header
-                          Row(
-                            children: [
-                              Text(
-                                '${_formatCount(widget.video.videoComments)} Comments',
-                                style: const TextStyle(
-                                  color: Color(0xFF1A1A1A),
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: -0.3,
-                                ),
-                              ),
-                              const Spacer(),
-                              TextButton.icon(
-                                onPressed: () {
-                                  // TODO: Sort comments
-                                },
-                                icon: const Icon(
-                                  Icons.sort,
-                                  size: 16,
-                                  color: Color(0xFF6B6B6B),
-                                ),
-                                label: const Text(
-                                  'Sort',
-                                  style: TextStyle(
-                                    color: Color(0xFF6B6B6B),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                  minimumSize: const Size(0, 32),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          // Comment Input
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              CircleAvatar(
-                                radius: 18,
-                                backgroundColor: const Color(0xFFFF6B35),
-                                child: const Icon(
-                                  Icons.person,
-                                  size: 20,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: TextField(
-                                  controller: _commentController,
-                                  decoration: InputDecoration(
-                                    hintText: 'Add a comment...',
-                                    filled: true,
-                                    fillColor: const Color(0xFFFAFAFA),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      borderSide: const BorderSide(
-                                        color: Color(0xFFFF6B35),
-                                        width: 1.5,
-                                      ),
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 10,
-                                    ),
-                                    hintStyle: const TextStyle(
-                                      color: Color(0xFF6B6B6B),
-                                      fontSize: 14,
-                                    ),
-                                    suffixIcon:
-                                        _commentController.text.isNotEmpty
-                                        ? IconButton(
-                                            icon: const Icon(
-                                              Icons.send,
-                                              color: Color(0xFFFF6B35),
-                                              size: 20,
-                                            ),
-                                            onPressed: _isPostingComment
-                                                ? null
-                                                : _postComment,
-                                            padding: const EdgeInsets.only(
-                                              right: 8,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  style: const TextStyle(
-                                    color: Color(0xFF1A1A1A),
-                                    fontSize: 14,
-                                  ),
-                                  maxLines: null,
-                                  minLines: 1,
-                                  textInputAction: TextInputAction.send,
-                                  onChanged: (value) {
-                                    setState(() {});
-                                  },
-                                  onSubmitted: (value) {
-                                    if (value.trim().isNotEmpty &&
-                                        !_isPostingComment) {
-                                      _postComment();
-                                    }
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          // Comments List
-                          if (_isLoadingComments && _comments.isEmpty)
-                            const Center(
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 32.0),
-                                child: CircularProgressIndicator(
-                                  color: Color(0xFFFF6B35),
-                                ),
-                              ),
-                            )
-                          else if (_comments.isEmpty)
-                            Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 32.0,
-                                ),
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(20),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFAFAFA),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: const Icon(
-                                        Icons.comment_outlined,
-                                        size: 48,
-                                        color: Color(0xFF6B6B6B),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    const Text(
-                                      'No comments yet',
-                                      style: TextStyle(
-                                        color: Color(0xFF1A1A1A),
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Start the conversation.',
-                                      style: TextStyle(
-                                        color: Color(0xFF6B6B6B),
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          else
-                            ..._comments.map(
-                              (comment) => _buildCommentWidget(comment),
-                            ),
-                        ],
-                      ),
+                    child: Column(
+                      children: [
+                        // zero-friction entry bar
+                        InlineCommentEntryBar(
+                          controller: _commentsController,
+                          onTap: _openCommentsSheet,
+                        ),
+                        const Divider(height: 1, indent: 16, endIndent: 16),
+                        // latest comment preview
+                        LatestCommentPreview(
+                          controller: _commentsController,
+                          onTap: _openCommentsSheet,
+                        ),
+                      ],
                     ),
                   );
                 },
               ),
+              // Suggested Videos Section
+              SliverToBoxAdapter(
+                child: _SuggestedVideosSection(
+                  currentVideoId: _video.videoId,
+                  onVideoSelected: _replaceVideo,
+                  onVideosLoaded: (videos) {
+                    setState(() {
+                      _suggestedVideos = videos;
+                    });
+                  },
+                ),
+              ),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildCommentWidget(CommentModel comment) {
-    // Initialize reply controller if not exists
-    if (!_replyControllers.containsKey(comment.commentId)) {
-      _replyControllers[comment.commentId] = TextEditingController();
-    }
-
-    final replies = _commentReplies[comment.commentId] ?? [];
-    final isRepliesExpanded = _expandedReplies[comment.commentId] ?? false;
-    final isLoadingReplies = _loadingReplies[comment.commentId] ?? false;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Comment
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: const Color(0xFFFF6B35),
-                child: Text(
-                  (comment.commentByUsername ?? comment.commentedBy).isNotEmpty
-                      ? (comment.commentByUsername ?? comment.commentedBy)[0]
-                            .toUpperCase()
-                      : 'U',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            comment.commentByUsername ?? comment.commentedBy,
-                            style: const TextStyle(
-                              color: Color(0xFF1A1A1A),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          _formatDate(comment.commentedAt),
-                          style: const TextStyle(
-                            color: Color(0xFF6B6B6B),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      comment.comment,
-                      style: const TextStyle(
-                        color: Color(0xFF1A1A1A),
-                        fontSize: 14,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Reply button
-                    TextButton.icon(
-                      onPressed: () => _toggleReplies(comment.commentId),
-                      icon: const Icon(
-                        Icons.reply,
-                        size: 16,
-                        color: Color(0xFF6B6B6B),
-                      ),
-                      label: Text(
-                        comment.totalReplies > 0
-                            ? '${comment.totalReplies} ${comment.totalReplies == 1 ? 'reply' : 'replies'}'
-                            : 'Reply',
-                        style: const TextStyle(
-                          color: Color(0xFF6B6B6B),
-                          fontSize: 12,
-                        ),
-                      ),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          // Replies section
-          if (isRepliesExpanded) ...[
-            const SizedBox(height: 12),
-            // Loading indicator
-            if (isLoadingReplies)
-              Container(
-                margin: const EdgeInsets.only(left: 42, bottom: 12),
-                child: const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(12.0),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              )
-            // Replies list
-            else if (replies.isNotEmpty)
-              ...replies.map(
-                (reply) => Container(
-                  margin: const EdgeInsets.only(left: 42, bottom: 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      CircleAvatar(
-                        radius: 14,
-                        backgroundColor: const Color(
-                          0xFFFF6B35,
-                        ).withOpacity(0.2),
-                        child: Text(
-                          reply.repliedBy.isNotEmpty
-                              ? reply.repliedBy[0].toUpperCase()
-                              : 'U',
-                          style: const TextStyle(
-                            color: Color(0xFFFF6B35),
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    reply.repliedBy,
-                                    style: const TextStyle(
-                                      color: Color(0xFF1A1A1A),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                Text(
-                                  _formatDate(reply.repliedAt),
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B6B6B),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              reply.reply,
-                              style: const TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 13,
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            // Reply input
-            Container(
-              margin: const EdgeInsets.only(left: 42, top: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _replyControllers[comment.commentId],
-                      decoration: InputDecoration(
-                        hintText: 'Write a reply...',
-                        filled: true,
-                        fillColor: const Color(0xFFFAFAFA),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: const BorderSide(
-                            color: Color(0xFFFF6B35),
-                            width: 1.5,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        hintStyle: const TextStyle(
-                          color: Color(0xFF6B6B6B),
-                          fontSize: 13,
-                        ),
-                        suffixIcon:
-                            _replyControllers[comment.commentId]
-                                    ?.text
-                                    .isNotEmpty ==
-                                true
-                            ? IconButton(
-                                icon: const Icon(
-                                  Icons.send,
-                                  color: Color(0xFFFF6B35),
-                                  size: 18,
-                                ),
-                                onPressed: () => _postReply(comment.commentId),
-                                padding: const EdgeInsets.only(right: 8),
-                              )
-                            : null,
-                      ),
-                      style: const TextStyle(
-                        color: Color(0xFF1A1A1A),
-                        fontSize: 13,
-                      ),
-                      maxLines: null,
-                      minLines: 1,
-                      textInputAction: TextInputAction.send,
-                      onChanged: (value) {
-                        setState(() {});
-                      },
-                      onSubmitted: (value) {
-                        if (value.trim().isNotEmpty) {
-                          _postReply(comment.commentId);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
       ),
     );
   }
@@ -1610,74 +1201,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       return '${(count / 1000000).toStringAsFixed(1)}M';
     } else if (count >= 1000) {
       return '${(count / 1000).toStringAsFixed(1)}K';
+    } else {
+      return count.toString();
     }
-    return count.toString();
   }
 
   String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date);
-
-    if (difference.inDays > 7) {
-      return '${date.day}/${date.month}/${date.year}';
-    } else if (difference.inDays > 0) {
-      return '${difference.inDays}d ago';
-    } else if (difference.inHours > 0) {
-      return '${difference.inHours}h ago';
-    } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes}m ago';
-    } else {
-      return 'Just now';
-    }
-  }
-
-  void _showShareDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        title: const Text(
-          'Share Video',
-          style: TextStyle(color: Color(0xFF1A1A1A)),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.link, color: Color(0xFFFF6B35)),
-              title: const Text(
-                'Copy Link',
-                style: TextStyle(color: Color(0xFF1A1A1A)),
-              ),
-              onTap: () {
-                // TODO: Copy video link to clipboard
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.share, color: Color(0xFFFF6B35)),
-              title: const Text(
-                'Share via...',
-                style: TextStyle(color: Color(0xFF1A1A1A)),
-              ),
-              onTap: () {
-                // TODO: Open native share dialog
-                Navigator.pop(context);
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text(
-              'Close',
-              style: TextStyle(color: Color(0xFF6B6B6B)),
-            ),
-          ),
-        ],
-      ),
-    );
+    final diff = DateTime.now().difference(date);
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'Just now';
   }
 }
 
@@ -1702,12 +1236,12 @@ class _VideoActionButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
             color: isActive
-                ? const Color(0xFFFF6B35).withOpacity(0.1)
+                ? const Color(0xFFFF6B35).withOpacity(0.05)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -1715,10 +1249,10 @@ class _VideoActionButton extends StatelessWidget {
             children: [
               Icon(
                 icon,
-                size: 18,
+                size: 20,
                 color: isActive
                     ? const Color(0xFFFF6B35)
-                    : const Color(0xFF6B6B6B),
+                    : const Color(0xFF1A1A1A),
               ),
               if (label.isNotEmpty) ...[
                 const SizedBox(width: 6),
@@ -1726,10 +1260,10 @@ class _VideoActionButton extends StatelessWidget {
                   label,
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     color: isActive
                         ? const Color(0xFFFF6B35)
-                        : const Color(0xFF6B6B6B),
+                        : const Color(0xFF1A1A1A),
                   ),
                 ),
               ],
@@ -1738,5 +1272,328 @@ class _VideoActionButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Suggested Videos Section
+class _SuggestedVideosSection extends StatefulWidget {
+  final String currentVideoId;
+  final Function(VideoModel) onVideoSelected;
+  final Function(List<VideoModel>)? onVideosLoaded;
+
+  const _SuggestedVideosSection({
+    required this.currentVideoId,
+    required this.onVideoSelected,
+    this.onVideosLoaded,
+  });
+
+  @override
+  State<_SuggestedVideosSection> createState() =>
+      _SuggestedVideosSectionState();
+}
+
+class _SuggestedVideosSectionState extends State<_SuggestedVideosSection> {
+  List<VideoModel> _suggestedVideos = [];
+  bool _isLoading = false;
+  bool _hasError = false;
+  String? _seed;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestedVideos();
+  }
+
+  @override
+  void didUpdateWidget(_SuggestedVideosSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the current video changed, reload suggested videos with a new seed
+    if (oldWidget.currentVideoId != widget.currentVideoId) {
+      _loadSuggestedVideos(useNewSeed: true);
+    }
+  }
+
+  /// Generates a new random seed for video pagination
+  String _generateNewSeed() {
+    const chars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random();
+    return String.fromCharCodes(
+      Iterable.generate(
+        32, // 32 character seed
+        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+      ),
+    );
+  }
+
+  Future<void> _loadSuggestedVideos({bool useNewSeed = false}) async {
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
+
+    try {
+      // Generate a new seed if requested or if we don't have one yet
+      if (useNewSeed || _seed == null) {
+        _seed = _generateNewSeed();
+        debugPrint(
+          'SuggestedVideosSection: Generated new seed: $_seed (useNewSeed: $useNewSeed)',
+        );
+      }
+
+      final videoRepository = context.read<VideoRepository>();
+      final videos = await videoRepository.getVideos(
+        page: 1,
+        limit: 10,
+        seed: _seed,
+      );
+
+      // Filter out the current video
+      final filtered = videos
+          .where((video) => video.videoId != widget.currentVideoId)
+          .take(6) // Show up to 6 suggested videos
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _suggestedVideos = filtered;
+          _isLoading = false;
+        });
+        // Notify parent about loaded videos for autoplay
+        widget.onVideosLoaded?.call(_suggestedVideos);
+      }
+    } catch (e) {
+      debugPrint('Error loading suggested videos: $e');
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Container(
+        color: Colors.white,
+        padding: const EdgeInsets.all(16),
+        child: const Center(
+          child: CircularProgressIndicator(color: Color(0xFFFF6B35)),
+        ),
+      );
+    }
+
+    if (_hasError || _suggestedVideos.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Suggested Videos',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1A1A1A),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 220,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _suggestedVideos.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: EdgeInsets.only(
+                    right: index == _suggestedVideos.length - 1 ? 0 : 12,
+                  ),
+                  child: _SuggestedVideoCard(
+                    video: _suggestedVideos[index],
+                    onTap: widget.onVideoSelected,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SuggestedVideoCard extends StatelessWidget {
+  final VideoModel video;
+  final Function(VideoModel) onTap;
+
+  const _SuggestedVideoCard({required this.video, required this.onTap});
+
+  String? get _thumbnailUrl {
+    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const cardWidth = 160.0;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          // Replace current video instead of navigating to new route
+          onTap(video);
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: cardWidth,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Thumbnail
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _thumbnailUrl == null || _thumbnailUrl!.isEmpty
+                          ? Container(
+                              color: Colors.grey[200],
+                              child: const Center(
+                                child: Icon(
+                                  Icons.video_library,
+                                  size: 32,
+                                  color: Color(0xFF6B6B6B),
+                                ),
+                              ),
+                            )
+                          : Image.network(
+                              _thumbnailUrl!,
+                              headers: ImageUtils.getVideoThumbnailHeaders(),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Container(
+                                  color: Colors.grey[200],
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.broken_image,
+                                      size: 32,
+                                      color: Color(0xFF6B6B6B),
+                                    ),
+                                  ),
+                                );
+                              },
+                              loadingBuilder:
+                                  (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Container(
+                                      color: Colors.grey[200],
+                                      child: const Center(
+                                        child: CircularProgressIndicator(
+                                          color: Color(0xFFFF6B35),
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                            ),
+                      // View count overlay
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.7),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.visibility,
+                                size: 10,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                _formatCount(video.videoViews),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Title
+              Text(
+                video.videoTitle,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF1A1A1A),
+                  height: 1.3,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              // Uploader
+              Row(
+                children: [
+                  HiffiAvatar(
+                    imageUrl: video.profilePicture,
+                    size: 16,
+                    fallbackText: video.userUsername,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      video.userUsername.isNotEmpty
+                          ? video.userUsername
+                          : 'Unknown',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF6B6B6B),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatCount(int count) {
+    if (count >= 1000000) {
+      return '${(count / 1000000).toStringAsFixed(1)}M';
+    } else if (count >= 1000) {
+      return '${(count / 1000).toStringAsFixed(1)}K';
+    } else {
+      return count.toString();
+    }
   }
 }

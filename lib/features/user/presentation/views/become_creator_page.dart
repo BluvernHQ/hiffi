@@ -23,6 +23,8 @@ class _BecomeCreatorPageState extends State<BecomeCreatorPage> {
 
     try {
       await viewModel.becomeCreator();
+      // Reload current user to ensure role is updated
+      await viewModel.loadCurrentUser();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -30,8 +32,12 @@ class _BecomeCreatorPageState extends State<BecomeCreatorPage> {
             backgroundColor: Colors.green,
           ),
         );
-        // Navigate to upload page after becoming creator
-        context.go('/upload/video');
+        // Small delay to ensure user data is updated before navigation
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (mounted) {
+          // Navigate to upload page after becoming creator
+          context.go('/upload/video');
+        }
       }
     } catch (error) {
       if (mounted) {

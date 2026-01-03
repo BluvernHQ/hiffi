@@ -4,6 +4,13 @@ class AuthUser {
   final String? email;
   final String? username;
   final String? name;
+  final String? profilePicture;
 
-  AuthUser({required this.uid, this.email, this.username, this.name});
+  AuthUser({
+    required this.uid,
+    this.email,
+    this.username,
+    this.name,
+    this.profilePicture,
+  });
 }

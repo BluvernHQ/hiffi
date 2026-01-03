@@ -10,9 +10,14 @@ import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 
 class AuthPage extends StatefulWidget {
-  const AuthPage({super.key, this.initialMode = AuthMode.signIn});
+  const AuthPage({
+    super.key,
+    this.initialMode = AuthMode.signIn,
+    this.returnRoute,
+  });
 
   final AuthMode initialMode;
+  final String? returnRoute;
 
   @override
   State<AuthPage> createState() => _AuthPageState();
@@ -24,13 +29,24 @@ class _AuthPageState extends State<AuthPage> {
   final _signUpFormKey = GlobalKey<FormState>();
   StreamSubscription? _authSubscription;
 
+  // Password visibility toggles
+  bool _signInPasswordVisible = false;
+  bool _signUpPasswordVisible = false;
+
   @override
   void initState() {
     super.initState();
     // Set mode after build to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AuthViewModel>().setMode(widget.initialMode);
-      _setupAuthListener();
+      if (mounted) {
+        final authViewModel = context.read<AuthViewModel>();
+        authViewModel.setMode(widget.initialMode);
+        // Clear all form fields when entering the auth flow
+        authViewModel.reset();
+        // Clear availability message when switching pages
+        context.read<UserViewModel>().clearUsernameAvailability();
+        _setupAuthListener();
+      }
     });
   }
 
@@ -44,14 +60,30 @@ class _AuthPageState extends State<AuthPage> {
     final authRepository = context.read<AuthRepository>();
     _authSubscription = authRepository.authStateChanges().listen((user) {
       if (mounted && user != null) {
-        // User just logged in, navigate to home
+        // User just logged in, navigate to return route or home
         Future.delayed(const Duration(milliseconds: 100), () {
           if (mounted) {
-            context.go('/home');
+            final route = widget.returnRoute ?? '/home';
+            context.go(route);
           }
         });
       }
     });
+  }
+
+  void _handleSkip(BuildContext context) {
+    // If we have a return route, navigate to it using context.go()
+    // This is the most reliable way to ensure we land on the intended page
+    // even if the navigation stack was reset or if we came from a deep link.
+    if (widget.returnRoute != null) {
+      context.go(widget.returnRoute!);
+    } else if (context.canPop()) {
+      // If we can pop, it means we were pushed, so pop back to preserve stack
+      context.pop();
+    } else {
+      // Fallback to home if no return route and can't pop
+      context.go('/home');
+    }
   }
 
   @override
@@ -63,21 +95,20 @@ class _AuthPageState extends State<AuthPage> {
         widget.initialMode == AuthMode.signIn;
 
     return Scaffold(
-      appBar: isSignIn
-          ? AppBar(
-              actions: [
-                TextButton(
-                  onPressed: viewModel.isLoading
-                      ? null
-                      : () {
-                          FocusScope.of(context).unfocus();
-                          context.go('/home');
-                        },
-                  child: const Text('Skip'),
-                ),
-              ],
-            )
-          : null,
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        actions: [
+          TextButton(
+            onPressed: viewModel.isLoading
+                ? null
+                : () {
+                    FocusScope.of(context).unfocus();
+                    _handleSkip(context);
+                  },
+            child: const Text('Skip'),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -89,7 +120,7 @@ class _AuthPageState extends State<AuthPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'hiffi',
+                      'Hiffi',
                       style: theme.textTheme.headlineLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -98,7 +129,7 @@ class _AuthPageState extends State<AuthPage> {
                     Text(
                       isSignIn
                           ? 'Sign in with your username.'
-                          : 'Create an account to start using hiffi.',
+                          : 'Create an account to start using Hiffi.',
                       style: theme.textTheme.bodyLarge,
                     ),
                     const SizedBox(height: 24),
@@ -130,7 +161,28 @@ class _AuthPageState extends State<AuthPage> {
                                 labelText: 'Username',
                               ),
                               textInputAction: TextInputAction.next,
+                              textCapitalization: TextCapitalization.none,
+                              keyboardType: TextInputType.text,
                               autofillHints: const [AutofillHints.username],
+                              inputFormatters: [
+                                // Convert to lowercase and allow only valid characters (backend requires lowercase)
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[a-zA-Z0-9_]'),
+                                ),
+                                TextInputFormatter.withFunction((
+                                  oldValue,
+                                  newValue,
+                                ) {
+                                  // Convert to lowercase
+                                  final lowercaseText = newValue.text
+                                      .toLowerCase();
+                                  return TextEditingValue(
+                                    text: lowercaseText,
+                                    selection: newValue.selection,
+                                  );
+                                }),
+                                LengthLimitingTextInputFormatter(30),
+                              ],
                               validator: (value) {
                                 final username = value?.trim() ?? '';
                                 if (username.isEmpty) {
@@ -142,10 +194,23 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: viewModel.signInPasswordController,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Password',
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _signInPasswordVisible
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _signInPasswordVisible =
+                                          !_signInPasswordVisible;
+                                    });
+                                  },
+                                ),
                               ),
-                              obscureText: true,
+                              obscureText: !_signInPasswordVisible,
                               textInputAction: TextInputAction.done,
                               autofillHints: const [AutofillHints.password],
                               onFieldSubmitted: (_) {
@@ -164,16 +229,50 @@ class _AuthPageState extends State<AuthPage> {
                             TextFormField(
                               controller: viewModel.nameController,
                               decoration: const InputDecoration(
-                                labelText: 'Full name',
+                                labelText: 'Full name *',
                               ),
                               textInputAction: TextInputAction.next,
                               autofillHints: const [AutofillHints.name],
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[a-zA-Z\s]'),
+                                ),
+                                LengthLimitingTextInputFormatter(30),
+                              ],
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Please enter your name.';
                                 }
                                 if (value.trim().length >= 30) {
                                   return 'Name must be less than 30 characters.';
+                                }
+                                if (!RegExp(
+                                  r'^[a-zA-Z\s]+$',
+                                ).hasMatch(value.trim())) {
+                                  return 'Name can only contain alphabets.';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: viewModel.emailController,
+                              decoration: const InputDecoration(
+                                labelText: 'Email *',
+                                hintText: 'Enter your email',
+                              ),
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              autofillHints: const [AutofillHints.email],
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Please enter your email.';
+                                }
+                                final emailRegex = RegExp(
+                                  r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+                                );
+                                if (!emailRegex.hasMatch(value.trim())) {
+                                  return 'Please enter a valid email address.';
                                 }
                                 return null;
                               },
@@ -185,10 +284,23 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: viewModel.signUpPasswordController,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'Password',
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _signUpPasswordVisible
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _signUpPasswordVisible =
+                                          !_signUpPasswordVisible;
+                                    });
+                                  },
+                                ),
                               ),
-                              obscureText: true,
+                              obscureText: !_signUpPasswordVisible,
                               textInputAction: TextInputAction.done,
                               autofillHints: const [AutofillHints.newPassword],
                               onFieldSubmitted: (_) {
@@ -235,10 +347,15 @@ class _AuthPageState extends State<AuthPage> {
                             ? null
                             : () {
                                 FocusScope.of(context).unfocus();
+                                // Preserve return route when switching between sign in and sign up
+                                final returnRouteParam =
+                                    widget.returnRoute != null
+                                    ? '?returnTo=${Uri.encodeComponent(widget.returnRoute!)}'
+                                    : '';
                                 if (isSignIn) {
-                                  context.go('/signup');
+                                  context.go('/signup$returnRouteParam');
                                 } else {
-                                  context.go('/login');
+                                  context.go('/login$returnRouteParam');
                                 }
                               },
                         child: Text(
@@ -322,6 +439,8 @@ class _UsernameFieldState extends State<_UsernameField> {
     });
 
     if (value.trim().isEmpty) {
+      // Clear availability message if field is empty
+      context.read<UserViewModel>().clearUsernameAvailability();
       return;
     }
 
@@ -342,6 +461,8 @@ class _UsernameFieldState extends State<_UsernameField> {
       children: [
         TextFormField(
           controller: widget.controller,
+          textCapitalization: TextCapitalization.none,
+          keyboardType: TextInputType.text,
           decoration: InputDecoration(
             labelText: 'Username',
             helperText:
@@ -381,6 +502,7 @@ class _UsernameFieldState extends State<_UsernameField> {
             LengthLimitingTextInputFormatter(30),
           ],
           onChanged: _onUsernameChanged,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
@@ -403,15 +525,15 @@ class _UsernameFieldState extends State<_UsernameField> {
             return null;
           },
         ),
-        if (availabilityMessage != null && !isChecking) ...[
+        if (availabilityMessage != null &&
+            !isChecking &&
+            isAvailable == true) ...[
           const SizedBox(height: 4),
           Text(
             availabilityMessage,
             style: TextStyle(
               fontSize: 12,
-              color: isAvailable == true
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.error,
+              color: Theme.of(context).colorScheme.primary,
             ),
           ),
         ],

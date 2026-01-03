@@ -20,6 +20,7 @@ class AuthViewModel extends ChangeNotifier {
   final usernameController = TextEditingController();
   final signInPasswordController = TextEditingController();
   final nameController = TextEditingController();
+  final emailController = TextEditingController();
   final signUpUsernameController = TextEditingController();
   final signUpPasswordController = TextEditingController();
 
@@ -49,6 +50,18 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void reset() {
+    usernameController.clear();
+    signInPasswordController.clear();
+    nameController.clear();
+    emailController.clear();
+    signUpUsernameController.clear();
+    signUpPasswordController.clear();
+    _errorMessage = null;
+    _currentUsername = null;
+    notifyListeners();
+  }
+
   Future<void> submit({GlobalKey<FormState>? formKey}) async {
     if (_isLoading) {
       return;
@@ -65,7 +78,7 @@ class AuthViewModel extends ChangeNotifier {
     try {
       if (_mode == AuthMode.signIn) {
         await _authRepository.signIn(
-          username: usernameController.text.trim(),
+          username: usernameController.text.trim().toLowerCase(),
           password: signInPasswordController.text,
         );
 
@@ -86,6 +99,7 @@ class AuthViewModel extends ChangeNotifier {
         _fetchUserProfileAsync();
       } else {
         final name = nameController.text.trim();
+        final email = emailController.text.trim();
         final username = signUpUsernameController.text.trim();
         final password = signUpPasswordController.text;
 
@@ -97,6 +111,7 @@ class AuthViewModel extends ChangeNotifier {
         // Register user via backend API (this creates the user and returns a token)
         await _authRepository.signUp(
           name: name,
+          email: email,
           username: username,
           password: password,
         );
@@ -147,6 +162,7 @@ class AuthViewModel extends ChangeNotifier {
 
   void _clearSignUpForm() {
     nameController.clear();
+    emailController.clear();
     signUpUsernameController.clear();
     signUpPasswordController.clear();
   }
@@ -196,6 +212,7 @@ class AuthViewModel extends ChangeNotifier {
     usernameController.dispose();
     signInPasswordController.dispose();
     nameController.dispose();
+    emailController.dispose();
     signUpUsernameController.dispose();
     signUpPasswordController.dispose();
     super.dispose();

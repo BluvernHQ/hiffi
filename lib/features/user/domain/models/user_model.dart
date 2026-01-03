@@ -60,16 +60,31 @@ class UserModel {
       return null;
     }
 
+    // Helper to filter out invalid placeholder URLs
+    String? filterInvalidUrl(String? url) {
+      if (url == null || url.isEmpty) return null;
+      final invalidUrls = [
+        'https://example.com/newpic.jpg',
+        'http://example.com/newpic.jpg',
+        'example.com/newpic.jpg',
+      ];
+      if (invalidUrls.contains(url.toLowerCase())) return null;
+      return url;
+    }
+
+    final rawAvatarUrl =
+        userData['avatarUrl'] as String? ??
+        userData['profile_picture'] as String?;
+    final rawProfilePicture = userData['profile_picture'] as String?;
+
     return UserModel(
       username: userData['username'] as String? ?? '',
       name: userData['name'] as String? ?? '',
       email: userData['email'] as String?,
       bio: userData['bio'] as String?,
-      // Support both avatarUrl and profile_picture
-      avatarUrl:
-          userData['avatarUrl'] as String? ??
-          userData['profile_picture'] as String?,
-      profilePicture: userData['profile_picture'] as String?,
+      // Support both avatarUrl and profile_picture, but filter invalid URLs
+      avatarUrl: filterInvalidUrl(rawAvatarUrl),
+      profilePicture: filterInvalidUrl(rawProfilePicture),
       docId: userData['DocID'] as String?,
       // Support both UID and uid
       uid: userData['uid'] as String? ?? userData['UID'] as String?,

@@ -8,22 +8,40 @@ class SplashScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            ShimmerLoading(
-              width: 60,
-              height: 60,
-              borderRadius: BorderRadius.all(Radius.circular(30)),
+      body: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                ShimmerLoading(
+                  width: 60,
+                  height: 60,
+                  borderRadius: BorderRadius.all(Radius.circular(30)),
+                ),
+                SizedBox(height: 16),
+                Text('Loading hiffi...'),
+              ],
             ),
-            SizedBox(height: 16),
-            Text('Loading hiffi...'),
-          ],
-        ),
+          ),
+          Positioned(
+            bottom: 24,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Text(
+                '1.0.0+3',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.withOpacity(0.6),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

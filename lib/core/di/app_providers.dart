@@ -12,6 +12,9 @@ import '../../features/user/data/user_repository.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/video/domain/repositories/video_repository.dart';
 import '../../features/video/presentation/viewmodels/video_view_model.dart';
+import '../../features/search/data/search_repository.dart';
+import '../../features/search/presentation/viewmodels/search_view_model.dart';
+import '../../features/following/presentation/viewmodels/following_view_model.dart';
 import '../routes/app_router.dart';
 import '../services/api_client.dart';
 import '../services/notification_service.dart';
@@ -34,6 +37,10 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<VideoRepository>(
       create: (context) =>
           VideoRepositoryImpl(apiClient: context.read<ApiClient>()),
+    ),
+    Provider<SearchRepository>(
+      create: (context) =>
+          ApiSearchRepository(apiClient: context.read<ApiClient>()),
     ),
     Provider<AppRouter>(
       create: (context) =>
@@ -79,6 +86,17 @@ List<SingleChildWidget> buildAppProviders() {
     ChangeNotifierProvider<VideoViewModel>(
       create: (context) =>
           VideoViewModel(videoRepository: context.read<VideoRepository>()),
+    ),
+    ChangeNotifierProvider<SearchViewModel>(
+      create: (context) => SearchViewModel(
+        searchRepository: context.read<SearchRepository>(),
+        userRepository: context.read<UserRepository>(),
+        authRepository: context.read<AuthRepository>(),
+      ),
+    ),
+    ChangeNotifierProvider<FollowingViewModel>(
+      create: (context) =>
+          FollowingViewModel(videoRepository: context.read<VideoRepository>()),
     ),
   ];
 }

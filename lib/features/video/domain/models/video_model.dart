@@ -80,4 +80,43 @@ class VideoModel {
       if (profilePicture != null) 'profile_picture': profilePicture,
     };
   }
+
+  /// Creates a copy of this VideoModel with the given fields replaced with new values
+  VideoModel copyWith({
+    String? videoId,
+    String? videoUrl,
+    String? videoThumbnail,
+    String? videoTitle,
+    String? videoDescription,
+    List<String>? videoTags,
+    int? videoViews,
+    int? videoUpvotes,
+    int? videoDownvotes,
+    int? videoComments,
+    String? userUid,
+    String? userUsername,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? userVoteStatus,
+    String? profilePicture,
+  }) {
+    return VideoModel(
+      videoId: videoId ?? this.videoId,
+      videoUrl: videoUrl ?? this.videoUrl,
+      videoThumbnail: videoThumbnail ?? this.videoThumbnail,
+      videoTitle: videoTitle ?? this.videoTitle,
+      videoDescription: videoDescription ?? this.videoDescription,
+      videoTags: videoTags ?? this.videoTags,
+      videoViews: videoViews ?? this.videoViews,
+      videoUpvotes: videoUpvotes ?? this.videoUpvotes,
+      videoDownvotes: videoDownvotes ?? this.videoDownvotes,
+      videoComments: videoComments ?? this.videoComments,
+      userUid: userUid ?? this.userUid,
+      userUsername: userUsername ?? this.userUsername,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      userVoteStatus: userVoteStatus ?? this.userVoteStatus,
+      profilePicture: profilePicture ?? this.profilePicture,
+    );
+  }
 }

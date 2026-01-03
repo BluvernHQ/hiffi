@@ -28,7 +28,7 @@ class HomeViewModel extends ChangeNotifier {
 
   Future<void> signOut() async {
     await _authRepository.signOut();
-    // Clear username after sign out
-    _authViewModel.setCurrentUsername(null);
+    // Clear auth state and form fields after sign out
+    _authViewModel.reset();
   }
 }

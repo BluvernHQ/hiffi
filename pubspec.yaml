@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.0+3
 
 environment:
   sdk: ^3.9.2
@@ -43,15 +43,20 @@ dependencies:
     path: third_party/dospace
   file_picker: ^8.1.4
   http: ^1.6.0
+  intl: ^0.19.0
   video_thumbnail: ^0.5.3
   workmanager: ^0.9.0+3
   flutter_local_notifications: ^19.5.0
   video_player: ^2.10.1
   chewie: ^1.13.0
+  shelf: ^1.4.1
+  shelf_proxy: ^1.0.4
   flutter_screenutil: ^5.9.0
   connectivity_plus: ^6.1.0
   shared_preferences: ^2.3.3
   shimmer: ^3.0.0
+  collapsible_sidebar: ^2.0.7
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:
@@ -63,6 +68,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.10
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -78,6 +85,10 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/abstract-orange-pattern.png
+    - assets/appicon.png
+    - assets/icon.svg
+    - assets/icon-light-32x32.svg
+    - assets/icon-dark-32x32.svg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -104,3 +115,27 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App Icon Configuration
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/appicon.png"
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: "assets/appicon.png"
+    background_color: "#FF6B35"
+    theme_color: "#FF6B35"
+
+# Splash Screen Configuration
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: "assets/appicon.png"
+  android: true
+  ios: true
+  web: true
+  android_12:
+    image: "assets/appicon.png"
+    color: "#FFFFFF"
+  fullscreen: true

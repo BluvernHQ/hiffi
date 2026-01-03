@@ -97,6 +97,41 @@ class VideoViewModel extends ChangeNotifier {
     refresh();
   }
 
+  Future<void> deleteVideo(String videoId) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _videoRepository.deleteVideo(videoId);
+      // Remove from local list if present
+      _videos.removeWhere((v) => v.videoId == videoId);
+      _errorMessage = null;
+    } catch (error) {
+      _errorMessage = error.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Updates the view count for a specific video in the list
+  /// This is called when a video view is registered (e.g., when user watches a video)
+  /// Only updates if the new view count is greater than the current one to prevent duplicates
+  void updateVideoViewCount(String videoId, int newViewCount) {
+    final index = _videos.indexWhere((v) => v.videoId == videoId);
+    if (index != -1) {
+      final currentVideo = _videos[index];
+      // Only update if the new count is greater (prevents duplicate increments)
+      // This ensures we don't accidentally decrease the count or update with stale data
+      if (newViewCount > currentVideo.videoViews) {
+        _videos[index] = currentVideo.copyWith(videoViews: newViewCount);
+        notifyListeners();
+      }
+    }
+  }
+
   /// Generates a random alphanumeric seed for video pagination
   String _generateRandomSeed() {
     const chars =

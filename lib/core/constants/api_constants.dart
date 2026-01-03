@@ -13,6 +13,7 @@ class ApiConstants {
       '/users/self'; // Deprecated, but still works
   static String getUser(String username) => '/users/$username';
   static String deleteUser(String username) => '/users/$username';
+  static const String profilePhotoUpload = '/users/profile-photo/upload';
 
   // Video endpoints
   static const String uploadVideo = '/videos/upload';
@@ -20,8 +21,9 @@ class ApiConstants {
       '/videos/upload/ack/$bridgeId';
   static const String videoList = '/videos/list';
   static const String videoListSelf = '/videos/list/self';
+  static const String videoListFollowing = '/videos/list/following';
   static String getVideo(String videoId) => '/videos/$videoId';
-  static String deleteVideo(String videoId) => '/videos/delete/$videoId';
+  static String deleteVideo(String videoId) => '/videos/$videoId';
   static String listVideosByUsername(String username) =>
       '/videos/list/$username';
 
@@ -40,4 +42,10 @@ class ApiConstants {
   static String followUser(String username) => '/social/users/follow/$username';
   static String unfollowUser(String username) =>
       '/social/users/unfollow/$username';
+
+  // Search endpoints
+  static String searchUsers(String query) =>
+      '/search/users/${Uri.encodeComponent(query)}';
+  static String searchVideos(String query) =>
+      '/search/videos/${Uri.encodeComponent(query)}';
 }

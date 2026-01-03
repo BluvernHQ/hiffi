@@ -25,7 +25,7 @@ class HiffiApp extends StatelessWidget {
               InAppNotificationService.setNavigatorKey(appRouter.navigatorKey);
 
               return MaterialApp.router(
-                title: 'hiffi',
+                title: 'Hiffi',
                 theme: ThemeData(
                   useMaterial3: true,
                   colorScheme: const ColorScheme(
