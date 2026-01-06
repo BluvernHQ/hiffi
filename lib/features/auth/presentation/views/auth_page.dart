@@ -27,11 +27,16 @@ class _AuthPageState extends State<AuthPage> {
   // Create form keys locally to avoid GlobalKey conflicts
   final _signInFormKey = GlobalKey<FormState>();
   final _signUpFormKey = GlobalKey<FormState>();
+  final _otpFormKey = GlobalKey<FormState>();
+  final _forgotPasswordFormKey = GlobalKey<FormState>();
+  final _resetPasswordFormKey = GlobalKey<FormState>();
   StreamSubscription? _authSubscription;
 
   // Password visibility toggles
   bool _signInPasswordVisible = false;
   bool _signUpPasswordVisible = false;
+  bool _resetPasswordVisible = false;
+  bool _confirmResetPasswordVisible = false;
 
   @override
   void initState() {
@@ -90,23 +95,40 @@ class _AuthPageState extends State<AuthPage> {
   Widget build(BuildContext context) {
     final viewModel = context.watch<AuthViewModel>();
     final theme = Theme.of(context);
-    final isSignIn =
-        viewModel.mode == AuthMode.signIn ||
-        widget.initialMode == AuthMode.signIn;
+    final isSignIn = viewModel.mode == AuthMode.signIn;
+    final isSignUp = viewModel.mode == AuthMode.signUp;
+    final isVerifyOtp = viewModel.mode == AuthMode.verifyOtp;
+    final isForgotPassword = viewModel.mode == AuthMode.forgotPassword;
+    final isResetPassword = viewModel.mode == AuthMode.resetPassword;
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
+        automaticallyImplyLeading: !isVerifyOtp && !isResetPassword,
+        leading: isVerifyOtp || isResetPassword || isForgotPassword
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  if (isVerifyOtp) {
+                    viewModel.setMode(AuthMode.signUp);
+                  } else if (isResetPassword) {
+                    viewModel.setMode(AuthMode.forgotPassword);
+                  } else {
+                    viewModel.setMode(AuthMode.signIn);
+                  }
+                },
+              )
+            : null,
         actions: [
-          TextButton(
-            onPressed: viewModel.isLoading
-                ? null
-                : () {
-                    FocusScope.of(context).unfocus();
-                    _handleSkip(context);
-                  },
-            child: const Text('Skip'),
-          ),
+          if (!isVerifyOtp && !isResetPassword && !isForgotPassword)
+            TextButton(
+              onPressed: viewModel.isLoading
+                  ? null
+                  : () {
+                      FocusScope.of(context).unfocus();
+                      _handleSkip(context);
+                    },
+              child: const Text('Skip'),
+            ),
         ],
       ),
       body: SafeArea(
@@ -128,8 +150,14 @@ class _AuthPageState extends State<AuthPage> {
                     const SizedBox(height: 8),
                     Text(
                       isSignIn
-                          ? 'Sign in with your username.'
-                          : 'Create an account to start using Hiffi.',
+                          ? 'Sign in with your username or email.'
+                          : isSignUp
+                          ? 'Create an account to start using Hiffi.'
+                          : isVerifyOtp
+                          ? 'Enter the verification code sent to your email.'
+                          : isForgotPassword
+                          ? 'Enter your email to reset your password.'
+                          : 'Enter the verification code and your new password.',
                       style: theme.textTheme.bodyLarge,
                     ),
                     const SizedBox(height: 24),
@@ -138,36 +166,54 @@ class _AuthPageState extends State<AuthPage> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.errorContainer,
+                          color:
+                              viewModel.errorMessage!.contains('successfully')
+                              ? theme.colorScheme.primaryContainer
+                              : theme.colorScheme.errorContainer,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           viewModel.errorMessage ?? '',
                           style: TextStyle(
-                            color: theme.colorScheme.onErrorContainer,
+                            color:
+                                viewModel.errorMessage!.contains('successfully')
+                                ? theme.colorScheme.onPrimaryContainer
+                                : theme.colorScheme.onErrorContainer,
                           ),
                         ),
                       ),
                       const SizedBox(height: 16),
                     ],
                     Form(
-                      key: isSignIn ? _signInFormKey : _signUpFormKey,
+                      key: isSignIn
+                          ? _signInFormKey
+                          : isSignUp
+                          ? _signUpFormKey
+                          : isVerifyOtp
+                          ? _otpFormKey
+                          : isForgotPassword
+                          ? _forgotPasswordFormKey
+                          : _resetPasswordFormKey,
                       child: Column(
                         children: [
                           if (isSignIn) ...[
                             TextFormField(
                               controller: viewModel.usernameController,
                               decoration: const InputDecoration(
-                                labelText: 'Username',
+                                labelText: 'Username or Email',
+                                hintText: 'Enter your username or email',
                               ),
                               textInputAction: TextInputAction.next,
                               textCapitalization: TextCapitalization.none,
-                              keyboardType: TextInputType.text,
-                              autofillHints: const [AutofillHints.username],
+                              keyboardType: TextInputType.emailAddress,
+                              autofillHints: const [
+                                AutofillHints.username,
+                                AutofillHints.email,
+                              ],
                               inputFormatters: [
-                                // Convert to lowercase and allow only valid characters (backend requires lowercase)
+                                // Allow alphanumeric, underscores, and common email characters
                                 FilteringTextInputFormatter.allow(
-                                  RegExp(r'[a-zA-Z0-9_]'),
+                                  RegExp(r'[a-zA-Z0-9_@.]'),
                                 ),
                                 TextInputFormatter.withFunction((
                                   oldValue,
@@ -181,12 +227,11 @@ class _AuthPageState extends State<AuthPage> {
                                     selection: newValue.selection,
                                   );
                                 }),
-                                LengthLimitingTextInputFormatter(30),
                               ],
                               validator: (value) {
-                                final username = value?.trim() ?? '';
-                                if (username.isEmpty) {
-                                  return 'Please enter your username.';
+                                final identifier = value?.trim() ?? '';
+                                if (identifier.isEmpty) {
+                                  return 'Please enter your username or email.';
                                 }
                                 return null;
                               },
@@ -225,7 +270,20 @@ class _AuthPageState extends State<AuthPage> {
                                 return null;
                               },
                             ),
-                          ] else ...[
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: viewModel.isLoading
+                                    ? null
+                                    : () {
+                                        viewModel.setMode(
+                                          AuthMode.forgotPassword,
+                                        );
+                                      },
+                                child: const Text('Forgot Password?'),
+                              ),
+                            ),
+                          ] else if (isSignUp) ...[
                             TextFormField(
                               controller: viewModel.nameController,
                               decoration: const InputDecoration(
@@ -318,6 +376,177 @@ class _AuthPageState extends State<AuthPage> {
                                 return null;
                               },
                             ),
+                          ] else if (isVerifyOtp) ...[
+                            const SizedBox(height: 32),
+                            _OtpInput(
+                              controller: viewModel.otpController,
+                              isLoading: viewModel.isLoading,
+                              onSubmitted: () {
+                                if (!viewModel.isLoading) {
+                                  viewModel.submit(formKey: _otpFormKey);
+                                }
+                              },
+                            ),
+                            const SizedBox(height: 32),
+                            Center(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    "Didn't receive the code?",
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        !viewModel.canResendOtp ||
+                                            viewModel.isLoading
+                                        ? null
+                                        : () => viewModel.resendOtp(),
+                                    child: Text(
+                                      viewModel.canResendOtp
+                                          ? 'Resend code'
+                                          : 'Resend in ${viewModel.resendTimer}s',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ] else if (isForgotPassword) ...[
+                            TextFormField(
+                              controller: viewModel.emailController,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                hintText: 'Enter your registered email',
+                              ),
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.done,
+                              autofillHints: const [AutofillHints.email],
+                              onFieldSubmitted: (_) {
+                                if (!viewModel.isLoading) {
+                                  viewModel.submit(
+                                    formKey: _forgotPasswordFormKey,
+                                  );
+                                }
+                              },
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Please enter your email.';
+                                }
+                                final emailRegex = RegExp(
+                                  r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+                                );
+                                if (!emailRegex.hasMatch(value.trim())) {
+                                  return 'Please enter a valid email address.';
+                                }
+                                return null;
+                              },
+                            ),
+                          ] else if (isResetPassword) ...[
+                            const SizedBox(height: 32),
+                            _OtpInput(
+                              controller: viewModel.otpController,
+                              isLoading: viewModel.isLoading,
+                              onSubmitted: () {
+                                // Don't submit automatically, wait for password
+                              },
+                            ),
+                            const SizedBox(height: 32),
+                            TextFormField(
+                              controller: viewModel.resetPasswordController,
+                              decoration: InputDecoration(
+                                labelText: 'New Password',
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _resetPasswordVisible
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _resetPasswordVisible =
+                                          !_resetPasswordVisible;
+                                    });
+                                  },
+                                ),
+                              ),
+                              obscureText: !_resetPasswordVisible,
+                              textInputAction: TextInputAction.next,
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter a new password.';
+                                }
+                                if (value.length < 6) {
+                                  return 'Password must be at least 6 characters.';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller:
+                                  viewModel.confirmResetPasswordController,
+                              decoration: InputDecoration(
+                                labelText: 'Confirm New Password',
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _confirmResetPasswordVisible
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _confirmResetPasswordVisible =
+                                          !_confirmResetPasswordVisible;
+                                    });
+                                  },
+                                ),
+                              ),
+                              obscureText: !_confirmResetPasswordVisible,
+                              textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) {
+                                if (!viewModel.isLoading) {
+                                  viewModel.submit(
+                                    formKey: _resetPasswordFormKey,
+                                  );
+                                }
+                              },
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please confirm your password.';
+                                }
+                                if (value !=
+                                    viewModel.resetPasswordController.text) {
+                                  return 'Passwords do not match.';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 32),
+                            Center(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    "Didn't receive the code?",
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed:
+                                        !viewModel.canResendOtp ||
+                                            viewModel.isLoading
+                                        ? null
+                                        : () => viewModel.resendOtp(),
+                                    child: Text(
+                                      viewModel.canResendOtp
+                                          ? 'Resend code'
+                                          : 'Resend in ${viewModel.resendTimer}s',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -332,39 +561,54 @@ class _AuthPageState extends State<AuthPage> {
                                 FocusScope.of(context).unfocus();
                                 final formKey = isSignIn
                                     ? _signInFormKey
-                                    : _signUpFormKey;
+                                    : isSignUp
+                                    ? _signUpFormKey
+                                    : isVerifyOtp
+                                    ? _otpFormKey
+                                    : isForgotPassword
+                                    ? _forgotPasswordFormKey
+                                    : _resetPasswordFormKey;
                                 viewModel.submit(formKey: formKey);
                               },
                         child: viewModel.isLoading
                             ? const InlineShimmer(width: 20, height: 20)
-                            : Text(isSignIn ? 'Sign in' : 'Create account'),
+                            : Text(
+                                isSignIn
+                                    ? 'Sign in'
+                                    : isSignUp
+                                    ? 'Create account'
+                                    : isForgotPassword
+                                    ? 'Send reset link'
+                                    : 'Reset Password',
+                              ),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Center(
-                      child: TextButton(
-                        onPressed: viewModel.isLoading
-                            ? null
-                            : () {
-                                FocusScope.of(context).unfocus();
-                                // Preserve return route when switching between sign in and sign up
-                                final returnRouteParam =
-                                    widget.returnRoute != null
-                                    ? '?returnTo=${Uri.encodeComponent(widget.returnRoute!)}'
-                                    : '';
-                                if (isSignIn) {
-                                  context.go('/signup$returnRouteParam');
-                                } else {
-                                  context.go('/login$returnRouteParam');
-                                }
-                              },
-                        child: Text(
-                          isSignIn
-                              ? 'Need an account? Sign up'
-                              : 'Already have an account? Sign in',
+                    if (!isVerifyOtp && !isResetPassword)
+                      Center(
+                        child: TextButton(
+                          onPressed: viewModel.isLoading
+                              ? null
+                              : () {
+                                  FocusScope.of(context).unfocus();
+                                  // Preserve return route when switching between sign in and sign up
+                                  final returnRouteParam =
+                                      widget.returnRoute != null
+                                      ? '?returnTo=${Uri.encodeComponent(widget.returnRoute!)}'
+                                      : '';
+                                  if (isSignIn || isForgotPassword) {
+                                    context.go('/signup$returnRouteParam');
+                                  } else {
+                                    context.go('/login$returnRouteParam');
+                                  }
+                                },
+                          child: Text(
+                            isSignIn || isForgotPassword
+                                ? 'Need an account? Sign up'
+                                : 'Already have an account? Sign in',
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -372,6 +616,105 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _OtpInput extends StatefulWidget {
+  const _OtpInput({
+    required this.controller,
+    required this.isLoading,
+    this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final bool isLoading;
+  final VoidCallback? onSubmitted;
+
+  @override
+  State<_OtpInput> createState() => _OtpInputState();
+}
+
+class _OtpInputState extends State<_OtpInput> {
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () {
+            _focusNode.requestFocus();
+          },
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: List.generate(6, (index) {
+              final isFocused = widget.controller.text.length == index;
+              final hasValue = widget.controller.text.length > index;
+
+              return Container(
+                width: 45,
+                height: 55,
+                decoration: BoxDecoration(
+                  color: hasValue
+                      ? Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withOpacity(0.2)
+                      : Theme.of(
+                          context,
+                        ).colorScheme.surfaceVariant.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isFocused
+                        ? Theme.of(context).colorScheme.primary
+                        : hasValue
+                        ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    hasValue ? widget.controller.text[index] : '',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+        // Hidden text field to capture input
+        Opacity(
+          opacity: 0,
+          child: SizedBox(
+            height: 0,
+            child: TextFormField(
+              controller: widget.controller,
+              focusNode: _focusNode,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (value) {
+                setState(() {});
+                if (value.length == 6 && widget.onSubmitted != null) {
+                  widget.onSubmitted!();
+                }
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

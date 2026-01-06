@@ -26,9 +26,10 @@ The Authentication API provides endpoints for user registration and login. The s
 
 ## Authentication Flow
 
-1. **Register** a new user account → Receive JWT token
-2. **Login** with existing credentials → Receive JWT token
-3. **Use the token** in the `Authorization` header for protected endpoints
+1. **Register** a new user account → Receive registration ID
+2. **Verify OTP** with registration ID → Receive JWT token
+3. **Login** with existing credentials → Receive JWT token
+4. **Use the token** in the `Authorization` header for protected endpoints
 
 ### Token Details
 
@@ -43,7 +44,7 @@ The Authentication API provides endpoints for user registration and login. The s
 
 ### 1. Register
 
-Creates a new user account and returns a JWT token for immediate authentication.
+Initiates user registration and sends an OTP to the user's email.
 
 **Endpoint:** `POST /auth/register`
 
@@ -54,93 +55,70 @@ Creates a new user account and returns a JWT token for immediate authentication.
 {
   "username": "johndoe",
   "name": "John Doe",
+  "email": "john@example.com",
   "password": "securepassword123"
 }
 ```
 
-**Request Example:**
-```http
-POST /auth/register
-Content-Type: application/json
-
+**Success Response (200 OK or 201 Created):**
+```json
 {
-  "username": "johndoe",
-  "name": "John Doe",
-  "password": "mypassword123"
+  "success": true,
+  "data": {
+    "id": "5ab5a6b7-ee03-4db9-a672-02b3c049d454"
+  }
+}
+```
+
+**Error Responses:**
+
+**400 Bad Request** - Invalid input or existing username:
+```json
+{
+  "success": false,
+  "error": "username already in use"
+}
+```
+
+---
+
+### 2. Verify OTP
+
+Verifies the OTP sent during registration and returns a JWT token.
+
+**Endpoint:** `POST /auth/verify`
+
+**Authentication:** Not required
+
+**Request Body:**
+```json
+{
+  "id": "5ab5a6b7-ee03-4db9-a672-02b3c049d454",
+  "otp": "466401"
 }
 ```
 
 **Success Response (200 OK):**
 ```json
 {
-  "status": "success",
-  "id": 1,
-  "uid": "abc123def456...",
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "uid": "abc123def456...",
-    "username": "johndoe",
-    "name": "John Doe"
-  }
+    "success": true,
+    "data": {
+        "expires_in": 86400,
+        "id": 147,
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "uid": "d258c5ef52365606eea3d64c86f67fff",
+        "user": {
+            "name": "John Doe",
+            "uid": "d258c5ef52365606eea3d64c86f67fff",
+            "username": "johndoe"
+        }
+    }
 }
 ```
-
-**Response Fields:**
-- `id`: Internal database ID of the created user
-- `uid`: Unique user identifier (32-character hash)
-- `token`: JWT token for authentication (use in `Authorization` header)
-- `user`: Basic user information
-
-**Error Responses:**
-
-**400 Bad Request** - Invalid input:
-```json
-{
-  "status": "error",
-  "message": "username must be between 3 and 30 characters"
-}
-```
-
-**400 Bad Request** - Password too short:
-```json
-{
-  "status": "error",
-  "message": "password must be at least 6 characters"
-}
-```
-
-**409 Conflict** - Username already exists:
-```json
-{
-  "status": "error",
-  "message": "username already in use"
-}
-```
-
-**500 Internal Server Error** - Server errors:
-```json
-{
-  "status": "error",
-  "message": "failed to create user"
-}
-```
-
-**Common Error Messages:**
-- `"username is required"` - Username field is missing or empty
-- `"username must be between 3 and 30 characters"` - Username length validation failed
-- `"username must contain only lowercase letters, numbers, and underscores"` - Username format validation failed
-- `"name cannot be empty"` - Name field is missing or empty
-- `"name must be less than 30 characters"` - Name length validation failed
-- `"password must be at least 6 characters"` - Password too short
-- `"username already in use"` - Username is already taken
-- `"failed to check username availability"` - Database error checking username
-- `"failed to process password"` - Password hashing error
-- `"failed to create user"` - Database error creating user
-- `"failed to generate authentication token"` - JWT token generation error
 
 ---
 
-### 2. Login
+### 3. Login
 
 Authenticates an existing user and returns a JWT token.
 

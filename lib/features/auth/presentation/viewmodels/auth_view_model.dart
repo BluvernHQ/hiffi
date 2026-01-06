@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
@@ -5,7 +6,7 @@ import '../../../../core/exceptions/auth_failure.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../user/data/user_repository.dart';
 
-enum AuthMode { signIn, signUp }
+enum AuthMode { signIn, signUp, verifyOtp, forgotPassword, resetPassword }
 
 class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
@@ -23,18 +24,43 @@ class AuthViewModel extends ChangeNotifier {
   final emailController = TextEditingController();
   final signUpUsernameController = TextEditingController();
   final signUpPasswordController = TextEditingController();
+  final otpController = TextEditingController();
+  final resetPasswordController = TextEditingController();
+  final confirmResetPasswordController = TextEditingController();
 
   AuthMode _mode = AuthMode.signIn;
   bool _isLoading = false;
   String? _errorMessage;
   bool _postSignUpRedirectPending = false;
   String? _currentUsername;
+  String? _registrationId;
+  String? _resetId;
+  int _resendTimer = 0;
+  Timer? _countdownTimer;
 
   AuthMode get mode => _mode;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get isPostSignUpRedirectPending => _postSignUpRedirectPending;
   String? get currentUsername => _currentUsername;
+  String? get registrationId => _registrationId;
+  String? get resetId => _resetId;
+  int get resendTimer => _resendTimer;
+  bool get canResendOtp => _resendTimer == 0;
+
+  void _startResendTimer() {
+    _resendTimer = 60;
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendTimer > 0) {
+        _resendTimer--;
+        notifyListeners();
+      } else {
+        _countdownTimer?.cancel();
+      }
+    });
+    notifyListeners();
+  }
 
   void setCurrentUsername(String? username) {
     _currentUsername = username;
@@ -57,8 +83,15 @@ class AuthViewModel extends ChangeNotifier {
     emailController.clear();
     signUpUsernameController.clear();
     signUpPasswordController.clear();
+    otpController.clear();
+    resetPasswordController.clear();
+    confirmResetPasswordController.clear();
     _errorMessage = null;
     _currentUsername = null;
+    _registrationId = null;
+    _resetId = null;
+    _resendTimer = 0;
+    _countdownTimer?.cancel();
     notifyListeners();
   }
 
@@ -97,7 +130,7 @@ class AuthViewModel extends ChangeNotifier {
         // Fetch user profile asynchronously (non-blocking for navigation)
         // The router will handle navigation based on auth state changes
         _fetchUserProfileAsync();
-      } else {
+      } else if (_mode == AuthMode.signUp) {
         final name = nameController.text.trim();
         final email = emailController.text.trim();
         final username = signUpUsernameController.text.trim();
@@ -108,37 +141,150 @@ class AuthViewModel extends ChangeNotifier {
           name: 'hiffi.auth',
         );
 
-        // Register user via backend API (this creates the user and returns a token)
-        await _authRepository.signUp(
+        // Register user via backend API (this creates the user and returns a registration ID)
+        final regId = await _authRepository.signUp(
           name: name,
           email: email,
           username: username,
           password: password,
         );
 
-        developer.log('User created successfully', name: 'hiffi.auth');
+        developer.log(
+          'Registration initiated successfully. ID: $regId',
+          name: 'hiffi.auth',
+        );
+
+        _registrationId = regId;
+        _mode = AuthMode.verifyOtp;
+        _startResendTimer();
+
+        notifyListeners();
+      } else if (_mode == AuthMode.verifyOtp) {
+        if (_registrationId == null) {
+          throw const AuthFailure(
+            'Registration ID missing. Please try signing up again.',
+          );
+        }
+
+        final otp = otpController.text.trim();
+
+        developer.log(
+          'Verifying OTP for ID: $_registrationId',
+          name: 'hiffi.auth',
+        );
+
+        await _authRepository.verifyOtp(id: _registrationId!, otp: otp);
+
+        developer.log('OTP verified successfully', name: 'hiffi.auth');
 
         // Update username from auth user
         final currentUser = _authRepository.currentUser;
         if (currentUser?.username != null) {
           _currentUsername = currentUser!.username;
-        } else {
-          _currentUsername = username;
         }
 
         notifyListeners();
 
-        // Clear form
+        // Clear forms
         _clearSignUpForm();
+        _clearOtpForm();
+      } else if (_mode == AuthMode.forgotPassword) {
+        final email = emailController.text.trim();
 
-        // User is now logged in automatically after registration
-        // Router will handle navigation based on auth state changes
+        developer.log(
+          'Requesting password reset for: $email',
+          name: 'hiffi.auth',
+        );
+
+        final id = await _authRepository.requestPasswordReset(email: email);
+
+        developer.log(
+          'Password reset request successful. ID: $id',
+          name: 'hiffi.auth',
+        );
+
+        _resetId = id;
+        _mode = AuthMode.resetPassword;
+        _startResendTimer();
+
+        notifyListeners();
+      } else if (_mode == AuthMode.resetPassword) {
+        if (_resetId == null) {
+          throw const AuthFailure('Reset ID missing. Please try again.');
+        }
+
+        final otp = otpController.text.trim();
+        final newPassword = resetPasswordController.text;
+
+        developer.log(
+          'Verifying password reset for ID: $_resetId',
+          name: 'hiffi.auth',
+        );
+
+        await _authRepository.verifyPasswordReset(
+          id: _resetId!,
+          otp: otp,
+          newPassword: newPassword,
+        );
+
+        developer.log('Password reset successfully', name: 'hiffi.auth');
+
+        _mode = AuthMode.signIn;
+        _errorMessage =
+            'Password reset successfully. Please sign in with your new password.';
+
+        _clearResetForm();
+        _clearOtpForm();
+        notifyListeners();
       }
     } on AuthFailure catch (error) {
       _postSignUpRedirectPending = false;
       _setError(error.message);
     } catch (error) {
       _postSignUpRedirectPending = false;
+      _setError('Unexpected error: $error');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> resendOtp() async {
+    if (!canResendOtp || _isLoading) return;
+
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      if (_mode == AuthMode.verifyOtp) {
+        final name = nameController.text.trim();
+        final email = emailController.text.trim();
+        final username = signUpUsernameController.text.trim();
+        final password = signUpPasswordController.text;
+
+        developer.log('Resending registration OTP', name: 'hiffi.auth');
+
+        final regId = await _authRepository.signUp(
+          name: name,
+          email: email,
+          username: username,
+          password: password,
+        );
+
+        _registrationId = regId;
+      } else if (_mode == AuthMode.resetPassword) {
+        final email = emailController.text.trim();
+
+        developer.log('Resending password reset OTP', name: 'hiffi.auth');
+
+        final id = await _authRepository.requestPasswordReset(email: email);
+        _resetId = id;
+      }
+
+      _startResendTimer();
+      developer.log('OTP resent successfully', name: 'hiffi.auth');
+    } on AuthFailure catch (error) {
+      _setError(error.message);
+    } catch (error) {
       _setError('Unexpected error: $error');
     } finally {
       _setLoading(false);
@@ -165,6 +311,16 @@ class AuthViewModel extends ChangeNotifier {
     emailController.clear();
     signUpUsernameController.clear();
     signUpPasswordController.clear();
+  }
+
+  void _clearOtpForm() {
+    otpController.clear();
+  }
+
+  void _clearResetForm() {
+    emailController.clear();
+    resetPasswordController.clear();
+    confirmResetPasswordController.clear();
   }
 
   /// Fetch user profile asynchronously (non-blocking for navigation)
@@ -209,6 +365,7 @@ class AuthViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     usernameController.dispose();
     signInPasswordController.dispose();
     nameController.dispose();

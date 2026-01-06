@@ -4,6 +4,9 @@ class ApiConstants {
   // Auth endpoints
   static const String authRegister = '/auth/register';
   static const String authLogin = '/auth/login';
+  static const String authVerify = '/auth/verify';
+  static const String authResetPasswordRequest = '/auth/reset-password/request';
+  static const String authResetPasswordVerify = '/auth/reset-password/verify';
 
   // User endpoints
   static const String userAvailability = '/users/availability';

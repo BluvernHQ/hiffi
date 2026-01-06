@@ -754,20 +754,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 final authRepository = context
                                     .read<AuthRepository>();
                                 if (authRepository.currentUser == null) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: const Text(
-                                        'Please sign in to vote',
-                                      ),
-                                      action: SnackBarAction(
-                                        label: 'Sign In',
-                                        onPressed: () {
-                                          context.push('/login');
-                                        },
-                                      ),
-                                      backgroundColor: Colors.orange,
-                                    ),
-                                  );
+                                  _showSignInRequiredDialog();
                                   return;
                                 }
 
@@ -834,20 +821,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 final authRepository = context
                                     .read<AuthRepository>();
                                 if (authRepository.currentUser == null) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: const Text(
-                                        'Please sign in to vote',
-                                      ),
-                                      action: SnackBarAction(
-                                        label: 'Sign In',
-                                        onPressed: () {
-                                          context.push('/login');
-                                        },
-                                      ),
-                                      backgroundColor: Colors.orange,
-                                    ),
-                                  );
+                                  _showSignInRequiredDialog();
                                   return;
                                 }
 
@@ -916,6 +890,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       GestureDetector(
                         onTap: () {
                           if (_video.userUsername.isNotEmpty) {
+                            _pauseVideo();
                             context.push('/users/${_video.userUsername}');
                           }
                         },
@@ -930,6 +905,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         child: GestureDetector(
                           onTap: () {
                             if (_video.userUsername.isNotEmpty) {
+                              _pauseVideo();
                               context.push('/users/${_video.userUsername}');
                             }
                           },
@@ -1140,7 +1116,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             const SizedBox(height: 20),
                             FilledButton(
                               onPressed: () {
-                                context.push('/login');
+                                _showSignInRequiredDialog();
                               },
                               style: FilledButton.styleFrom(
                                 backgroundColor: const Color(0xFFFF6B35),
@@ -1165,6 +1141,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         InlineCommentEntryBar(
                           controller: _commentsController,
                           onTap: _openCommentsSheet,
+                          onSignInRequired: _showSignInRequiredDialog,
                         ),
                         const Divider(height: 1, indent: 16, endIndent: 16),
                         // latest comment preview

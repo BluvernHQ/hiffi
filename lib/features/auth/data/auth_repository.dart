@@ -12,11 +12,25 @@ abstract class AuthRepository {
   AuthUser? get currentUser;
   Future<void> signIn({required String username, required String password});
 
-  Future<void> signUp({
+  /// Signs up a new user. Returns a registration ID that must be verified with OTP.
+  Future<String> signUp({
     required String name,
     required String email,
     required String username,
     required String password,
+  });
+
+  /// Verifies the OTP sent during registration.
+  Future<void> verifyOtp({required String id, required String otp});
+
+  /// Requests a password reset for the given email.
+  Future<String> requestPasswordReset({required String email});
+
+  /// Verifies the OTP and sets a new password.
+  Future<void> verifyPasswordReset({
+    required String id,
+    required String otp,
+    required String newPassword,
   });
 
   Future<void> signOut();
@@ -65,22 +79,32 @@ class BackendAuthRepository implements AuthRepository {
     required String password,
   }) async {
     if (username.isEmpty || password.isEmpty) {
-      throw const AuthFailure('Username and password are required.');
+      throw const AuthFailure('Username/email and password are required.');
     }
 
-    final trimmedUsername = username.trim().toLowerCase();
+    final identifier = username.trim().toLowerCase();
+    final isEmail = identifier.contains('@');
 
     try {
-      final response = await _apiClient.post(ApiConstants.authLogin, {
-        'username': trimmedUsername,
-        'password': password,
-      }, requiresAuth: false);
+      final body = <String, String>{'password': password};
+
+      if (isEmail) {
+        body['email'] = identifier;
+      } else {
+        body['username'] = identifier;
+      }
+
+      final response = await _apiClient.post(
+        ApiConstants.authLogin,
+        body,
+        requiresAuth: false,
+      );
 
       if (response.statusCode == 200) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
 
-        if (body['success'] == true) {
-          final data = body['data'] as Map<String, dynamic>?;
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
           final token = data?['token'] as String?;
           final userData = data?['user'] as Map<String, dynamic>?;
 
@@ -106,15 +130,16 @@ class BackendAuthRepository implements AuthRepository {
           // Emit auth state change
           _authStateController.add(_currentUser);
         } else {
-          final message = body['message'] as String? ?? 'Login failed.';
+          final message = responseBody['message'] as String? ?? 'Login failed.';
           throw AuthFailure(message);
         }
       } else if (response.statusCode == 401) {
-        throw const AuthFailure('Invalid username or password.');
+        throw const AuthFailure('Invalid credentials.');
       } else {
-        final body = jsonDecode(response.body) as Map<String, dynamic>?;
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>?;
         final message =
-            body?['message'] as String? ?? 'Login failed. Please try again.';
+            responseBody?['message'] as String? ??
+            'Login failed. Please try again.';
         throw AuthFailure(message);
       }
     } catch (error) {
@@ -126,7 +151,7 @@ class BackendAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> signUp({
+  Future<String> signUp({
     required String name,
     required String email,
     required String username,
@@ -173,9 +198,53 @@ class BackendAuthRepository implements AuthRepository {
         'password': password,
       }, requiresAuth: false);
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
 
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final id = data?['id'] as String?;
+
+          if (id == null || id.isEmpty) {
+            throw const AuthFailure('Failed to receive registration ID.');
+          }
+
+          return id;
+        } else {
+          final message = body['error'] as String? ?? 'Registration failed.';
+          throw AuthFailure(message);
+        }
+      } else if (response.statusCode == 409) {
+        throw const AuthFailure('Username already in use.');
+      } else {
+        final message =
+            body['error'] as String? ??
+            'Registration failed. Please try again.';
+        throw AuthFailure(message);
+      }
+    } catch (error) {
+      if (error is AuthFailure) {
+        rethrow;
+      }
+      throw AuthFailure('Failed to register: $error');
+    }
+  }
+
+  @override
+  Future<void> verifyOtp({required String id, required String otp}) async {
+    if (id.isEmpty || otp.isEmpty) {
+      throw const AuthFailure('Registration ID and OTP are required.');
+    }
+
+    try {
+      final response = await _apiClient.post(ApiConstants.authVerify, {
+        'id': id,
+        'otp': otp,
+      }, requiresAuth: false);
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200) {
         if (body['success'] == true) {
           final data = body['data'] as Map<String, dynamic>?;
           final token = data?['token'] as String?;
@@ -203,23 +272,102 @@ class BackendAuthRepository implements AuthRepository {
           // Emit auth state change
           _authStateController.add(_currentUser);
         } else {
-          final message = body['message'] as String? ?? 'Registration failed.';
+          final message = body['error'] as String? ?? 'Verification failed.';
           throw AuthFailure(message);
         }
-      } else if (response.statusCode == 409) {
-        throw const AuthFailure('Username already in use.');
       } else {
-        final body = jsonDecode(response.body) as Map<String, dynamic>?;
         final message =
-            body?['message'] as String? ??
-            'Registration failed. Please try again.';
+            body['error'] as String? ??
+            'Verification failed. Please try again.';
         throw AuthFailure(message);
       }
     } catch (error) {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to register: $error');
+      throw AuthFailure('Failed to verify OTP: $error');
+    }
+  }
+
+  @override
+  Future<String> requestPasswordReset({required String email}) async {
+    if (email.isEmpty) {
+      throw const AuthFailure('Email is required.');
+    }
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.authResetPasswordRequest,
+        {'email': email.trim().toLowerCase()},
+        requiresAuth: false,
+      );
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200) {
+        if (body['success'] == true) {
+          final data = body['data'] as Map<String, dynamic>?;
+          final id = data?['id'] as String?;
+
+          if (id == null || id.isEmpty) {
+            throw const AuthFailure('Failed to receive reset ID.');
+          }
+
+          return id;
+        } else {
+          final message = body['error'] as String? ?? 'Request failed.';
+          throw AuthFailure(message);
+        }
+      } else {
+        final message =
+            body['error'] as String? ?? 'Request failed. Please try again.';
+        throw AuthFailure(message);
+      }
+    } catch (error) {
+      if (error is AuthFailure) {
+        rethrow;
+      }
+      throw AuthFailure('Failed to request password reset: $error');
+    }
+  }
+
+  @override
+  Future<void> verifyPasswordReset({
+    required String id,
+    required String otp,
+    required String newPassword,
+  }) async {
+    if (id.isEmpty || otp.isEmpty || newPassword.isEmpty) {
+      throw const AuthFailure('All fields are required.');
+    }
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.authResetPasswordVerify,
+        {'id': id, 'otp': otp, 'new_password': newPassword},
+        requiresAuth: false,
+      );
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200) {
+        if (body['success'] == true) {
+          // Password reset successful
+          return;
+        } else {
+          final message = body['error'] as String? ?? 'Reset failed.';
+          throw AuthFailure(message);
+        }
+      } else {
+        final message =
+            body['error'] as String? ?? 'Reset failed. Please try again.';
+        throw AuthFailure(message);
+      }
+    } catch (error) {
+      if (error is AuthFailure) {
+        rethrow;
+      }
+      throw AuthFailure('Failed to reset password: $error');
     }
   }
 

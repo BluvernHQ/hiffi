@@ -12,11 +12,13 @@ import 'package:go_router/go_router.dart';
 class InlineCommentEntryBar extends StatelessWidget {
   final VideoCommentsController controller;
   final VoidCallback onTap;
+  final VoidCallback? onSignInRequired;
 
   const InlineCommentEntryBar({
     super.key,
     required this.controller,
     required this.onTap,
+    this.onSignInRequired,
   });
 
   @override
@@ -28,7 +30,11 @@ class InlineCommentEntryBar extends StatelessWidget {
     return GestureDetector(
       onTap: () {
         if (!isLoggedIn) {
-          context.push('/login');
+          if (onSignInRequired != null) {
+            onSignInRequired!();
+          } else {
+            context.push('/login');
+          }
         } else {
           controller.setShouldFocus(true);
           onTap();
@@ -68,7 +74,11 @@ class InlineCommentEntryBar extends StatelessWidget {
             IconButton(
               onPressed: () {
                 if (!isLoggedIn) {
-                  context.push('/login');
+                  if (onSignInRequired != null) {
+                    onSignInRequired!();
+                  } else {
+                    context.push('/login');
+                  }
                 } else {
                   controller.setShouldFocus(true);
                   onTap();

@@ -33,7 +33,7 @@ class SplashScreen extends StatelessWidget {
             right: 0,
             child: Center(
               child: Text(
-                '1.0.0+3',
+                '1.0.0+5',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Colors.grey.withOpacity(0.6),
                   fontWeight: FontWeight.w500,
