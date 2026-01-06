@@ -651,8 +651,19 @@ class _OtpInputState extends State<_OtpInput> {
       children: [
         GestureDetector(
           onTap: () {
-            _focusNode.requestFocus();
+            // Ensure keyboard appears even after it's been dismissed
+            // Unfocus first if already focused to reset the state
+            if (_focusNode.hasFocus) {
+              _focusNode.unfocus();
+            }
+            // Use a small delay to ensure unfocus completes before requesting focus
+            Future.delayed(const Duration(milliseconds: 50), () {
+              if (mounted) {
+                _focusNode.requestFocus();
+              }
+            });
           },
+          behavior: HitTestBehavior.opaque,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: List.generate(6, (index) {
@@ -701,6 +712,7 @@ class _OtpInputState extends State<_OtpInput> {
             child: TextFormField(
               controller: widget.controller,
               focusNode: _focusNode,
+              enabled: !widget.isLoading,
               autofocus: true,
               keyboardType: TextInputType.number,
               maxLength: 6,
