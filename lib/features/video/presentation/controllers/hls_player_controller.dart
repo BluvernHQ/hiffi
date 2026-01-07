@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:chewie/chewie.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -26,8 +28,10 @@ class HlsPlayerController extends ChangeNotifier {
   final bool autoPlay;
   final bool initialMuted;
   final VoidCallback? _onVideoEnded;
+  final Function(BuildContext)? onShowQualityPicker;
 
   VideoPlayerController? _videoPlayerController;
+  ChewieController? _chewieController;
   List<VideoProfile> _profiles = [];
   VideoProfile? _currentProfile;
 
@@ -49,12 +53,14 @@ class HlsPlayerController extends ChangeNotifier {
     this.autoPlay = true,
     this.initialMuted = false,
     VoidCallback? onVideoEnded,
+    this.onShowQualityPicker,
   }) : _userIntentMuted = initialMuted,
        _onVideoEnded = onVideoEnded {
     _initialize();
   }
 
   VideoPlayerController? get controller => _videoPlayerController;
+  ChewieController? get chewieController => _chewieController;
   bool get isInitialized => _isInitialized;
   bool get hasError => _hasError;
   String? get errorMessage => _errorMessage;
@@ -87,6 +93,9 @@ class HlsPlayerController extends ChangeNotifier {
   void setFullScreen(bool value) {
     if (_isFullScreen == value) return;
     _isFullScreen = value;
+    // 💡 NOTE: We don't call chewieController.exitFullScreen() here because
+    // Chewie manages its own fullscreen state. This method is only for
+    // tracking state in our controller, not for controlling Chewie.
     notifyListeners();
   }
 
@@ -161,8 +170,8 @@ class HlsPlayerController extends ChangeNotifier {
       _errorMessage = null;
       _currentState = PlayerState.buffering;
 
-      // Dispose existing controller
-      await _disposeController();
+      // Dispose existing controllers
+      await _disposeControllers();
 
       // Determine HLS URL
       final profile =
@@ -177,7 +186,6 @@ class HlsPlayerController extends ChangeNotifier {
       debugPrint('HLS Player: Loading via Proxy: $proxiedUrl');
 
       // 2. Create Video Player controller
-      // We don't need httpHeaders here anymore because the proxy handles them!
       _videoPlayerController = VideoPlayerController.networkUrl(
         Uri.parse(proxiedUrl),
         videoPlayerOptions: VideoPlayerOptions(
@@ -196,21 +204,84 @@ class HlsPlayerController extends ChangeNotifier {
         _userIntentMuted ? 0.0 : _userIntentVolume,
       );
 
-      // Load saved position from SharedPreferences (for returning from auth)
-      // Always try to load, as it might have been saved before navigation
+      // Load saved position
       final savedPosition = await _loadPlaybackPosition();
       if (savedPosition != null) {
         _lastKnownPosition = savedPosition;
       }
 
-      // Set initial position if available (don't seek if position is at start)
+      // Set initial position
       if (_lastKnownPosition != null &&
           _lastKnownPosition!.inMilliseconds > 0) {
         await _videoPlayerController!.seekTo(_lastKnownPosition!);
-        debugPrint(
-          'HlsPlayerController: Restored position to ${_lastKnownPosition!.inSeconds}s for videoId $videoId',
-        );
       }
+
+      // 3. Setup Chewie Controller
+      _chewieController = ChewieController(
+        videoPlayerController: _videoPlayerController!,
+        autoPlay: autoPlay,
+        looping: false,
+        aspectRatio: _videoPlayerController!.value.aspectRatio,
+        showControls: true,
+        allowFullScreen: true,
+        allowMuting: true,
+        allowPlaybackSpeedChanging: true,
+        fullScreenByDefault: false,
+        deviceOrientationsOnEnterFullScreen: [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ],
+        deviceOrientationsAfterFullScreen: [DeviceOrientation.portraitUp],
+        systemOverlaysOnEnterFullScreen: [],
+        systemOverlaysAfterFullScreen: SystemUiOverlay.values,
+        additionalOptions: (context) {
+          return <OptionItem>[
+            OptionItem(
+              onTap: onShowQualityPicker != null
+                  ? (context) => onShowQualityPicker!(context)
+                  : (context) {},
+              iconData: Icons.settings,
+              title: 'Quality',
+              subtitle: _currentProfile?.name ?? 'Auto',
+            ),
+          ];
+        },
+        materialProgressColors: ChewieProgressColors(
+          playedColor: const Color(0xFFFF6B35),
+          handleColor: const Color(0xFFFF6B35),
+          backgroundColor: Colors.white24,
+          bufferedColor: Colors.white70,
+        ),
+        errorBuilder: (context, errorMessage) {
+          return Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white, size: 48),
+                  const SizedBox(height: 16),
+                  Text(
+                    errorMessage,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: retry,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF6B35),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
 
       // Subscribe to state changes
       _videoPlayerController!.addListener(_handlePlayerStateChange);
@@ -219,7 +290,6 @@ class HlsPlayerController extends ChangeNotifier {
       if (autoPlay) {
         await _videoPlayerController!.play().catchError((e) {
           debugPrint("Autoplay blocked: $e");
-          // Fallback to muted autoplay
           _videoPlayerController!.setVolume(0.0);
           _videoPlayerController!.play();
         });
@@ -255,21 +325,15 @@ class HlsPlayerController extends ChangeNotifier {
     final duration = _videoPlayerController!.value.duration;
     if (duration.inMilliseconds > 0 &&
         position.inMilliseconds >= duration.inMilliseconds - 100) {
-      // Video has ended (with 100ms tolerance for buffering)
       if (!_hasEnded) {
         _hasEnded = true;
         _onVideoEnded?.call();
-        debugPrint(
-          'HlsPlayerController: Video ended - position: ${position.inSeconds}s, duration: ${duration.inSeconds}s',
-        );
       }
     } else if (_hasEnded &&
         position.inMilliseconds < duration.inMilliseconds - 1000) {
-      // Video has been seeked back or restarted
       _hasEnded = false;
     }
 
-    // Save position periodically
     _lastKnownPosition = position;
   }
 
@@ -316,15 +380,11 @@ class HlsPlayerController extends ChangeNotifier {
     if (_videoPlayerController?.value.position != null) {
       _lastKnownPosition = _videoPlayerController!.value.position;
 
-      // Persist to SharedPreferences so position is preserved across navigation
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setInt(
           'video_position_$videoId',
           _lastKnownPosition!.inMilliseconds,
-        );
-        debugPrint(
-          'HlsPlayerController: Saved position ${_lastKnownPosition!.inSeconds}s for videoId $videoId',
         );
       } catch (e) {
         debugPrint('Failed to save playback position: $e');
@@ -332,17 +392,12 @@ class HlsPlayerController extends ChangeNotifier {
     }
   }
 
-  /// Loads saved playback position from SharedPreferences
   Future<Duration?> _loadPlaybackPosition() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final positionMs = prefs.getInt('video_position_$videoId');
       if (positionMs != null) {
-        final position = Duration(milliseconds: positionMs);
-        debugPrint(
-          'HlsPlayerController: Loaded saved position ${position.inSeconds}s for videoId $videoId',
-        );
-        return position;
+        return Duration(milliseconds: positionMs);
       }
     } catch (e) {
       debugPrint('Failed to load playback position: $e');
@@ -363,11 +418,16 @@ class HlsPlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _disposeController() async {
+  Future<void> _disposeControllers() async {
     await _savePlaybackPosition();
     if (_videoPlayerController != null) {
       _videoPlayerController!.removeListener(_handlePlayerStateChange);
     }
+    
+    // 💡 CRITICAL: Dispose Chewie FIRST to stop its internal timers
+    _chewieController?.dispose();
+    _chewieController = null;
+    
     await _videoPlayerController?.dispose();
     _videoPlayerController = null;
   }
@@ -375,7 +435,7 @@ class HlsPlayerController extends ChangeNotifier {
   @override
   void dispose() {
     debugPrint('HlsPlayerController: dispose() called for videoId $videoId');
-    _disposeController();
+    _disposeControllers();
     super.dispose();
     debugPrint('HlsPlayerController: dispose() complete for videoId $videoId');
   }

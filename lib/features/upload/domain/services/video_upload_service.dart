@@ -46,6 +46,9 @@ class VideoUploadService {
         },
         requiresAuth: true,
         idToken: payload.idToken,
+        headers: {
+          'Idempotency-Key': payload.taskId,
+        },
       );
 
       if (bridgeResponse.statusCode != 200) {
@@ -251,6 +254,9 @@ class VideoUploadService {
           const {},
           requiresAuth: true,
           idToken: payload.idToken,
+          headers: {
+            'Idempotency-Key': 'ack_${payload.taskId}',
+          },
         );
 
         developer.log(

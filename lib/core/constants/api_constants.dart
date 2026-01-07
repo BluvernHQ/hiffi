@@ -17,6 +17,7 @@ class ApiConstants {
   static String getUser(String username) => '/users/$username';
   static String deleteUser(String username) => '/users/$username';
   static const String profilePhotoUpload = '/users/profile-photo/upload';
+  static const String verifyUserUpdate = '/users/self/verify-update';
 
   // Video endpoints
   static const String uploadVideo = '/videos/upload';

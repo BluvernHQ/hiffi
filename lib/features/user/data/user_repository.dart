@@ -29,6 +29,16 @@ abstract class UserRepository {
   Future<void> deleteUser(String username);
   Future<void> followUser(String username);
   Future<void> unfollowUser(String username);
+  Future<Map<String, dynamic>> sendEmailUpdateOTP({
+    required String currentUsername,
+    String? name,
+    required String email,
+    String? bio,
+  });
+  Future<UserModel> verifyEmailUpdateOTP({
+    required String id,
+    required String otp,
+  });
 }
 
 class ApiUserRepository implements UserRepository {
@@ -561,6 +571,153 @@ class ApiUserRepository implements UserRepository {
         rethrow;
       }
       throw ApiException('Failed to unfollow user: $error', null);
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> sendEmailUpdateOTP({
+    required String currentUsername,
+    String? name,
+    required String email,
+    String? bio,
+  }) async {
+    developer.log(
+      'Sending email update OTP: email=$email',
+      name: 'hiffi.user',
+    );
+    print('📧 Sending email update OTP');
+
+    try {
+      final body = <String, dynamic>{
+        'email': email,
+      };
+      if (name != null && name.isNotEmpty) {
+        body['name'] = name;
+      }
+      if (bio != null) {
+        body['bio'] = bio;
+      }
+
+      final response = await _apiClient.put(
+        ApiConstants.updateUser,
+        body,
+        requiresAuth: true,
+      );
+
+      developer.log(
+        'Send OTP response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200) {
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+        // API returns: {"success": true, "data": {"id": "...", "message": "otp is sent to a new email address"}}
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
+          if (data != null) {
+            final id = data['id'] as String?;
+            final message = data['message'] as String?;
+            if (id != null) {
+              print('   ✅ OTP sent successfully, id: $id');
+              return {'id': id, 'message': message ?? 'OTP sent'};
+            }
+          }
+        }
+        throw ApiException('Invalid response format', response.statusCode);
+      } else {
+        final errorMessage = 'Failed to send OTP: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>?;
+        final error = responseBody?['error'] as String? ??
+            responseBody?['message'] as String? ??
+            errorMessage;
+        throw ApiException(error, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to send email update OTP: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error sending OTP: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException('Failed to send OTP: $error', null);
+    }
+  }
+
+  @override
+  Future<UserModel> verifyEmailUpdateOTP({
+    required String id,
+    required String otp,
+  }) async {
+    developer.log('Verifying email update OTP: id=$id', name: 'hiffi.user');
+    print('✅ Verifying email update OTP');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.verifyUserUpdate,
+        {
+          'id': id,
+          'otp': otp,
+        },
+        requiresAuth: true,
+      );
+
+      developer.log(
+        'Verify OTP response: ${response.statusCode}',
+        name: 'hiffi.user',
+      );
+
+      if (response.statusCode == 200) {
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+        // API returns: {"success": true, "data": {"user": {...}}}
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
+          final userData = data?['user'] as Map<String, dynamic>?;
+          if (userData != null) {
+            final user = UserModel.fromJson({'user': userData});
+            print('   ✅ Email update verified successfully');
+            print('   📄 Updated user data: ${user.toJson()}');
+            return user;
+          }
+        }
+        // Fallback: try parsing with status: success structure
+        if (responseBody['status'] == 'success' &&
+            responseBody['user'] != null) {
+          final user = UserModel.fromJson(responseBody);
+          print('   ✅ Email update verified successfully');
+          print('   📄 Updated user data: ${user.toJson()}');
+          return user;
+        }
+        // Final fallback: try parsing user directly
+        final user = UserModel.fromJson(responseBody);
+        print('   ✅ Email update verified successfully');
+        print('   📄 Updated user data: ${user.toJson()}');
+        return user;
+      } else {
+        final errorMessage = 'Failed to verify OTP: ${response.statusCode}';
+        developer.log(errorMessage, name: 'hiffi.user');
+        print('   ❌ $errorMessage');
+        final responseBody = jsonDecode(response.body) as Map<String, dynamic>?;
+        final error = responseBody?['error'] as String? ??
+            responseBody?['message'] as String? ??
+            errorMessage;
+        throw ApiException(error, response.statusCode);
+      }
+    } catch (error) {
+      developer.log(
+        'Failed to verify email update OTP: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      print('   ❌ Error verifying OTP: $error');
+      if (error is ApiException) {
+        rethrow;
+      }
+      throw ApiException('Failed to verify OTP: $error', null);
     }
   }
 }

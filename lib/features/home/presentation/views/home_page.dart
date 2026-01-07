@@ -980,8 +980,8 @@ class _GridVideoCard extends StatelessWidget {
                               ),
                               child: video.status == 'temp'
                                   ? const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
                                         Text(
                                           '• ',
                                           style: TextStyle(
@@ -1004,20 +1004,20 @@ class _GridVideoCard extends StatelessWidget {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         const Icon(
-                                          Icons.visibility,
-                                          size: 12,
-                                          color: Colors.white,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _formatCount(video.videoViews),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
+                                    Icons.visibility,
+                                    size: 12,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _formatCount(video.videoViews),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
                                     ),
                             ),
                           ),
@@ -1035,9 +1035,9 @@ class _GridVideoCard extends StatelessWidget {
                                     color: Colors.white70,
                                     size: 24,
                                   ),
-                                ),
                               ),
                             ),
+                          ),
                         ],
                       ),
               ),

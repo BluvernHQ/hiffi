@@ -835,8 +835,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                               ),
                             );
                             // Refresh video list after upload starts
-                            // (will refresh again when upload completes)
                             context.read<VideoViewModel>().refresh();
+                            // Go back to previous screen
+                            if (context.canPop()) {
+                              context.pop();
+                            } else {
+                              context.go('/home');
+                            }
                           }
                         }
                       : null,

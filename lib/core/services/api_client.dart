@@ -141,6 +141,7 @@ class ApiClient {
     Map<String, dynamic> body, {
     bool requiresAuth = false,
     String? idToken,
+    Map<String, String>? headers,
   }) async {
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
@@ -148,10 +149,14 @@ class ApiClient {
     print('🌐 API POST: $url');
     print('   📤 Body: $body');
 
-    final headers = <String, String>{
+    final requestHeaders = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
+
+    if (headers != null) {
+      requestHeaders.addAll(headers);
+    }
 
     if (requiresAuth) {
       // Get JWT token from storage
@@ -166,7 +171,7 @@ class ApiClient {
       }
       // Trim token to remove any whitespace and ensure clean format
       final cleanToken = token.trim();
-      headers['Authorization'] = 'Bearer $cleanToken';
+      requestHeaders['Authorization'] = 'Bearer $cleanToken';
       print('   🔑 Using Bearer token');
       // Log first and last few chars of token for debugging (not full token for security)
       if (cleanToken.length > 20) {
@@ -179,7 +184,7 @@ class ApiClient {
     try {
       final response = await _client.post(
         url,
-        headers: headers,
+        headers: requestHeaders,
         body: jsonEncode(body),
       );
       developer.log(

@@ -4,7 +4,7 @@ import 'package:hiffi/features/video/domain/models/comment_model.dart';
 import 'package:hiffi/features/video/presentation/controllers/video_comments_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:hiffi/features/auth/data/auth_repository.dart';
-import 'package:hiffi/core/utils/image_utils.dart';
+import 'package:hiffi/features/user/presentation/viewmodels/user_view_model.dart';
 import 'package:hiffi/core/widgets/hiffi_image.dart';
 import 'package:go_router/go_router.dart';
 
@@ -24,8 +24,10 @@ class InlineCommentEntryBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authRepository = context.watch<AuthRepository>();
-    final user = authRepository.currentUser;
-    final isLoggedIn = user != null;
+    final userViewModel = context.watch<UserViewModel>();
+    final authUser = authRepository.currentUser;
+    final userProfile = userViewModel.currentUser;
+    final isLoggedIn = authUser != null;
 
     return GestureDetector(
       onTap: () {
@@ -46,9 +48,9 @@ class InlineCommentEntryBar extends StatelessWidget {
         child: Row(
           children: [
             HiffiAvatar(
-              imageUrl: user?.profilePicture,
+              imageUrl: userProfile?.profilePicture ?? authUser?.profilePicture,
               size: 32,
-              fallbackText: user?.username,
+              fallbackText: userProfile?.username ?? authUser?.username,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -654,11 +656,19 @@ class _CommentTileState extends State<CommentTile> {
                           ),
                           HiffiAvatar(
                             imageUrl: context
+                                    .watch<UserViewModel>()
+                                    .currentUser
+                                    ?.profilePicture ??
+                                context
                                 .watch<AuthRepository>()
                                 .currentUser
                                 ?.profilePicture,
                             size: 28,
                             fallbackText: context
+                                    .watch<UserViewModel>()
+                                    .currentUser
+                                    ?.username ??
+                                context
                                 .watch<AuthRepository>()
                                 .currentUser
                                 ?.username,
@@ -759,14 +769,20 @@ class _CommentTileState extends State<CommentTile> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   HiffiAvatar(
-                    imageUrl: ImageUtils.getProfileImageUrl(
+                    imageUrl: context
+                            .watch<UserViewModel>()
+                            .currentUser
+                            ?.profilePicture ??
                       context
                           .watch<AuthRepository>()
                           .currentUser
                           ?.profilePicture,
-                    ),
                     size: 28,
                     fallbackText: context
+                            .watch<UserViewModel>()
+                            .currentUser
+                            ?.username ??
+                        context
                         .watch<AuthRepository>()
                         .currentUser
                         ?.username,
@@ -989,11 +1005,19 @@ class _CommentComposerState extends State<CommentComposer> {
                 children: [
                   HiffiAvatar(
                     imageUrl: context
+                            .watch<UserViewModel>()
+                            .currentUser
+                            ?.profilePicture ??
+                        context
                         .watch<AuthRepository>()
                         .currentUser
                         ?.profilePicture,
                     size: 32,
                     fallbackText: context
+                            .watch<UserViewModel>()
+                            .currentUser
+                            ?.username ??
+                        context
                         .watch<AuthRepository>()
                         .currentUser
                         ?.username,

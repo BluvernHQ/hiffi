@@ -56,6 +56,15 @@ class UserViewModel extends ChangeNotifier {
   bool? get isUsernameAvailable => _isUsernameAvailable;
   bool get hasUnauthorizedError => _hasUnauthorizedError;
 
+  // OTP state (isolated, not global)
+  bool _isSendingOTP = false;
+  bool _isVerifyingOTP = false;
+  String? _otpError;
+
+  bool get isSendingOTP => _isSendingOTP;
+  bool get isVerifyingOTP => _isVerifyingOTP;
+  String? get otpError => _otpError;
+
   Future<bool> checkUsernameAvailability(String username) async {
     if (username.trim().isEmpty) {
       _usernameAvailabilityMessage = null;
@@ -510,6 +519,104 @@ class UserViewModel extends ChangeNotifier {
 
   void _setError(String? message) {
     _errorMessage = message;
+    notifyListeners();
+  }
+
+  /// Sends OTP for email update
+  Future<Map<String, dynamic>> sendEmailUpdateOTP({
+    required String currentUsername,
+    String? name,
+    required String email,
+    String? bio,
+  }) async {
+    _isSendingOTP = true;
+    _otpError = null;
+    notifyListeners();
+
+    try {
+      developer.log(
+        'Sending email update OTP: email=$email',
+        name: 'hiffi.user',
+      );
+      final result = await _userRepository.sendEmailUpdateOTP(
+        currentUsername: currentUsername,
+        name: name,
+        email: email,
+        bio: bio,
+      );
+      developer.log(
+        'OTP sent successfully: id=${result['id']}',
+        name: 'hiffi.user',
+      );
+      return result;
+    } catch (error) {
+      developer.log(
+        'Failed to send email update OTP: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _otpError = error.message;
+      } else {
+        _otpError = 'Failed to send OTP: $error';
+      }
+      rethrow;
+    } finally {
+      _isSendingOTP = false;
+      notifyListeners();
+    }
+  }
+
+  /// Verifies OTP and completes email update
+  Future<void> verifyEmailUpdateOTP({
+    required String id,
+    required String otp,
+    required String currentUsername,
+  }) async {
+    _isVerifyingOTP = true;
+    _otpError = null;
+    notifyListeners();
+
+    try {
+      developer.log(
+        'Verifying email update OTP: id=$id',
+        name: 'hiffi.user',
+      );
+      _currentUser = await _userRepository.verifyEmailUpdateOTP(
+        id: id,
+        otp: otp,
+      );
+      // Also update viewedUser if it matches the current user
+      if (_viewedUser?.username == currentUsername) {
+        _viewedUser = _currentUser;
+      }
+      developer.log(
+        'Email update verified successfully: ${_currentUser?.username}',
+        name: 'hiffi.user',
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to verify email update OTP: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _otpError = error.message;
+      } else {
+        _otpError = 'Failed to verify OTP: $error';
+      }
+      rethrow;
+    } finally {
+      _isVerifyingOTP = false;
+      notifyListeners();
+    }
+  }
+
+  /// Clears OTP state (call when OTP flow is cancelled/completed)
+  void clearOTPState() {
+    _isSendingOTP = false;
+    _isVerifyingOTP = false;
+    _otpError = null;
     notifyListeners();
   }
 }

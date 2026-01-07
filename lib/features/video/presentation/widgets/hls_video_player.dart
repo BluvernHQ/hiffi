@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:chewie/chewie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
-import 'package:hiffi/core/utils/fullscreen_manager.dart';
 
 /// Production-ready HLS Video Player widget using video_player + chewie.
 ///
@@ -104,11 +104,12 @@ class HlsVideoPlayer extends StatefulWidget {
 
 class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   late HlsPlayerController _controller;
-  ChewieController? _chewieController;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
+    _isDisposed = false;
     debugPrint('HlsVideoPlayer: initState() for videoId ${widget.videoId}');
     _controller = HlsPlayerController(
       videoId: widget.videoId,
@@ -116,6 +117,7 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       autoPlay: widget.autoPlay,
       initialMuted: widget.initialMuted,
       onVideoEnded: widget.onVideoEnded,
+      onShowQualityPicker: _showQualityPicker,
     );
     _controller.addListener(_onControllerStateChanged);
 
@@ -127,178 +129,61 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   void didUpdateWidget(HlsVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // If videoId changed, we need to replace the controller
-    // However, with proper key usage, this should rarely happen
-    // as Flutter will dispose and recreate the widget instead
     if (oldWidget.videoId != widget.videoId ||
         oldWidget.baseVideoUrl != widget.baseVideoUrl) {
       debugPrint(
-        'HlsVideoPlayer: didUpdateWidget() - videoId changed from ${oldWidget.videoId} to ${widget.videoId}. '
-        'This should not happen with proper key usage. Disposing old controller.',
+        'HlsVideoPlayer: didUpdateWidget() - videoId changed from ${oldWidget.videoId} to ${widget.videoId}.',
       );
 
-      // Dispose old controller
       HlsVideoPlayer.unregisterController(oldWidget.videoId);
       _controller.removeListener(_onControllerStateChanged);
-      _chewieController?.removeListener(_handleFullscreenChange);
-      _chewieController?.dispose();
       _controller.dispose();
 
-      // Create new controller
       _controller = HlsPlayerController(
         videoId: widget.videoId,
         baseVideoUrl: widget.baseVideoUrl,
         autoPlay: widget.autoPlay,
         initialMuted: widget.initialMuted,
         onVideoEnded: widget.onVideoEnded,
+        onShowQualityPicker: _showQualityPicker,
       );
       _controller.addListener(_onControllerStateChanged);
       HlsVideoPlayer.registerController(widget.videoId, _controller);
     }
   }
 
-  /// Pauses the video playback
-  void pause() {
-    _controller.pause();
-  }
-
   @override
   void dispose() {
+    _isDisposed = true;
     debugPrint(
       'HlsVideoPlayer: dispose() called for videoId ${widget.videoId}',
     );
 
-    // Pause before disposing to ensure immediate stop
-    _controller.pause();
-
     _controller.removeListener(_onControllerStateChanged);
-    // Remove fullscreen listener before disposing
-    _chewieController?.removeListener(_handleFullscreenChange);
-    _chewieController?.dispose();
+    
+    // 💡 ARCHITECTURAL FIX: We no longer dispose ChewieController here.
+    // ChewieController is now owned by HlsPlayerController, which survives
+    // when the HlsVideoPlayer widget is moved in the tree (e.g., rotation).
+    // It will be disposed only when HlsPlayerController is disposed.
+    // 
+    // Chewie automatically restores orientation when disposed, so we don't need
+    // to manually call FullscreenManager here.
 
-    // Unregister controller before disposing
     HlsVideoPlayer.unregisterController(widget.videoId);
-
     _controller.dispose();
 
-    // Safety net: restore orientation and UI when the widget is destroyed
-    FullscreenManager.exitFullscreen();
-    debugPrint(
-      'HlsVideoPlayer: Disposal complete for videoId ${widget.videoId}',
-    );
     super.dispose();
   }
 
   void _onControllerStateChanged() {
-    if (mounted) {
-      widget.onStateChanged?.call(_controller.currentState);
-      _updateChewieController();
-      setState(() {});
-    }
-  }
-
-  void _updateChewieController() {
-    final videoController = _controller.controller;
-    if (videoController == null || !videoController.value.isInitialized) {
-      return;
-    }
-
-    // Dispose old chewie controller (listeners are automatically removed on dispose)
-    _chewieController?.removeListener(_handleFullscreenChange);
-    _chewieController?.dispose();
-
-    // Create new chewie controller
-    final newChewieController = ChewieController(
-      videoPlayerController: videoController,
-      autoPlay: widget.autoPlay,
-      looping: false,
-      aspectRatio: videoController.value.aspectRatio,
-      showControls: true,
-      allowFullScreen: true,
-      allowMuting: true,
-      allowPlaybackSpeedChanging: true,
-      fullScreenByDefault: false,
-      // Let FullscreenManager handle orientation explicitly
-      // deviceOrientationsOnEnterFullScreen and deviceOrientationsAfterFullScreen
-      // are set to ensure Chewie doesn't interfere, but we handle via FullscreenManager
-      deviceOrientationsOnEnterFullScreen: [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ],
-      deviceOrientationsAfterFullScreen: [DeviceOrientation.portraitUp],
-      systemOverlaysOnEnterFullScreen: [], // Hide all
-      systemOverlaysAfterFullScreen: SystemUiOverlay.values, // Restore all
-      additionalOptions: (context) {
-        return <OptionItem>[
-          OptionItem(
-            onTap: _showQualityPicker,
-            iconData: Icons.settings,
-            title: 'Quality',
-            subtitle: _controller.currentProfile?.name ?? 'Auto',
-          ),
-        ];
-      },
-      materialProgressColors: ChewieProgressColors(
-        playedColor: const Color(0xFFFF6B35),
-        handleColor: const Color(0xFFFF6B35),
-        backgroundColor: Colors.white24,
-        bufferedColor: Colors.white70,
-      ),
-      errorBuilder: (context, errorMessage) {
-        return Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  errorMessage,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => _controller.retry(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF6B35),
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    // Store the controller
-    _chewieController = newChewieController;
-
-    // Sync fullscreen state and handle orientation changes
-    // Use a periodic check to ensure orientation changes are applied
-    _chewieController!.addListener(_handleFullscreenChange);
-  }
-
-  void _handleFullscreenChange() {
-    if (_chewieController == null) return;
-
-    final isFullScreen = _chewieController!.isFullScreen;
-    final wasFullScreen = _controller.isFullScreen;
-
-    if (isFullScreen != wasFullScreen) {
-      _controller.setFullScreen(isFullScreen);
-
-      // Ensure orientation changes are applied immediately
-      if (isFullScreen) {
-        FullscreenManager.enterFullscreen();
-      } else {
-        FullscreenManager.exitFullscreen();
-      }
-    }
+    if (_isDisposed || !mounted) return;
+    
+    widget.onStateChanged?.call(_controller.currentState);
+    
+    // 💡 SIMPLIFIED: Just trigger a rebuild when controller state changes.
+    // We no longer need to sync fullscreen state since Chewie handles it internally
+    // and we're not conditionally rendering based on it.
+    setState(() {});
   }
 
   void _showQualityPicker(BuildContext context) {
@@ -456,8 +341,8 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     }
 
     // Show player
-    final videoController = _controller.controller;
-    if (videoController == null || !videoController.value.isInitialized) {
+    final chewieController = _controller.chewieController;
+    if (chewieController == null) {
       return Container(
         color: Colors.black,
         child: const Center(
@@ -466,19 +351,30 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       );
     }
 
-    // Update chewie controller if needed
-    if (_chewieController == null ||
-        _chewieController?.videoPlayerController != videoController) {
-      _updateChewieController();
-    }
-
+    // 💡 CRITICAL FIX: Always render the same Chewie widget.
+    // Chewie handles fullscreen internally via overlays, so we shouldn't
+    // conditionally render different widgets based on fullscreen state.
+    // This prevents disposal/recreation during orientation changes, which
+    // causes the "PlayerNotifier used after disposed" error.
+    // 
+    // Use a stable key based on videoId to ensure Flutter doesn't unnecessarily
+    // recreate the widget during rebuilds.
+    final playerKey = ValueKey('chewie_${widget.videoId}');
+    
     return Container(
       color: Colors.black,
-      child: _chewieController != null
-          ? Chewie(controller: _chewieController!)
-          : const Center(
-              child: CircularProgressIndicator(color: Color(0xFFFF6B35)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SizedBox(
+            width: constraints.maxWidth,
+            height: constraints.maxHeight,
+            child: Chewie(
+              key: playerKey,
+              controller: chewieController,
             ),
+          );
+        },
+      ),
     );
   }
 }

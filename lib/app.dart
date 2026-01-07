@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'core/di/app_providers.dart';
 import 'core/routes/app_router.dart';
 import 'core/services/in_app_notification_service.dart';
+import 'core/widgets/global_upload_overlay.dart';
 
 class HiffiApp extends StatelessWidget {
   const HiffiApp({super.key});
@@ -66,6 +67,14 @@ class HiffiApp extends StatelessWidget {
                   dividerColor: const Color(0xFFE0E0E0),
                 ),
                 routerConfig: appRouter.router,
+                builder: (context, child) {
+                  return Stack(
+                    children: [
+                      if (child != null) child,
+                      const GlobalUploadOverlay(),
+                    ],
+                  );
+                },
               );
             },
           );

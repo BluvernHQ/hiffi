@@ -111,12 +111,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
           offset: 0,
         );
       } else {
-        // Fetch videos with latest data including up-to-date video views
+      // Fetch videos with latest data including up-to-date video views
         videos = await videoRepository.getVideosByUsername(
-          username: username,
-          limit: 20,
-          offset: 0,
-        );
+        username: username,
+        limit: 20,
+        offset: 0,
+      );
       }
 
       if (mounted) {
@@ -1210,12 +1210,305 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final nameController = TextEditingController(text: user.name);
     final emailController = TextEditingController(text: user.email ?? '');
     final bioController = TextEditingController(text: user.bio ?? '');
+    
+    // 💡 SINGLE SOURCE OF TRUTH: Cache initial email
+    final initialEmail = user.email ?? '';
     String? emailError;
+    String? otpId; // Store OTP ID in memory
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          // 💡 REACTIVE: Detect email change efficiently
+          final currentEmail = emailController.text.trim();
+          final emailChanged = currentEmail != initialEmail;
+          final buttonLabel = emailChanged ? 'Send OTP' : 'Save';
+          final isLoading = viewModel.isLoading || viewModel.isSendingOTP;
+
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
+              ),
+              padding: const EdgeInsets.all(20),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Handle bar
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    // Title
+                    Text(
+                      'Edit Profile',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Name field
+                    TextField(
+                      controller: nameController,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
+                        LengthLimitingTextInputFormatter(30),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: 'Name',
+                        hintText: 'Enter your name',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        prefixIcon: const Icon(Icons.person),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Email field
+                    TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: InputDecoration(
+                        labelText: 'Email *',
+                        hintText: 'Enter your email',
+                        errorText: emailError,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        prefixIcon: const Icon(Icons.email),
+                      ),
+                      onChanged: (value) {
+                        if (emailError != null) {
+                          setModalState(() {
+                            emailError = null;
+                          });
+                        }
+                        // Trigger rebuild to update button label
+                        setModalState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    // Bio field
+                    TextField(
+                      controller: bioController,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        labelText: 'Bio',
+                        hintText: 'Tell us about yourself',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        prefixIcon: const Icon(Icons.description),
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Primary CTA (Save or Send OTP)
+                    ElevatedButton(
+                      onPressed: isLoading
+                          ? null
+                          : () async {
+                              final newName = nameController.text.trim();
+                              final newEmail = emailController.text.trim();
+                              final newBio = bioController.text.trim();
+
+                              // Validate name
+                              if (newName.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Name cannot be empty'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              // Validate email (required)
+                              if (newEmail.isEmpty) {
+                                setModalState(() {
+                                  emailError = 'Email is required';
+                                });
+                                return;
+                              }
+
+                              // Validate email format
+                              final emailRegex = RegExp(
+                                r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+                              );
+                              if (!emailRegex.hasMatch(newEmail)) {
+                                setModalState(() {
+                                  emailError =
+                                      'Please enter a valid email address';
+                                });
+                                return;
+                              }
+
+                              if (emailChanged) {
+                                // 💡 OTP FLOW: Email changed, send OTP
+                                try {
+                                  final result = await viewModel.sendEmailUpdateOTP(
+                                    currentUsername: user.username,
+                                    name: newName,
+                                    email: newEmail,
+                                    bio: newBio,
+                                  );
+                                  otpId = result['id'] as String?;
+                                  if (otpId != null && mounted) {
+                                    // Show OTP verification bottom sheet
+                                    _showOTPVerificationSheet(
+                                      context,
+                                      viewModel,
+                                      user.username,
+                                      otpId!,
+                                      () {
+                                        // On success: close both sheets and refresh
+                                        Navigator.of(context).pop(); // Close OTP sheet
+                                        Navigator.of(context).pop(); // Close edit sheet
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Profile updated successfully',
+                                            ),
+                                          ),
+                                        );
+                                        viewModel.loadUser(user.username);
+                                      },
+                                    );
+                                  }
+                                } catch (error) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          viewModel.otpError ?? 'Failed to send OTP: $error',
+                                        ),
+                                        backgroundColor: Theme.of(
+                                          context,
+                                        ).colorScheme.error,
+                                      ),
+                                    );
+                                  }
+                                }
+                              } else {
+                                // 💡 NORMAL FLOW: Email unchanged, direct save
+                                try {
+                                  await viewModel.updateUser(
+                                    currentUsername: user.username,
+                                    name: newName,
+                                    email: newEmail,
+                                    bio: newBio,
+                                  );
+
+                                  if (mounted) {
+                                    Navigator.of(context).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Profile updated successfully',
+                                        ),
+                                      ),
+                                    );
+                                    await viewModel.loadUser(user.username);
+                                  }
+                                } catch (error) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Failed to update: $error'),
+                                        backgroundColor: Theme.of(
+                                          context,
+                                        ).colorScheme.error,
+                                      ),
+                                    );
+                                  }
+                                }
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF6B35),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              buttonLabel,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Cancel button
+                    TextButton(
+                      onPressed: () {
+                        viewModel.clearOTPState();
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(() {
+      // Cleanup OTP state when sheet is dismissed
+      viewModel.clearOTPState();
+    });
+  }
+
+  void _showOTPVerificationSheet(
+    BuildContext context,
+    UserViewModel viewModel,
+    String currentUsername,
+    String otpId,
+    VoidCallback onSuccess,
+  ) {
+    final otpController = TextEditingController();
+    String? otpError;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: false, // Prevent accidental dismissal
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Padding(
           padding: EdgeInsets.only(
@@ -1250,139 +1543,77 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                   // Title
                   Text(
-                    'Edit Profile',
+                    'Verify Email',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  // Name field
-                  TextField(
-                    controller: nameController,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
-                      LengthLimitingTextInputFormatter(30),
-                    ],
-                    decoration: InputDecoration(
-                      labelText: 'Name',
-                      hintText: 'Enter your name',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: const Icon(Icons.person),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Enter the OTP sent to your new email',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  // Email field
+                  const SizedBox(height: 24),
+                  // OTP Input (6 digits)
                   TextField(
-                    controller: emailController,
-                    keyboardType: TextInputType.emailAddress,
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      letterSpacing: 8,
+                      fontWeight: FontWeight.bold,
+                    ),
                     decoration: InputDecoration(
-                      labelText: 'Email *',
-                      hintText: 'Enter your email',
-                      errorText: emailError,
+                      labelText: 'OTP',
+                      hintText: '000000',
+                      errorText: otpError,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      prefixIcon: const Icon(Icons.email),
+                      counterText: '',
+                      prefixIcon: const Icon(Icons.lock_outline),
                     ),
                     onChanged: (value) {
-                      if (emailError != null) {
+                      if (otpError != null) {
                         setModalState(() {
-                          emailError = null;
+                          otpError = null;
                         });
                       }
                     },
                   ),
-                  const SizedBox(height: 16),
-                  // Bio field
-                  TextField(
-                    controller: bioController,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      labelText: 'Bio',
-                      hintText: 'Tell us about yourself',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: const Icon(Icons.description),
-                      alignLabelWithHint: true,
-                    ),
-                  ),
                   const SizedBox(height: 24),
-                  // Save button
+                  // Verify & Save button
                   ElevatedButton(
-                    onPressed: viewModel.isLoading
+                    onPressed: viewModel.isVerifyingOTP
                         ? null
                         : () async {
-                            final newName = nameController.text.trim();
-                            final newEmail = emailController.text.trim();
-                            final newBio = bioController.text.trim();
-
-                            // Validate name
-                            if (newName.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Name cannot be empty'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                              return;
-                            }
-
-                            // Validate email (required)
-                            if (newEmail.isEmpty) {
+                            final otp = otpController.text.trim();
+                            if (otp.length != 6) {
                               setModalState(() {
-                                emailError = 'Email is required';
-                              });
-                              return;
-                            }
-
-                            // Validate email format
-                            final emailRegex = RegExp(
-                              r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-                            );
-                            if (!emailRegex.hasMatch(newEmail)) {
-                              setModalState(() {
-                                emailError =
-                                    'Please enter a valid email address';
+                                otpError = 'Please enter a 6-digit OTP';
                               });
                               return;
                             }
 
                             try {
-                              // Update user
-                              await viewModel.updateUser(
-                                currentUsername: user.username,
-                                name: newName,
-                                email:
-                                    newEmail, // Send the value (empty string if cleared)
-                                bio:
-                                    newBio, // Send the value (empty string if cleared)
+                              await viewModel.verifyEmailUpdateOTP(
+                                id: otpId,
+                                otp: otp,
+                                currentUsername: currentUsername,
                               );
-
                               if (mounted) {
-                                Navigator.of(context).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Profile updated successfully',
-                                    ),
-                                  ),
-                                );
-                                // Reload user to get updated data
-                                await viewModel.loadUser(user.username);
+                                onSuccess();
                               }
                             } catch (error) {
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Failed to update: $error'),
-                                    backgroundColor: Theme.of(
-                                      context,
-                                    ).colorScheme.error,
-                                  ),
-                                );
+                                setModalState(() {
+                                  otpError = viewModel.otpError ??
+                                      'Invalid OTP. Please try again.';
+                                });
                               }
                             }
                           },
@@ -1394,7 +1625,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: viewModel.isLoading
+                    child: viewModel.isVerifyingOTP
                         ? const SizedBox(
                             height: 20,
                             width: 20,
@@ -1406,17 +1637,20 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             ),
                           )
                         : const Text(
-                            'Save Changes',
+                            'Verify & Save',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   // Cancel button
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      viewModel.clearOTPState();
+                      Navigator.of(context).pop();
+                    },
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(height: 20),
@@ -1426,7 +1660,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
           ),
         ),
       ),
-    );
+    ).whenComplete(() {
+      // Cleanup OTP state when sheet is dismissed
+      viewModel.clearOTPState();
+    });
   }
 
   void _showProfilePictureOptions(
@@ -2206,7 +2443,7 @@ class _VideoGridItem extends StatelessWidget {
                         );
                       },
                     ),
-          ),
+            ),
              ),   // 1.5 Processing Overlay
           if (video.status == 'temp')
             IgnorePointer(
@@ -2220,7 +2457,7 @@ class _VideoGridItem extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
+          ),
           // 2. Processing indicator or View count overlay (non-interactive)
           Positioned(
             top: 8,
@@ -2234,8 +2471,8 @@ class _VideoGridItem extends StatelessWidget {
                 ),
                 child: video.status == 'temp'
                     ? const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                           Text(
                             '• ',
                             style: TextStyle(
@@ -2262,22 +2499,22 @@ class _VideoGridItem extends StatelessWidget {
                             size: 12,
                             color: Colors.white,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatCount(video.videoViews),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatCount(video.videoViews),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
                       ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
           // 3. More menu (interactive layer on top)
-          if (onDelete != null)
+          if (onDelete != null && video.status != 'temp')
             Positioned(
               bottom: 4,
               right: 4,

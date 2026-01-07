@@ -16,7 +16,6 @@ import '../../../../core/services/token_storage_service.dart';
 import '../../../../core/services/workmanager_service.dart';
 import '../../../../core/workers/video_upload_worker.dart';
 import '../../data/models/video_upload_payload.dart';
-import '../../domain/services/video_upload_service.dart';
 
 enum UploadStatus { idle, uploading, success, error, canceled }
 
@@ -25,8 +24,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     required ApiClient apiClient,
     required NotificationService notificationService,
     NetworkConnectivityService? networkConnectivityService,
-  }) : _apiClient = apiClient,
-       _notificationService = notificationService,
+  }) : _notificationService = notificationService,
        _networkService =
            networkConnectivityService ?? NetworkConnectivityService() {
     WidgetsBinding.instance.addObserver(this);
@@ -40,7 +38,6 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  final ApiClient _apiClient;
   final NotificationService _notificationService;
   final NetworkConnectivityService _networkService;
 
@@ -66,6 +63,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   UploadStatus _uploadStatus = UploadStatus.idle;
   String? _errorMessage;
   String? _successMessage;
+  String? _currentStageMessage;
   final List<String> _tags = <String>[];
   String? _currentTaskId;
   bool _shouldPopAfterSuccess = false;
@@ -82,6 +80,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   UploadStatus get uploadStatus => _uploadStatus;
   String? get errorMessage => _errorMessage;
   String? get successMessage => _successMessage;
+  String? get currentStageMessage => _currentStageMessage;
   List<String> get tags => List.unmodifiable(_tags);
   bool get shouldPopAfterSuccess => _shouldPopAfterSuccess;
   int get uploadProgress => _uploadProgress;
@@ -92,6 +91,23 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
   // Get the current thumbnail to display (custom if selected, otherwise auto-generated)
   File? get currentThumbnail => _selectedThumbnail ?? _videoThumbnail;
   bool get isAppInForeground => _isAppInForeground;
+
+  void clearError() {
+    _errorMessage = null;
+    if (_uploadStatus == UploadStatus.error) {
+      _uploadStatus = UploadStatus.idle;
+    }
+    notifyListeners();
+  }
+
+  void clearSuccess() {
+    _successMessage = null;
+    if (_uploadStatus == UploadStatus.success) {
+      _uploadStatus = UploadStatus.idle;
+    }
+    _currentStageMessage = null;
+    notifyListeners();
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -335,26 +351,10 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Start the video upload process exclusively via WorkManager
   Future<bool> startUpload() async {
-    if (!canUpload || _selectedVideo == null) {
-      _setError('Please fill all required fields before uploading.');
-      return false;
-    }
-
-    // Check for duplicate uploads
-    if (_hasActiveUpload()) {
-      _setError(
-        'An upload is already in progress. Please wait for it to complete.',
-      );
-      return false;
-    }
-
-    // Check network connectivity before starting upload
-    final isConnected = await _networkService.checkConnectivity();
-    if (!isConnected) {
-      _setError(
-        'No internet connection. Please check your network and try again.',
-      );
+    if (_selectedVideo == null) {
+      _setError('No video selected.');
       return false;
     }
 
@@ -380,9 +380,13 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         await _generateVideoThumbnail();
       }
 
+      // Create an idempotent taskId based on file path and size
+      final videoFile = File(_selectedVideo!.path);
+      final fileSize = await videoFile.length();
       final taskId =
-          'video_upload_${DateTime.now().microsecondsSinceEpoch.toString()}';
+          'upload_${_selectedVideo!.path.hashCode}_$fileSize';
       _currentTaskId = taskId;
+      _uploadTotal = fileSize;
 
       final payload = VideoUploadPayload(
         taskId: taskId,
@@ -397,10 +401,6 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         idToken: token,
       );
 
-      // Get file size for progress tracking
-      final videoFile = File(payload.videoPath);
-      _uploadTotal = await videoFile.length();
-
       // Initialize notification service
       await _notificationService.initialize();
 
@@ -411,166 +411,37 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         body: 'Preparing to upload video...',
       );
 
-      // Set up listener for background worker updates (for WorkManager fallback)
+      // Set up listener for background worker updates
       _ensureReceivePort();
 
-      // Register with WorkManager as backup (in case app terminates)
-      // Keep it active during upload - only cancel on successful completion
-      // This ensures upload continues even if app is closed
-      String? workManagerTaskId;
+      // Register with WorkManager as the EXCLUSIVE execution path
       try {
         await Workmanager().registerOneOffTask(
           taskId,
           videoUploadTaskName,
-          existingWorkPolicy: ExistingWorkPolicy.replace,
+          existingWorkPolicy: ExistingWorkPolicy.keep, // Prevent duplicates
           constraints: Constraints(networkType: NetworkType.connected),
           inputData: payload.toMap(),
         );
-        workManagerTaskId = taskId;
+        
         developer.log(
-          'WorkManager backup registered: $taskId',
+          'Upload task registered with WorkManager: $taskId',
           name: 'hiffi.video_upload',
         );
-        print('📋 WorkManager backup registered: $taskId (will take over if app closes)');
+        print('🚀 Upload task queued with WorkManager: $taskId');
+        
+        _isQueued = true;
+        _setUploading(true);
+        notifyListeners();
+        return true;
       } catch (e) {
         developer.log(
-          'Failed to register WorkManager backup (non-critical)',
+          'Failed to register WorkManager task',
           name: 'hiffi.video_upload',
           error: e,
         );
-        print('⚠️ WorkManager registration failed (non-critical): $e');
-      }
-
-      // Start upload immediately in foreground
-      _setUploading(true);
-      _isQueued = false;
-
-      developer.log(
-        'Starting immediate foreground upload: $taskId',
-        name: 'hiffi.video_upload',
-      );
-      print('🚀 Starting immediate foreground upload: $taskId');
-      print('   WorkManager backup is active and will take over if app closes');
-
-      final service = VideoUploadService(apiClient: _apiClient);
-      final result = await service.uploadVideo(
-        payload,
-        onStage: (stage) async {
-          final statusText = switch (stage) {
-            VideoUploadStage.preparing => 'Preparing upload...',
-            VideoUploadStage.uploadingVideo => 'Uploading video file...',
-            VideoUploadStage.uploadingThumbnail => 'Uploading thumbnail...',
-            VideoUploadStage.acknowledging => 'Finalizing upload...',
-          };
-
-          developer.log('Upload stage: $stage', name: 'hiffi.video_upload');
-          print('📊 Upload stage: $stage - $statusText');
-
-          // Show notification only if app is backgrounded
-          if (!_isAppInForeground) {
-            final progress = stage == VideoUploadStage.acknowledging
-                ? 100
-                : (_uploadTotal > 0
-                      ? ((_uploadProgress / _uploadTotal) * 100)
-                            .clamp(0, 100)
-                            .toInt()
-                      : 0);
-
-            await _notificationService.showProgress(
-              taskId: taskId,
-              title: 'Uploading video',
-              body: statusText,
-              progress: progress,
-              maxProgress: 100,
-            );
+        throw Exception('Failed to queue upload: $e');
           }
-        },
-        onVideoProgress: (sent, total) async {
-          _uploadProgress = sent;
-          _uploadTotal = total;
-          final percent = total > 0
-              ? ((sent / total) * 100).clamp(0, 100).toInt()
-              : 0;
-
-          // Show notification only if app is backgrounded
-          if (!_isAppInForeground) {
-            await _notificationService.showProgress(
-              taskId: taskId,
-              title: 'Uploading video',
-              body: 'Uploading video file... $percent%',
-              progress: percent,
-              maxProgress: 100,
-            );
-          }
-          notifyListeners();
-        },
-      );
-
-      _setUploading(false);
-
-      developer.log(
-        'Upload completed: success=${result.success}, message=${result.message}',
-        name: 'hiffi.video_upload',
-      );
-      print(
-        '✅ Upload result: success=${result.success}, message=${result.message}',
-      );
-
-      if (result.success) {
-        // Cancel WorkManager task now that upload completed successfully
-        // This prevents WorkManager from running unnecessarily
-        if (workManagerTaskId != null) {
-          try {
-            await Workmanager().cancelByUniqueName(workManagerTaskId);
-            print('📋 Cancelled WorkManager backup task (upload completed successfully)');
-          } catch (e) {
-            developer.log(
-              'Failed to cancel WorkManager task (non-critical): $e',
-              name: 'hiffi.video_upload',
-            );
-          }
-        }
-
-        // Show completion notification only if app is backgrounded
-        if (!_isAppInForeground) {
-          await _notificationService.showCompletion(
-            taskId: taskId,
-            title: 'Video uploaded',
-            body: result.message,
-            success: true,
-          );
-        }
-
-        _setSuccess(result.message);
-        _uploadStatus = UploadStatus.success;
-        _shouldPopAfterSuccess = true;
-        _resetFormFields();
-        print('🎉 Video upload completed successfully!');
-      } else {
-        // Foreground upload failed - WorkManager task is still active
-        // It will automatically retry the upload when conditions are met
-        // No need to re-register since we kept it active during the upload
-        print(
-          '⚠️ Foreground upload failed, WorkManager backup will handle retry',
-        );
-
-        // Show error notification only if app is backgrounded
-        if (!_isAppInForeground) {
-          await _notificationService.showCompletion(
-            taskId: taskId,
-            title: 'Video upload failed',
-            body: result.message,
-            success: false,
-          );
-        }
-
-        _setError(result.message);
-        _uploadStatus = UploadStatus.error;
-        print('❌ Video upload failed: ${result.message}');
-      }
-
-      notifyListeners();
-      return result.success;
     } catch (error) {
       developer.log(
         'Failed to start upload',
@@ -582,18 +453,6 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       _isQueued = false;
       _setError('Failed to start upload: $error');
 
-      // If we have a taskId, we might have registered WorkManager - try to cancel it
-      // If the exception happened before payload creation, there's nothing to re-register
-      if (_currentTaskId != null) {
-        try {
-          // Try to cancel any existing WorkManager task
-          await Workmanager().cancelByUniqueName(_currentTaskId!);
-        } catch (e) {
-          // Ignore cancellation errors
-        }
-      }
-
-      // Only show notification if app is backgrounded
       if (_currentTaskId != null && !_isAppInForeground) {
         await _notificationService.showCompletion(
           taskId: _currentTaskId!,
@@ -629,6 +488,21 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
     if (data is! Map) return;
     final taskId = data['taskId'] as String?;
     if (taskId == null || taskId != _currentTaskId) return;
+
+    // Handle progress updates
+    if (data.containsKey('progress')) {
+      _uploadProgress = data['progress'] as int? ?? 0;
+      _uploadTotal = data['total'] as int? ?? _uploadTotal;
+      notifyListeners();
+      return;
+    }
+
+    // Handle stage updates
+    if (data.containsKey('stage')) {
+      _currentStageMessage = data['message'] as String?;
+      notifyListeners();
+      return;
+    }
 
     final success = data['success'] == true;
     final message =
