@@ -332,6 +332,60 @@ class _GridVideoCard extends StatelessWidget {
                               );
                             },
                           ),
+                          // Processing indicator (top right)
+                          if (video.status == 'temp')
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '• ',
+                                      style: TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      'processing',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          // Processing Overlay
+                          if (video.status == 'temp')
+                            IgnorePointer(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.3),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.sync,
+                                    color: Colors.white70,
+                                    size: 24,
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
               ),

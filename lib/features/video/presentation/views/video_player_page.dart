@@ -616,6 +616,40 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   aspectRatio: 16 / 9,
                   child: _isLoading
                       ? const VideoPlayerShimmer()
+                      : _video.status == 'temp'
+                      ? Container(
+                          color: Colors.black,
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.sync,
+                                  color: Colors.orangeAccent,
+                                  size: 48,
+                                ),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'Video is processing...',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'We\'re encoding your video for the best quality.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.7),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
                       : _hasError
                       ? Container(
                           color: Colors.black,

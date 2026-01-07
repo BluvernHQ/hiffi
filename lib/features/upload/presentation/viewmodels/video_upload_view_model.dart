@@ -415,7 +415,8 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       _ensureReceivePort();
 
       // Register with WorkManager as backup (in case app terminates)
-      // We'll cancel it immediately if foreground upload starts successfully
+      // Keep it active during upload - only cancel on successful completion
+      // This ensures upload continues even if app is closed
       String? workManagerTaskId;
       try {
         await Workmanager().registerOneOffTask(
@@ -430,7 +431,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
           'WorkManager backup registered: $taskId',
           name: 'hiffi.video_upload',
         );
-        print('📋 WorkManager backup registered: $taskId');
+        print('📋 WorkManager backup registered: $taskId (will take over if app closes)');
       } catch (e) {
         developer.log(
           'Failed to register WorkManager backup (non-critical)',
@@ -449,22 +450,7 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         name: 'hiffi.video_upload',
       );
       print('🚀 Starting immediate foreground upload: $taskId');
-
-      // Cancel WorkManager task immediately since we're handling upload in foreground
-      // This prevents duplicate uploads from running in parallel
-      if (workManagerTaskId != null) {
-        try {
-          await Workmanager().cancelByUniqueName(workManagerTaskId);
-          print(
-            '📋 Cancelled WorkManager backup task (foreground upload active)',
-          );
-        } catch (e) {
-          developer.log(
-            'Failed to cancel WorkManager task (non-critical): $e',
-            name: 'hiffi.video_upload',
-          );
-        }
-      }
+      print('   WorkManager backup is active and will take over if app closes');
 
       final service = VideoUploadService(apiClient: _apiClient);
       final result = await service.uploadVideo(
@@ -531,8 +517,19 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
       );
 
       if (result.success) {
-        // WorkManager task was already cancelled when foreground upload started
-        // No need to cancel again
+        // Cancel WorkManager task now that upload completed successfully
+        // This prevents WorkManager from running unnecessarily
+        if (workManagerTaskId != null) {
+          try {
+            await Workmanager().cancelByUniqueName(workManagerTaskId);
+            print('📋 Cancelled WorkManager backup task (upload completed successfully)');
+          } catch (e) {
+            developer.log(
+              'Failed to cancel WorkManager task (non-critical): $e',
+              name: 'hiffi.video_upload',
+            );
+          }
+        }
 
         // Show completion notification only if app is backgrounded
         if (!_isAppInForeground) {
@@ -550,25 +547,12 @@ class VideoUploadViewModel extends ChangeNotifier with WidgetsBindingObserver {
         _resetFormFields();
         print('🎉 Video upload completed successfully!');
       } else {
-        // Foreground upload failed - re-register WorkManager task to handle retry
-        // Only if it was cancelled earlier
-        try {
-          await Workmanager().registerOneOffTask(
-            taskId,
-            videoUploadTaskName,
-            existingWorkPolicy: ExistingWorkPolicy.replace,
-            constraints: Constraints(networkType: NetworkType.connected),
-            inputData: payload.toMap(),
-          );
-          print(
-            '⚠️ Foreground upload failed, WorkManager backup re-registered for retry',
-          );
-        } catch (e) {
-          developer.log(
-            'Failed to re-register WorkManager backup: $e',
-            name: 'hiffi.video_upload',
-          );
-        }
+        // Foreground upload failed - WorkManager task is still active
+        // It will automatically retry the upload when conditions are met
+        // No need to re-register since we kept it active during the upload
+        print(
+          '⚠️ Foreground upload failed, WorkManager backup will handle retry',
+        );
 
         // Show error notification only if app is backgrounded
         if (!_isAppInForeground) {

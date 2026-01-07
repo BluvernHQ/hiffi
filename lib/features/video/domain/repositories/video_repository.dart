@@ -132,16 +132,20 @@ class VideoRepositoryImpl implements VideoRepository {
             final videoJson = itemMap['video'] as Map<String, dynamic>?;
 
             if (videoJson != null) {
-              // Extract profile_picture from outer item (not from video object)
+              // Extract profile_picture and status from outer item (not from video object)
               final profilePicture = itemMap['profile_picture'] as String?;
+              final status = itemMap['status'] as String?;
 
-              // Add profile_picture to videoJson before parsing
-              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              // Add extra fields to videoJson before parsing
+              final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
               if (profilePicture != null) {
-                videoJsonWithProfile['profile_picture'] = profilePicture;
+                videoJsonWithExtras['profile_picture'] = profilePicture;
+              }
+              if (status != null) {
+                videoJsonWithExtras['status'] = status;
               }
 
-              final video = VideoModel.fromJson(videoJsonWithProfile);
+              final video = VideoModel.fromJson(videoJsonWithExtras);
               videos.add(video);
               // Note: Following status is available in itemMap['following'] if needed in the future
             } else {
@@ -222,16 +226,20 @@ class VideoRepositoryImpl implements VideoRepository {
             final videoJson = itemMap['video'] as Map<String, dynamic>?;
 
             if (videoJson != null) {
-              // Extract profile_picture from outer item (not from video object)
+              // Extract profile_picture and status from outer item (not from video object)
               final profilePicture = itemMap['profile_picture'] as String?;
+              final status = itemMap['status'] as String?;
 
-              // Add profile_picture to videoJson before parsing
-              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              // Add extra fields to videoJson before parsing
+              final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
               if (profilePicture != null) {
-                videoJsonWithProfile['profile_picture'] = profilePicture;
+                videoJsonWithExtras['profile_picture'] = profilePicture;
+              }
+              if (status != null) {
+                videoJsonWithExtras['status'] = status;
               }
 
-              final video = VideoModel.fromJson(videoJsonWithProfile);
+              final video = VideoModel.fromJson(videoJsonWithExtras);
               videos.add(video);
             } else {
               // Fallback: treat entire item as video object if no nested 'video' key
@@ -313,16 +321,20 @@ class VideoRepositoryImpl implements VideoRepository {
             final videoJson = itemMap['video'] as Map<String, dynamic>?;
 
             if (videoJson != null) {
-              // Extract profile_picture from outer item (not from video object)
+              // Extract profile_picture and status from outer item (not from video object)
               final profilePicture = itemMap['profile_picture'] as String?;
+              final status = itemMap['status'] as String?;
 
-              // Add profile_picture to videoJson before parsing
-              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              // Add extra fields to videoJson before parsing
+              final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
               if (profilePicture != null) {
-                videoJsonWithProfile['profile_picture'] = profilePicture;
+                videoJsonWithExtras['profile_picture'] = profilePicture;
+              }
+              if (status != null) {
+                videoJsonWithExtras['status'] = status;
               }
 
-              final video = VideoModel.fromJson(videoJsonWithProfile);
+              final video = VideoModel.fromJson(videoJsonWithExtras);
               videos.add(video);
             } else {
               // Fallback: treat entire item as video object if no nested 'video' key
@@ -399,16 +411,20 @@ class VideoRepositoryImpl implements VideoRepository {
             final videoJson = itemMap['video'] as Map<String, dynamic>?;
 
             if (videoJson != null) {
-              // Extract profile_picture from outer item (not from video object)
+              // Extract profile_picture and status from outer item (not from video object)
               final profilePicture = itemMap['profile_picture'] as String?;
+              final status = itemMap['status'] as String?;
 
-              // Add profile_picture to videoJson before parsing
-              final videoJsonWithProfile = Map<String, dynamic>.from(videoJson);
+              // Add extra fields to videoJson before parsing
+              final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
               if (profilePicture != null) {
-                videoJsonWithProfile['profile_picture'] = profilePicture;
+                videoJsonWithExtras['profile_picture'] = profilePicture;
+              }
+              if (status != null) {
+                videoJsonWithExtras['status'] = status;
               }
 
-              final video = VideoModel.fromJson(videoJsonWithProfile);
+              final video = VideoModel.fromJson(videoJsonWithExtras);
               videos.add(video);
             } else {
               // Fallback: treat entire item as video object if no nested 'video' key
@@ -466,10 +482,13 @@ class VideoRepositoryImpl implements VideoRepository {
           final videoJson = data['video'] as Map<String, dynamic>?;
           if (videoJson != null) {
             try {
-              // Merge profile_picture from data level into video object for VideoModel
+              // Merge profile_picture and status from data level into video object for VideoModel
               final videoData = Map<String, dynamic>.from(videoJson);
               if (data['profile_picture'] != null) {
                 videoData['profile_picture'] = data['profile_picture'];
+              }
+              if (data['status'] != null) {
+                videoData['status'] = data['status'];
               }
               videoModel = VideoModel.fromJson(videoData);
             } catch (e) {

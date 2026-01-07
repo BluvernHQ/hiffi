@@ -99,12 +99,26 @@ class _UserProfilePageState extends State<UserProfilePage> {
 
     try {
       final videoRepository = context.read<VideoRepository>();
-      // Fetch videos with latest data including up-to-date video views
-      final videos = await videoRepository.getVideosByUsername(
-        username: username,
-        limit: 20,
-        offset: 0,
-      );
+      
+      // Determine if this is the current user's own profile
+      final isOwnProfile = _currentLoggedInUser?.username == username;
+      
+      final List<VideoModel> videos;
+      if (isOwnProfile) {
+        // Use /videos/list/self for current user's profile
+        videos = await videoRepository.getUserVideos(
+          limit: 20,
+          offset: 0,
+        );
+      } else {
+        // Fetch videos with latest data including up-to-date video views
+        videos = await videoRepository.getVideosByUsername(
+          username: username,
+          limit: 20,
+          offset: 0,
+        );
+      }
+
       if (mounted) {
         setState(() {
           // Update videos list with latest data including current video views
@@ -2192,9 +2206,22 @@ class _VideoGridItem extends StatelessWidget {
                         );
                       },
                     ),
-            ),
           ),
-          // 2. View count overlay (non-interactive)
+             ),   // 1.5 Processing Overlay
+          if (video.status == 'temp')
+            IgnorePointer(
+              child: Container(
+                color: Colors.black.withOpacity(0.3),
+                child: const Center(
+                  child: Icon(
+                    Icons.sync,
+                    color: Colors.white70,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          // 2. Processing indicator or View count overlay (non-interactive)
           Positioned(
             top: 8,
             right: 8,
@@ -2205,21 +2232,47 @@ class _VideoGridItem extends StatelessWidget {
                   color: Colors.black.withOpacity(0.7),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.visibility, size: 12, color: Colors.white),
-                    const SizedBox(width: 4),
-                    Text(
-                      _formatCount(video.videoViews),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                child: video.status == 'temp'
+                    ? const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '• ',
+                            style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'processing',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.visibility,
+                            size: 12,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatCount(video.videoViews),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),
