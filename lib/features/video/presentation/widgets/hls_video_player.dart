@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:chewie/chewie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
+import 'package:hiffi/features/video/domain/models/video_model.dart';
+import 'package:hiffi/core/services/media/media_sync_service.dart';
 
 /// Production-ready HLS Video Player widget using video_player + chewie.
 ///
@@ -13,6 +16,7 @@ import 'package:hiffi/features/video/presentation/controllers/hls_player_control
 /// Usage:
 /// ```dart
 /// HlsVideoPlayer(
+///   video: video,
 ///   videoId: 'video123',
 ///   baseVideoUrl: 'https://.../videos/video123',
 ///   autoPlay: true,
@@ -20,6 +24,7 @@ import 'package:hiffi/features/video/presentation/controllers/hls_player_control
 /// )
 /// ```
 class HlsVideoPlayer extends StatefulWidget {
+  final VideoModel video;
   final String videoId;
   final String baseVideoUrl; // The URL from GET /videos/{videoId}
   final bool autoPlay;
@@ -29,6 +34,7 @@ class HlsVideoPlayer extends StatefulWidget {
 
   const HlsVideoPlayer({
     super.key,
+    required this.video,
     required this.videoId,
     required this.baseVideoUrl,
     this.autoPlay = true,
@@ -106,6 +112,11 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   late HlsPlayerController _controller;
   bool _isDisposed = false;
 
+  // Gesture control state
+  Timer? _tapTimer;
+  static const Duration _doubleTapDelay = Duration(milliseconds: 300);
+  static const Duration _skipDuration = Duration(seconds: 10);
+
   @override
   void initState() {
     super.initState();
@@ -123,6 +134,9 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
 
     // Register controller for external pause access
     HlsVideoPlayer.registerController(widget.videoId, _controller);
+
+    // Register with MediaSyncService for background audio transitions
+    MediaSyncService().setCurrentPlayer(_controller, widget.video);
   }
 
   @override
@@ -159,13 +173,14 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       'HlsVideoPlayer: dispose() called for videoId ${widget.videoId}',
     );
 
+    _tapTimer?.cancel();
     _controller.removeListener(_onControllerStateChanged);
-    
+
     // 💡 ARCHITECTURAL FIX: We no longer dispose ChewieController here.
     // ChewieController is now owned by HlsPlayerController, which survives
     // when the HlsVideoPlayer widget is moved in the tree (e.g., rotation).
     // It will be disposed only when HlsPlayerController is disposed.
-    // 
+    //
     // Chewie automatically restores orientation when disposed, so we don't need
     // to manually call FullscreenManager here.
 
@@ -175,11 +190,50 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     super.dispose();
   }
 
+  /// Handles single tap for play/pause
+  void _handleTap(BuildContext context, BoxConstraints constraints) {
+    // Cancel any pending double-tap timer
+    _tapTimer?.cancel();
+
+    // Use a timer to distinguish single tap from double tap
+    // This allows double-tap to cancel the single-tap action
+    _tapTimer = Timer(_doubleTapDelay, () {
+      // Single tap detected - toggle play/pause
+      // Only execute if we haven't been disposed and widget is still mounted
+      if (!_isDisposed && mounted) {
+        _controller.togglePlayPause();
+      }
+    });
+  }
+
+  /// Handles double tap for skip forward/backward
+  void _handleDoubleTap(TapDownDetails details, BoxConstraints constraints) {
+    // Cancel single tap timer since this is a double tap
+    _tapTimer?.cancel();
+
+    if (_isDisposed || !mounted) return;
+
+    // Determine if tap is on left or right side of the video
+    final tapX = details.localPosition.dx;
+    final videoWidth = constraints.maxWidth;
+    final isLeftSide = tapX < videoWidth / 2;
+
+    // Skip backward on left side, forward on right side
+    final skipDuration = isLeftSide ? -_skipDuration : _skipDuration;
+
+    _controller.seekBy(skipDuration);
+
+    // Show visual feedback (optional - could add a skip indicator overlay)
+    debugPrint(
+      'HlsVideoPlayer: Double tap detected - skipping ${isLeftSide ? "backward" : "forward"} by ${_skipDuration.inSeconds}s',
+    );
+  }
+
   void _onControllerStateChanged() {
     if (_isDisposed || !mounted) return;
-    
+
     widget.onStateChanged?.call(_controller.currentState);
-    
+
     // 💡 SIMPLIFIED: Just trigger a rebuild when controller state changes.
     // We no longer need to sync fullscreen state since Chewie handles it internally
     // and we're not conditionally rendering based on it.
@@ -356,11 +410,11 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     // conditionally render different widgets based on fullscreen state.
     // This prevents disposal/recreation during orientation changes, which
     // causes the "PlayerNotifier used after disposed" error.
-    // 
+    //
     // Use a stable key based on videoId to ensure Flutter doesn't unnecessarily
     // recreate the widget during rebuilds.
     final playerKey = ValueKey('chewie_${widget.videoId}');
-    
+
     return Container(
       color: Colors.black,
       child: LayoutBuilder(
@@ -368,9 +422,13 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
           return SizedBox(
             width: constraints.maxWidth,
             height: constraints.maxHeight,
-            child: Chewie(
-              key: playerKey,
-              controller: chewieController,
+            child: GestureDetector(
+              onTap: () => _handleTap(context, constraints),
+              onDoubleTapDown: (details) =>
+                  _handleDoubleTap(details, constraints),
+              // Allow taps to pass through to Chewie controls when not in center area
+              behavior: HitTestBehavior.translucent,
+              child: Chewie(key: playerKey, controller: chewieController),
             ),
           );
         },

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:hiffi/core/services/hls_source_resolver.dart';
 import 'package:hiffi/core/services/hls_proxy_service.dart';
+import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
 import 'package:hiffi/features/video/domain/models/video_profile.dart';
 
@@ -71,6 +72,33 @@ class HlsPlayerController extends ChangeNotifier {
   bool get isMuted => _userIntentMuted;
   double get volume => _userIntentVolume;
 
+  /// Gets the current video duration
+  Duration get duration {
+    if (_videoPlayerController != null &&
+        _videoPlayerController!.value.isInitialized) {
+      return _videoPlayerController!.value.duration;
+    }
+    return Duration.zero;
+  }
+
+  /// Gets the current playback position
+  Duration get position {
+    if (_videoPlayerController != null &&
+        _videoPlayerController!.value.isInitialized) {
+      return _videoPlayerController!.value.position;
+    }
+    return Duration.zero;
+  }
+
+  /// Gets whether the video is currently playing
+  bool get isPlaying {
+    if (_videoPlayerController != null &&
+        _videoPlayerController!.value.isInitialized) {
+      return _videoPlayerController!.value.isPlaying;
+    }
+    return false;
+  }
+
   /// Pauses the video player if it's currently playing
   Future<void> pause() async {
     if (_videoPlayerController != null &&
@@ -88,6 +116,45 @@ class HlsPlayerController extends ChangeNotifier {
       debugPrint('HlsPlayerController: Resuming playback');
       await _videoPlayerController!.play();
     }
+  }
+
+  /// Toggles play/pause state
+  Future<void> togglePlayPause() async {
+    if (_videoPlayerController == null ||
+        !_videoPlayerController!.value.isInitialized) {
+      return;
+    }
+
+    if (_videoPlayerController!.value.isPlaying) {
+      await pause();
+    } else {
+      await play();
+    }
+  }
+
+  /// Seeks forward or backward by the specified duration
+  /// [duration] can be positive (forward) or negative (backward)
+  Future<void> seekBy(Duration duration) async {
+    if (_videoPlayerController == null ||
+        !_videoPlayerController!.value.isInitialized) {
+      return;
+    }
+
+    final currentPosition = _videoPlayerController!.value.position;
+    final videoDuration = _videoPlayerController!.value.duration;
+    final newPositionMs = (currentPosition + duration).inMilliseconds;
+
+    // Clamp to valid range (Duration doesn't have clamp, so use milliseconds)
+    final clampedPositionMs = newPositionMs.clamp(
+      0,
+      videoDuration.inMilliseconds,
+    );
+    final clampedPosition = Duration(milliseconds: clampedPositionMs);
+
+    debugPrint(
+      'HlsPlayerController: Seeking from ${currentPosition.inSeconds}s to ${clampedPosition.inSeconds}s',
+    );
+    await _videoPlayerController!.seekTo(clampedPosition);
   }
 
   void setFullScreen(bool value) {
@@ -190,7 +257,7 @@ class HlsPlayerController extends ChangeNotifier {
         Uri.parse(proxiedUrl),
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: true,
-          allowBackgroundPlayback: false,
+          allowBackgroundPlayback: true,
         ),
       );
 
@@ -232,7 +299,9 @@ class HlsPlayerController extends ChangeNotifier {
           DeviceOrientation.landscapeRight,
         ],
         deviceOrientationsAfterFullScreen: [DeviceOrientation.portraitUp],
+        // Hide system UI in fullscreen for immersive experience
         systemOverlaysOnEnterFullScreen: [],
+        // Show system UI when exiting fullscreen to ensure controls are visible
         systemOverlaysAfterFullScreen: SystemUiOverlay.values,
         additionalOptions: (context) {
           return <OptionItem>[
@@ -260,7 +329,11 @@ class HlsPlayerController extends ChangeNotifier {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, color: Colors.white, size: 48),
+                  const Icon(
+                    Icons.error_outline,
+                    color: Colors.white,
+                    size: 48,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     errorMessage,
@@ -303,8 +376,18 @@ class HlsPlayerController extends ChangeNotifier {
     }
   }
 
+  double _aspectRatio = 16 / 9;
+  double get aspectRatio => _aspectRatio;
+
   void _handlePlayerStateChange() {
     if (_videoPlayerController == null) return;
+
+    if (_videoPlayerController!.value.isInitialized) {
+      if (_aspectRatio != _videoPlayerController!.value.aspectRatio) {
+        _aspectRatio = _videoPlayerController!.value.aspectRatio;
+        notifyListeners();
+      }
+    }
 
     if (_videoPlayerController!.value.hasError) {
       _handleError(
@@ -317,7 +400,10 @@ class HlsPlayerController extends ChangeNotifier {
       notifyListeners();
     } else if (_videoPlayerController!.value.isPlaying) {
       _currentState = PlayerState.ready;
+      PipService.updatePlayerStatus(true);
       notifyListeners();
+    } else {
+      PipService.updatePlayerStatus(false);
     }
 
     // Check if video has ended
@@ -423,11 +509,11 @@ class HlsPlayerController extends ChangeNotifier {
     if (_videoPlayerController != null) {
       _videoPlayerController!.removeListener(_handlePlayerStateChange);
     }
-    
+
     // 💡 CRITICAL: Dispose Chewie FIRST to stop its internal timers
     _chewieController?.dispose();
     _chewieController = null;
-    
+
     await _videoPlayerController?.dispose();
     _videoPlayerController = null;
   }

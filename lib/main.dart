@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'app.dart';
 import 'core/services/notification_service.dart';
+import 'core/services/media/media_sync_service.dart';
 import 'core/workers/video_upload_worker.dart';
 import 'firebase_options.dart';
 
@@ -20,6 +21,7 @@ Future<void> main() async {
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService().initialize();
+  await MediaSyncService().initialize();
   await Workmanager().initialize(callbackDispatcher);
 
   // Note: We don't cancel WorkManager tasks on app start

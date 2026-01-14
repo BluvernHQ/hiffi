@@ -2,8 +2,10 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:hiffi/core/services/pip_service.dart';
 
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
@@ -13,8 +15,9 @@ import '../../../user/data/user_repository.dart';
 import '../../../user/domain/models/user_model.dart';
 import 'package:hiffi/features/video/presentation/controllers/video_comments_controller.dart';
 import 'package:hiffi/features/video/presentation/widgets/video_comments_section.dart';
-import 'package:hiffi/core/utils/image_utils.dart';
-import 'package:hiffi/core/widgets/hiffi_image.dart';
+import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/services/media/media_sync_service.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
 
@@ -134,8 +137,50 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _fetchAndInitializePlayer();
     _loadUserAndFollowStatus();
 
+    // 💡 SYNC FIX: Register navigation callbacks for notification controls
+    MediaSyncService().registerNavigationCallbacks(
+      onNext: _playNextVideo,
+      onPrevious: _playPreviousVideo,
+    );
+
     // 5️⃣ Fetch lightweight preview data
     _commentsController.fetchLatestComment();
+  }
+
+  void _playNextVideo() {
+    if (_suggestedVideos.isEmpty) {
+      debugPrint('VideoPlayerPage: No suggested videos available for autoplay');
+      return;
+    }
+
+    // Find the next video in the suggested list (first one that's not the current video)
+    VideoModel? nextVideo;
+    for (final video in _suggestedVideos) {
+      if (video.videoId != _video.videoId) {
+        nextVideo = video;
+        break;
+      }
+    }
+
+    if (nextVideo != null) {
+      debugPrint(
+        'VideoPlayerPage: Autoplay/Next - navigating to ${nextVideo.videoId}',
+      );
+      _replaceVideo(nextVideo);
+    } else {
+      debugPrint('VideoPlayerPage: Could not find a suitable next video');
+    }
+  }
+
+  void _playPreviousVideo() {
+    // For now, previous just restarts the current video if no history is tracked
+    debugPrint('VideoPlayerPage: Previous - restarting current video');
+    HlsVideoPlayer.playPlayer(_video.videoId);
+  }
+
+  void _onVideoEnded() {
+    debugPrint('VideoPlayerPage: Video ended - triggering autoplay');
+    _playNextVideo();
   }
 
   @override
@@ -163,14 +208,33 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     super.deactivate();
   }
 
+  AppLifecycleState? _lastState;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
-      _pauseVideo();
+
+    if (state == AppLifecycleState.paused) {
+      debugPrint(
+        'VideoPlayerPage: App paused - switching to background audio if needed',
+      );
+      // Only switch to background audio if we're not in PiP
+      MediaSyncService().switchToBackground();
+    } else if (state == AppLifecycleState.inactive) {
+      // 💡 FIX: Only trigger PiP if we are moving FROM resumed TO inactive
+      // This prevents triggering PiP while the app is opening/resuming
+      if (_lastState == AppLifecycleState.resumed) {
+        debugPrint(
+          'VideoPlayerPage: App moving to background - triggering PiP',
+        );
+        PipService.enterPiP();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      debugPrint('VideoPlayerPage: App resumed - returning to foreground');
+      MediaSyncService().switchToForeground();
     }
+
+    _lastState = state;
   }
 
   Future<void> _pauseVideo() async {
@@ -220,37 +284,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       // If there's nothing to pop, navigate to home
       context.go('/home');
     }
-  }
-
-  /// Called when the current video ends - automatically plays next suggested video
-  void _onVideoEnded() {
-    debugPrint('VideoPlayerPage: Video ended, checking for next video...');
-
-    if (_suggestedVideos.isEmpty) {
-      debugPrint('VideoPlayerPage: No suggested videos available for autoplay');
-      return;
-    }
-
-    // Find the next video in the suggested list (first one that's not the current video)
-    VideoModel? nextVideo;
-    for (final video in _suggestedVideos) {
-      if (video.videoId != _video.videoId) {
-        nextVideo = video;
-        break;
-      }
-    }
-
-    if (nextVideo == null) {
-      debugPrint('VideoPlayerPage: No next video found in suggested videos');
-      return;
-    }
-
-    debugPrint(
-      'VideoPlayerPage: Autoplaying next video: ${nextVideo.videoId} - ${nextVideo.videoTitle}',
-    );
-
-    // Replace current video with next suggested video
-    _replaceVideo(nextVideo);
   }
 
   /// Replaces the current video with a new one.
@@ -603,7 +636,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               padding: const EdgeInsets.all(8),
             ),
           ),
-          systemOverlayStyle: Theme.of(context).appBarTheme.systemOverlayStyle,
+          // Ensure system UI (status bar, nav bar) uses light icons for visibility on dark video
+          systemOverlayStyle: const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.light,
+            statusBarBrightness: Brightness.dark,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarIconBrightness: Brightness.light,
+            systemNavigationBarDividerColor: Colors.transparent,
+          ),
         ),
         body: SafeArea(
           top: false,
@@ -705,6 +746,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       : _videoUrlFromApi != null
                       ? HlsVideoPlayer(
                           key: _playerKey, // Key forces disposal when changed
+                          video: _video,
                           videoId: _video.videoId,
                           baseVideoUrl: _videoUrlFromApi!,
                           autoPlay:
