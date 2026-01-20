@@ -47,9 +47,14 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration?) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        
+        // Notify Flutter about the change
+        flutterEngine?.dartExecutor?.binaryMessenger?.let {
+            MethodChannel(it, CHANNEL).invokeMethod("onPictureInPictureModeChanged", isInPictureInPictureMode)
+        }
+
         if (!isInPictureInPictureMode) {
             // App has returned to fullscreen or PiP was closed
-            // We can send a message back to Flutter if needed to sync UI
         }
     }
 

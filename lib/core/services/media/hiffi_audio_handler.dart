@@ -72,8 +72,9 @@ class HiffiAudioHandler extends BaseAudioHandler
       PlaybackState(
         controls: [
           MediaControl.skipToPrevious,
+          MediaControl.rewind,
           if (state.playing) MediaControl.pause else MediaControl.play,
-          MediaControl.stop,
+          MediaControl.fastForward,
           MediaControl.skipToNext,
         ],
         systemActions: const {
@@ -83,8 +84,12 @@ class HiffiAudioHandler extends BaseAudioHandler
           MediaAction.play,
           MediaAction.pause,
           MediaAction.stop,
+          MediaAction.skipToNext,
+          MediaAction.skipToPrevious,
+          MediaAction.fastForward,
+          MediaAction.rewind,
         },
-        androidCompactActionIndices: const [0, 1, 2],
+        androidCompactActionIndices: const [0, 2, 4],
         processingState: _mapProcessingState(state.processingState),
         playing: state.playing,
         updatePosition: position,
@@ -150,6 +155,26 @@ class HiffiAudioHandler extends BaseAudioHandler
   }
 
   @override
+  Future<void> fastForward() async {
+    debugPrint('HiffiAudioHandler: fastForward() called');
+    if (_player.processingState == ProcessingState.idle) {
+      MediaSyncService().fastForwardFromNotification();
+    } else {
+      await super.fastForward();
+    }
+  }
+
+  @override
+  Future<void> rewind() async {
+    debugPrint('HiffiAudioHandler: rewind() called');
+    if (_player.processingState == ProcessingState.idle) {
+      MediaSyncService().rewindFromNotification();
+    } else {
+      await super.rewind();
+    }
+  }
+
+  @override
   Future<void> stop() async {
     debugPrint('HiffiAudioHandler: stop() called');
     await _player.stop();
@@ -182,10 +207,11 @@ class HiffiAudioHandler extends BaseAudioHandler
     String? artwork,
     Duration? duration,
     required Duration position,
+    bool autoPlay = true,
     Map<String, String>? headers,
   }) async {
     debugPrint(
-      'HiffiAudioHandler: startPlayback() - videoId: $videoId, title: $title, position: ${position.inSeconds}s',
+      'HiffiAudioHandler: startPlayback() - videoId: $videoId, title: $title, position: ${position.inSeconds}s, autoPlay: $autoPlay',
     );
 
     try {
@@ -220,15 +246,16 @@ class HiffiAudioHandler extends BaseAudioHandler
         initialPosition: position,
       );
 
-      debugPrint('HiffiAudioHandler: Audio source set, starting playback');
+      debugPrint('HiffiAudioHandler: Audio source set');
 
-      // Start playing
-      await _player.play();
+      // Start playing if requested
+      if (autoPlay) {
+        await _player.play();
+        debugPrint('HiffiAudioHandler: Playback started');
+      }
 
       // Update playback state
       _updatePlaybackState();
-
-      debugPrint('HiffiAudioHandler: Playback started successfully');
     } catch (e, stackTrace) {
       debugPrint('HiffiAudioHandler: Error starting playback: $e');
       debugPrint('HiffiAudioHandler: Stack trace: $stackTrace');

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hiffi/core/services/media/hiffi_audio_handler.dart';
 import 'package:hiffi/core/services/hls_source_resolver.dart';
 import 'package:hiffi/core/services/hls_proxy_service.dart';
+import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
@@ -145,6 +146,9 @@ class MediaSyncService {
       final position = _currentVideoController!.position;
       final duration = _currentVideoController!.duration;
 
+      // Keep track of the last position for background transitions
+      _lastVideoPosition = position;
+
       // Update the playback state in the notification to match the video
       _audioHandler!.playbackState.add(
         _audioHandler!.playbackState.value.copyWith(
@@ -170,28 +174,37 @@ class MediaSyncService {
             2,
             4,
           ], // Prev, Play/Pause, Next
-          // 💡 SYNC FIX: Ensure state is 'ready' so Android shows the notification
-          processingState: AudioProcessingState.ready,
+          // 💡 SYNC FIX: Sync processing state (buffering, ready, etc.)
+          processingState: _mapPlayerStateToAudioProcessingState(
+            _currentVideoController!.currentState,
+          ),
           playing: isPlaying,
           updatePosition: position,
         ),
       );
 
-      // Also ensure duration is updated if it was zero before
-      if (_audioHandler!.mediaItem.value?.duration != duration &&
-          duration != Duration.zero) {
-        _audioHandler!.mediaItem.add(
-          _audioHandler!.mediaItem.value?.copyWith(duration: duration) ??
-              MediaItem(
-                id: _currentVideo?.videoId ?? '',
-                album: 'Hiffi',
-                title: _currentVideo?.videoTitle ?? '',
-                duration: duration,
-              ),
-        );
+      // Also ensure duration and metadata are updated if it was zero before
+      if ((_audioHandler!.mediaItem.value?.duration != duration &&
+              duration != Duration.zero) ||
+          (_currentVideoController!.isInitialized &&
+              _audioHandler!.mediaItem.value?.artUri?.scheme != 'http')) {
+        _updateForegroundMetadata();
       }
     } finally {
       _isSyncing = false;
+    }
+  }
+
+  AudioProcessingState _mapPlayerStateToAudioProcessingState(
+    PlayerState state,
+  ) {
+    switch (state) {
+      case PlayerState.ready:
+        return AudioProcessingState.ready;
+      case PlayerState.buffering:
+        return AudioProcessingState.buffering;
+      case PlayerState.error:
+        return AudioProcessingState.error;
     }
   }
 
@@ -200,9 +213,14 @@ class MediaSyncService {
     if (_currentVideoController != null &&
         !_currentVideoController!.isPlaying) {
       debugPrint(
-        'MediaSyncService: Play requested from notification (foreground)',
+        'MediaSyncService: Play requested from notification (foreground/PiP)',
       );
-      _currentVideoController!.play();
+
+      // If we are in foreground or PiP mode, we use the video controller.
+      // backgrounded mode is only for pure audio playback.
+      if (!_isBackgrounded) {
+        _currentVideoController!.play();
+      }
     }
   }
 
@@ -223,6 +241,22 @@ class MediaSyncService {
         'MediaSyncService: Seek requested from notification (foreground): ${position.inSeconds}s',
       );
       _currentVideoController!.controller?.seekTo(position);
+    }
+  }
+
+  /// Called from AudioHandler when user fast forwards in notification while app is in foreground.
+  void fastForwardFromNotification() {
+    if (_currentVideoController != null) {
+      debugPrint('MediaSyncService: Fast Forward requested from notification');
+      _currentVideoController!.seekBy(const Duration(seconds: 10));
+    }
+  }
+
+  /// Called from AudioHandler when user rewinds in notification while app is in foreground.
+  void rewindFromNotification() {
+    if (_currentVideoController != null) {
+      debugPrint('MediaSyncService: Rewind requested from notification');
+      _currentVideoController!.seekBy(const Duration(seconds: -10));
     }
   }
 
@@ -302,6 +336,13 @@ class MediaSyncService {
       return;
     }
 
+    if (PipService.isInPipMode.value) {
+      debugPrint(
+        'MediaSyncService: In PiP mode, skipping background audio switch',
+      );
+      return;
+    }
+
     if (_currentVideoController == null || _currentVideo == null) {
       debugPrint(
         'MediaSyncService: Cannot switch to background - no active video',
@@ -366,6 +407,7 @@ class MediaSyncService {
           ),
           duration: duration.inMilliseconds > 0 ? duration : null,
           position: _lastVideoPosition!,
+          autoPlay: isPlaying,
           headers: {'x-api-key': ImageUtils.profileImageApiKey},
         );
 
@@ -382,11 +424,6 @@ class MediaSyncService {
             androidCompactActionIndices: const [0, 2, 4],
           ),
         );
-
-        // If video was playing, ensure audio continues
-        if (isPlaying) {
-          await _audioHandler!.play();
-        }
 
         _isBackgrounded = true;
         debugPrint(
@@ -476,6 +513,24 @@ class MediaSyncService {
 
   /// Gets whether the service is currently in background mode
   bool get isBackgrounded => _isBackgrounded;
+
+  /// Clears the current video player.
+  /// Call this when the video player is being disposed.
+  void clearCurrentPlayer(HlsPlayerController controller) {
+    if (_currentVideoController == controller) {
+      debugPrint(
+        'MediaSyncService: Clearing current player for video ${_currentVideo?.videoId}',
+      );
+      _currentVideoController?.removeListener(_syncVideoToNotification);
+      _currentVideoController = null;
+      _currentVideo = null;
+
+      // Stop background audio if it was playing for this video
+      if (!_isBackgrounded) {
+        _audioHandler?.stop();
+      }
+    }
+  }
 
   /// Gets the current playback position (from audio if backgrounded, video if foregrounded)
   Duration? get currentPosition {

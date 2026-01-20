@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:hiffi/core/services/pip_service.dart';
 
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
@@ -203,12 +202,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // Widget is being removed from tree - ensure video is paused and position saved
     // This happens when navigating away (e.g., to auth pages)
     // Note: _pauseVideo() is async, but deactivate can't be async
-    // Position will be saved when controller is disposed
+    //     Position will be saved when controller is disposed
     _pauseVideo();
     super.deactivate();
   }
-
-  AppLifecycleState? _lastState;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -220,21 +217,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       );
       // Only switch to background audio if we're not in PiP
       MediaSyncService().switchToBackground();
-    } else if (state == AppLifecycleState.inactive) {
-      // 💡 FIX: Only trigger PiP if we are moving FROM resumed TO inactive
-      // This prevents triggering PiP while the app is opening/resuming
-      if (_lastState == AppLifecycleState.resumed) {
-        debugPrint(
-          'VideoPlayerPage: App moving to background - triggering PiP',
-        );
-        PipService.enterPiP();
-      }
     } else if (state == AppLifecycleState.resumed) {
       debugPrint('VideoPlayerPage: App resumed - returning to foreground');
       MediaSyncService().switchToForeground();
     }
-
-    _lastState = state;
   }
 
   Future<void> _pauseVideo() async {

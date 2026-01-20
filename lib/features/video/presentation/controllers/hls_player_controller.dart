@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:hiffi/core/services/hls_source_resolver.dart';
 import 'package:hiffi/core/services/hls_proxy_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
+import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
 import 'package:hiffi/features/video/domain/models/video_profile.dart';
 
@@ -47,6 +48,7 @@ class HlsPlayerController extends ChangeNotifier {
   bool _userIntentMuted;
   double _userIntentVolume = 1.0;
   Duration? _lastKnownPosition;
+  bool? _lastPipStatus;
 
   HlsPlayerController({
     required this.videoId,
@@ -400,10 +402,17 @@ class HlsPlayerController extends ChangeNotifier {
       notifyListeners();
     } else if (_videoPlayerController!.value.isPlaying) {
       _currentState = PlayerState.ready;
-      PipService.updatePlayerStatus(true);
+      if (_lastPipStatus != true) {
+        PipService.updatePlayerStatus(true);
+        _lastPipStatus = true;
+      }
       notifyListeners();
     } else {
-      PipService.updatePlayerStatus(false);
+      if (_lastPipStatus != false) {
+        PipService.updatePlayerStatus(false);
+        _lastPipStatus = false;
+      }
+      notifyListeners();
     }
 
     // Check if video has ended
@@ -506,6 +515,9 @@ class HlsPlayerController extends ChangeNotifier {
 
   Future<void> _disposeControllers() async {
     await _savePlaybackPosition();
+    PipService.updatePlayerStatus(false);
+    _lastPipStatus = false;
+
     if (_videoPlayerController != null) {
       _videoPlayerController!.removeListener(_handlePlayerStateChange);
     }
@@ -521,6 +533,8 @@ class HlsPlayerController extends ChangeNotifier {
   @override
   void dispose() {
     debugPrint('HlsPlayerController: dispose() called for videoId $videoId');
+    // Notify MediaSyncService that this player is being disposed
+    MediaSyncService().clearCurrentPlayer(this);
     _disposeControllers();
     super.dispose();
     debugPrint('HlsPlayerController: dispose() complete for videoId $videoId');
