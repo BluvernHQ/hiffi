@@ -17,21 +17,13 @@ class MainScaffold extends StatelessWidget {
     final authRepository = context.watch<AuthRepository>();
     final isAuthenticated = authRepository.currentUser != null;
 
-    // Only show sidebar if user is authenticated
-    if (isAuthenticated) {
       return AppSidebar(
         currentRoute: currentRoute,
+      isAuthenticated: isAuthenticated,
         child: Scaffold(
           appBar: appBar,
           body: SafeArea(child: child),
         ),
-      );
-    }
-
-    // If not authenticated, show scaffold without sidebar
-    return Scaffold(
-      appBar: appBar,
-      body: SafeArea(child: child),
     );
   }
 }

@@ -121,7 +121,10 @@ class BackendAuthRepository implements AuthRepository {
               uid: userData['uid'] as String? ?? '',
               username: userData['username'] as String?,
               name: userData['name'] as String?,
-              profilePicture: userData['profile_picture'] as String?,
+              profilePicture:
+                  userData['profile_picture'] as String? ??
+                  userData['profilePicture'] as String? ??
+                  userData['avatarUrl'] as String?,
             );
           } else {
             _currentUser = AuthUser(uid: '');
@@ -263,7 +266,10 @@ class BackendAuthRepository implements AuthRepository {
               uid: userData['uid'] as String? ?? '',
               username: userData['username'] as String?,
               name: userData['name'] as String?,
-              profilePicture: userData['profile_picture'] as String?,
+              profilePicture:
+                  userData['profile_picture'] as String? ??
+                  userData['profilePicture'] as String? ??
+                  userData['avatarUrl'] as String?,
             );
           } else {
             _currentUser = AuthUser(uid: '');

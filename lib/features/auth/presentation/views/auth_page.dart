@@ -8,6 +8,7 @@ import '../../data/auth_repository.dart';
 import '../viewmodels/auth_view_model.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
+import '../../../../core/widgets/hiffi_logo.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({
@@ -141,12 +142,7 @@ class _AuthPageState extends State<AuthPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Hiffi',
-                      style: theme.textTheme.headlineLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    const HiffiLogo(size: 48, fontSize: 32),
                     const SizedBox(height: 8),
                     Text(
                       isSignIn

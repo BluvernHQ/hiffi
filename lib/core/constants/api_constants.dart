@@ -37,6 +37,8 @@ class ApiConstants {
       '/social/videos/downvote/$videoId';
   static String postComment(String videoId) =>
       '/social/videos/comment/$videoId';
+  static String deleteComment(String commentId) =>
+      '/social/videos/comment/$commentId';
   static String getComments(String videoId) =>
       '/social/videos/comments/$videoId';
   static String postReply(String commentId) =>

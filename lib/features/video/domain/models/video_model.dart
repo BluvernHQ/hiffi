@@ -38,27 +38,68 @@ class VideoModel {
   final String? status; // 'temp' for processing videos
 
   factory VideoModel.fromJson(Map<String, dynamic> json) {
+    // Some API endpoints return user info in a nested 'user' object
+    final userData = json['user'] as Map<String, dynamic>?;
+
     return VideoModel(
-      videoId: json['video_id'] as String,
-      videoUrl: json['video_url'] as String,
-      videoThumbnail: json['video_thumbnail'] as String,
-      videoTitle: json['video_title'] as String,
-      videoDescription: json['video_description'] as String,
+      videoId: json['video_id'] as String? ?? json['id'] as String? ?? '',
+      videoUrl: json['video_url'] as String? ?? json['url'] as String? ?? '',
+      videoThumbnail:
+          json['video_thumbnail'] as String? ??
+          json['thumbnail'] as String? ??
+          json['thumbnail_url'] as String? ??
+          '',
+      videoTitle:
+          json['video_title'] as String? ?? json['title'] as String? ?? '',
+      videoDescription:
+          json['video_description'] as String? ??
+          json['description'] as String? ??
+          '',
       videoTags:
-          (json['video_tags'] as List<dynamic>?)
+          (json['video_tags'] as List<dynamic>? ??
+                  json['tags'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??
           [],
-      videoViews: json['video_views'] as int? ?? 0,
-      videoUpvotes: json['video_upvotes'] as int? ?? 0,
-      videoDownvotes: json['video_downvotes'] as int? ?? 0,
-      videoComments: json['video_comments'] as int? ?? 0,
-      userUid: json['user_uid'] as String,
-      userUsername: json['user_username'] as String? ?? '',
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      videoViews: (json['video_views'] as num? ?? json['views'] as num? ?? 0)
+          .toInt(),
+      videoUpvotes:
+          (json['video_upvotes'] as num? ?? json['upvotes'] as num? ?? 0)
+              .toInt(),
+      videoDownvotes:
+          (json['video_downvotes'] as num? ?? json['downvotes'] as num? ?? 0)
+              .toInt(),
+      videoComments:
+          (json['video_comments'] as num? ?? json['comments'] as num? ?? 0)
+              .toInt(),
+      userUid:
+          (json['user_uid'] as String? ??
+          json['uid'] as String? ??
+          userData?['uid'] as String? ??
+          ''),
+      userUsername:
+          json['user_username'] as String? ??
+          json['username'] as String? ??
+          userData?['username'] as String? ??
+          '',
+      createdAt: DateTime.parse(
+        json['created_at'] as String? ??
+            json['createdAt'] as String? ??
+            DateTime.now().toIso8601String(),
+      ),
+      updatedAt: DateTime.parse(
+        json['updated_at'] as String? ??
+            json['updatedAt'] as String? ??
+            DateTime.now().toIso8601String(),
+      ),
       userVoteStatus: json['user_vote_status'] as String?,
-      profilePicture: json['profile_picture'] as String?,
+      profilePicture:
+          json['profile_picture'] as String? ??
+          json['profilePicture'] as String? ??
+          json['avatar_url'] as String? ??
+          json['avatarUrl'] as String? ??
+          userData?['profile_picture'] as String? ??
+          userData?['avatar_url'] as String?,
       status: json['status'] as String?,
     );
   }

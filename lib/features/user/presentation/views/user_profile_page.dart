@@ -16,6 +16,7 @@ import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/file_validation_utils.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
+import '../../../../core/widgets/hiffi_image.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key, required this.username});
@@ -99,24 +100,21 @@ class _UserProfilePageState extends State<UserProfilePage> {
 
     try {
       final videoRepository = context.read<VideoRepository>();
-      
+
       // Determine if this is the current user's own profile
       final isOwnProfile = _currentLoggedInUser?.username == username;
-      
+
       final List<VideoModel> videos;
       if (isOwnProfile) {
         // Use /videos/list/self for current user's profile
-        videos = await videoRepository.getUserVideos(
+        videos = await videoRepository.getUserVideos(limit: 20, offset: 0);
+      } else {
+        // Fetch videos with latest data including up-to-date video views
+        videos = await videoRepository.getVideosByUsername(
+          username: username,
           limit: 20,
           offset: 0,
         );
-      } else {
-      // Fetch videos with latest data including up-to-date video views
-        videos = await videoRepository.getVideosByUsername(
-        username: username,
-        limit: 20,
-        offset: 0,
-      );
       }
 
       if (mounted) {
@@ -425,79 +423,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         ),
                         radius: avatarRadius,
                         backgroundColor: Colors.white,
-                        child: CircleAvatar(
-                          radius: avatarRadius - 2,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer,
-                          backgroundImage: () {
-                            final profileUrl =
-                                user.profilePicture != null &&
-                                    user.profilePicture!.isNotEmpty
-                                ? ImageUtils.getProfileImageUrl(
-                                    user.profilePicture!,
-                                    cacheBust: _profilePictureCacheBust != 0
-                                        ? _profilePictureCacheBust
-                                        : user
-                                              .updatedAt
-                                              ?.millisecondsSinceEpoch,
-                                  )
-                                : null;
-                            final avatarUrl =
-                                user.avatarUrl != null &&
-                                    user.avatarUrl!.isNotEmpty &&
-                                    ImageUtils.isValidImageUrl(user.avatarUrl)
-                                ? user.avatarUrl
-                                : null;
-
-                            // Debug logging
-                            if (profileUrl != null) {
-                              print('🖼️ Profile image URL: $profileUrl');
-                              print(
-                                '   Profile picture path: ${user.profilePicture}',
-                              );
-                              print(
-                                '   Cache bust: ${_profilePictureCacheBust != 0 ? _profilePictureCacheBust : user.updatedAt?.millisecondsSinceEpoch}',
-                              );
-                            } else {
-                              print(
-                                '⚠️ No profile URL - profilePicture: ${user.profilePicture}, avatarUrl: $avatarUrl',
-                              );
-                            }
-
-                            if (profileUrl != null) {
-                              return NetworkImage(
-                                profileUrl,
-                                headers: ImageUtils.getProfileImageHeaders(
-                                  profileUrl,
-                                ),
-                              );
-                            } else if (avatarUrl != null &&
-                                ImageUtils.isValidImageUrl(avatarUrl)) {
-                              return NetworkImage(avatarUrl);
-                            }
-                            return null;
-                          }(),
-                          child:
-                              (user.profilePicture == null ||
-                                      user.profilePicture!.isEmpty) &&
-                                  (user.avatarUrl == null ||
-                                      user.avatarUrl!.isEmpty)
-                              ? Text(
-                                  user.name.isNotEmpty
-                                      ? user.name[0].toUpperCase()
-                                      : 'U',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineLarge
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onPrimaryContainer,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                )
-                              : null,
+                        child: HiffiAvatar(
+                          size: (avatarRadius - 2) * 2,
+                          imageUrl: user.profilePicture ?? user.avatarUrl,
+                          fallbackText: user.name,
+                          cacheBust: _profilePictureCacheBust != 0
+                              ? _profilePictureCacheBust
+                              : user.updatedAt?.millisecondsSinceEpoch,
                         ),
                       ),
                     ),
@@ -1210,7 +1142,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final nameController = TextEditingController(text: user.name);
     final emailController = TextEditingController(text: user.email ?? '');
     final bioController = TextEditingController(text: user.bio ?? '');
-    
+
     // 💡 SINGLE SOURCE OF TRUTH: Cache initial email
     final initialEmail = user.email ?? '';
     String? emailError;
@@ -1262,16 +1194,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     // Title
                     Text(
                       'Edit Profile',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 24),
                     // Name field
                     TextField(
                       controller: nameController,
                       inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z\s]')),
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[a-zA-Z\s]'),
+                        ),
                         LengthLimitingTextInputFormatter(30),
                       ],
                       decoration: InputDecoration(
@@ -1366,12 +1299,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
                               if (emailChanged) {
                                 // 💡 OTP FLOW: Email changed, send OTP
                                 try {
-                                  final result = await viewModel.sendEmailUpdateOTP(
-                                    currentUsername: user.username,
-                                    name: newName,
-                                    email: newEmail,
-                                    bio: newBio,
-                                  );
+                                  final result = await viewModel
+                                      .sendEmailUpdateOTP(
+                                        currentUsername: user.username,
+                                        name: newName,
+                                        email: newEmail,
+                                        bio: newBio,
+                                      );
                                   otpId = result['id'] as String?;
                                   if (otpId != null && mounted) {
                                     // Show OTP verification bottom sheet
@@ -1382,9 +1316,15 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                       otpId!,
                                       () {
                                         // On success: close both sheets and refresh
-                                        Navigator.of(context).pop(); // Close OTP sheet
-                                        Navigator.of(context).pop(); // Close edit sheet
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                        Navigator.of(
+                                          context,
+                                        ).pop(); // Close OTP sheet
+                                        Navigator.of(
+                                          context,
+                                        ).pop(); // Close edit sheet
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
                                           const SnackBar(
                                             content: Text(
                                               'Profile updated successfully',
@@ -1400,7 +1340,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
-                                          viewModel.otpError ?? 'Failed to send OTP: $error',
+                                          viewModel.otpError ??
+                                              'Failed to send OTP: $error',
                                         ),
                                         backgroundColor: Theme.of(
                                           context,
@@ -1434,7 +1375,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text('Failed to update: $error'),
+                                        content: Text(
+                                          'Failed to update: $error',
+                                        ),
                                         backgroundColor: Theme.of(
                                           context,
                                         ).colorScheme.error,
@@ -1611,7 +1554,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             } catch (error) {
                               if (mounted) {
                                 setModalState(() {
-                                  otpError = viewModel.otpError ??
+                                  otpError =
+                                      viewModel.otpError ??
                                       'Invalid OTP. Please try again.';
                                 });
                               }
@@ -2444,20 +2388,16 @@ class _VideoGridItem extends StatelessWidget {
                       },
                     ),
             ),
-             ),   // 1.5 Processing Overlay
+          ), // 1.5 Processing Overlay
           if (video.status == 'temp')
             IgnorePointer(
               child: Container(
                 color: Colors.black.withOpacity(0.3),
                 child: const Center(
-                  child: Icon(
-                    Icons.sync,
-                    color: Colors.white70,
-                    size: 24,
-                  ),
+                  child: Icon(Icons.sync, color: Colors.white70, size: 24),
                 ),
               ),
-          ),
+            ),
           // 2. Processing indicator or View count overlay (non-interactive)
           Positioned(
             top: 8,
@@ -2471,8 +2411,8 @@ class _VideoGridItem extends StatelessWidget {
                 ),
                 child: video.status == 'temp'
                     ? const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           Text(
                             '• ',
                             style: TextStyle(
@@ -2499,17 +2439,17 @@ class _VideoGridItem extends StatelessWidget {
                             size: 12,
                             color: Colors.white,
                           ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _formatCount(video.videoViews),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatCount(video.videoViews),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),

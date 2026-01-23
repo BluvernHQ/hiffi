@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 
 /// Service to handle Picture-in-Picture mode via Platform Channels.
@@ -9,6 +10,9 @@ class PipService {
   /// Notifier for PiP mode changes.
   static final ValueNotifier<bool> isInPipMode = ValueNotifier<bool>(false);
 
+  /// Flag to prevent background audio switch during PiP expansion.
+  static bool isTransitioningFromPip = false;
+
   /// Initializes the PiP service and sets up native callbacks.
   static void initialize() {
     _channel.setMethodCallHandler((call) async {
@@ -16,17 +20,39 @@ class PipService {
         final bool isPip = call.arguments as bool;
         debugPrint('PipService: PiP mode changed to $isPip');
 
-        if (isInPipMode.value == true && isPip == false) {
-          debugPrint(
-            'PipService: PiP closed or exited, ensuring pause and preparing background',
-          );
-          // When PiP is closed (swiped away or X), the activity is usually backgrounded.
-          // We want to stop the video player and prepare background audio handler so it's ready.
-          MediaSyncService().pauseFromNotification();
-          MediaSyncService().switchToBackground();
-        }
+        if (isInPipMode.value && !isPip) {
+          // 💡 EXPANSION/CLOSING detected
+          isTransitioningFromPip = true;
 
-        isInPipMode.value = isPip;
+          // Keep isInPipMode true for a while to lock MediaSyncService
+          // until lifecycle states stabilize.
+          Future.delayed(const Duration(milliseconds: 1000), () {
+            isTransitioningFromPip = false;
+            isInPipMode.value = false;
+            debugPrint('PipService: Transition lock released');
+          });
+
+          // Determine if we are expanding or closing.
+          Future.delayed(const Duration(milliseconds: 500), () {
+            final state = WidgetsBinding.instance.lifecycleState;
+            debugPrint('PipService: Exited PiP check, current state: $state');
+
+            final isClosing = state != AppLifecycleState.resumed;
+
+            if (isClosing) {
+              debugPrint('PipService: PiP closed, ensuring pause');
+              MediaSyncService().pauseFromNotification();
+              MediaSyncService().switchToBackground();
+            } else {
+              debugPrint('PipService: PiP expanded, forcing play');
+              // Force play to ensure any accidental lifecycle pauses are overridden
+              MediaSyncService().playFromNotification();
+            }
+          });
+        } else {
+          // 💡 ENTERING PiP or other state
+          isInPipMode.value = isPip;
+        }
       }
     });
   }

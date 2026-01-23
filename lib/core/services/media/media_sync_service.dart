@@ -226,6 +226,13 @@ class MediaSyncService {
 
   /// Called from AudioHandler when user taps Pause in notification while app is in foreground.
   void pauseFromNotification() {
+    if (PipService.isTransitioningFromPip) {
+      debugPrint(
+        'MediaSyncService: Skipping pause request during PiP transition',
+      );
+      return;
+    }
+
     if (_currentVideoController != null && _currentVideoController!.isPlaying) {
       debugPrint(
         'MediaSyncService: Pause requested from notification (foreground)',
@@ -336,9 +343,9 @@ class MediaSyncService {
       return;
     }
 
-    if (PipService.isInPipMode.value) {
+    if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
       debugPrint(
-        'MediaSyncService: In PiP mode, skipping background audio switch',
+        'MediaSyncService: In PiP or transitioning from PiP, skipping background audio switch',
       );
       return;
     }

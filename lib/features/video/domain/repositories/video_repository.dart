@@ -67,6 +67,7 @@ abstract class VideoRepository {
     required int limit,
   });
   Future<void> deleteVideo(String videoId);
+  Future<void> deleteComment(String commentId);
 }
 
 class VideoRepositoryImpl implements VideoRepository {
@@ -133,7 +134,11 @@ class VideoRepositoryImpl implements VideoRepository {
 
             if (videoJson != null) {
               // Extract profile_picture and status from outer item (not from video object)
-              final profilePicture = itemMap['profile_picture'] as String?;
+              final profilePicture =
+                  itemMap['profile_picture'] as String? ??
+                  itemMap['profilePicture'] as String? ??
+                  itemMap['avatar_url'] as String? ??
+                  itemMap['avatarUrl'] as String?;
               final status = itemMap['status'] as String?;
 
               // Add extra fields to videoJson before parsing
@@ -227,16 +232,26 @@ class VideoRepositoryImpl implements VideoRepository {
 
             if (videoJson != null) {
               // Extract profile_picture and status from outer item (not from video object)
-              final profilePicture = itemMap['profile_picture'] as String?;
+              final profilePicture =
+                  itemMap['profile_picture'] as String? ??
+                  itemMap['profilePicture'] as String? ??
+                  itemMap['avatar_url'] as String? ??
+                  itemMap['avatarUrl'] as String?;
               final status = itemMap['status'] as String?;
+              final userUsername =
+                  itemMap['user_username'] as String? ??
+                  itemMap['username'] as String?;
 
               // Add extra fields to videoJson before parsing
               final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
-              if (profilePicture != null) {
+              if (profilePicture != null && profilePicture.isNotEmpty) {
                 videoJsonWithExtras['profile_picture'] = profilePicture;
               }
               if (status != null) {
                 videoJsonWithExtras['status'] = status;
+              }
+              if (userUsername != null) {
+                videoJsonWithExtras['user_username'] = userUsername;
               }
 
               final video = VideoModel.fromJson(videoJsonWithExtras);
@@ -322,16 +337,26 @@ class VideoRepositoryImpl implements VideoRepository {
 
             if (videoJson != null) {
               // Extract profile_picture and status from outer item (not from video object)
-              final profilePicture = itemMap['profile_picture'] as String?;
+              final profilePicture =
+                  itemMap['profile_picture'] as String? ??
+                  itemMap['profilePicture'] as String? ??
+                  itemMap['avatar_url'] as String? ??
+                  itemMap['avatarUrl'] as String?;
               final status = itemMap['status'] as String?;
+              final userUsername =
+                  itemMap['user_username'] as String? ??
+                  itemMap['username'] as String?;
 
               // Add extra fields to videoJson before parsing
               final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
-              if (profilePicture != null) {
+              if (profilePicture != null && profilePicture.isNotEmpty) {
                 videoJsonWithExtras['profile_picture'] = profilePicture;
               }
               if (status != null) {
                 videoJsonWithExtras['status'] = status;
+              }
+              if (userUsername != null) {
+                videoJsonWithExtras['user_username'] = userUsername;
               }
 
               final video = VideoModel.fromJson(videoJsonWithExtras);
@@ -412,16 +437,26 @@ class VideoRepositoryImpl implements VideoRepository {
 
             if (videoJson != null) {
               // Extract profile_picture and status from outer item (not from video object)
-              final profilePicture = itemMap['profile_picture'] as String?;
+              final profilePicture =
+                  itemMap['profile_picture'] as String? ??
+                  itemMap['profilePicture'] as String? ??
+                  itemMap['avatar_url'] as String? ??
+                  itemMap['avatarUrl'] as String?;
               final status = itemMap['status'] as String?;
+              final userUsername =
+                  itemMap['user_username'] as String? ??
+                  itemMap['username'] as String?;
 
               // Add extra fields to videoJson before parsing
               final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
-              if (profilePicture != null) {
+              if (profilePicture != null && profilePicture.isNotEmpty) {
                 videoJsonWithExtras['profile_picture'] = profilePicture;
               }
               if (status != null) {
                 videoJsonWithExtras['status'] = status;
+              }
+              if (userUsername != null) {
+                videoJsonWithExtras['user_username'] = userUsername;
               }
 
               final video = VideoModel.fromJson(videoJsonWithExtras);
@@ -484,8 +519,13 @@ class VideoRepositoryImpl implements VideoRepository {
             try {
               // Merge profile_picture and status from data level into video object for VideoModel
               final videoData = Map<String, dynamic>.from(videoJson);
-              if (data['profile_picture'] != null) {
-                videoData['profile_picture'] = data['profile_picture'];
+              final profilePicture =
+                  data['profile_picture'] as String? ??
+                  data['profilePicture'] as String? ??
+                  data['avatar_url'] as String? ??
+                  data['avatarUrl'] as String?;
+              if (profilePicture != null) {
+                videoData['profile_picture'] = profilePicture;
               }
               if (data['status'] != null) {
                 videoData['status'] = data['status'];
@@ -502,7 +542,11 @@ class VideoRepositoryImpl implements VideoRepository {
             upvoted: data['upvoted'] as bool? ?? false,
             downvoted: data['downvoted'] as bool? ?? false,
             following: data['following'] as bool? ?? false,
-            profilePicture: data['profile_picture'] as String?,
+            profilePicture:
+                data['profile_picture'] as String? ??
+                data['profilePicture'] as String? ??
+                data['avatar_url'] as String? ??
+                data['avatarUrl'] as String?,
             video: videoModel,
           );
         }
@@ -734,6 +778,26 @@ class VideoRepositoryImpl implements VideoRepository {
     if (responseBody != null && responseBody['success'] == false) {
       final error = responseBody['error'] as String? ?? 'Unknown error';
       throw Exception('Delete video failed: $error');
+    }
+  }
+
+  @override
+  Future<void> deleteComment(String commentId) async {
+    final response = await _apiClient.delete(
+      ApiConstants.deleteComment(commentId),
+      requiresAuth: true,
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw Exception('Failed to delete comment: ${response.statusCode}');
+    }
+
+    final responseBody = response.body.isNotEmpty
+        ? jsonDecode(response.body)
+        : null;
+    if (responseBody != null && responseBody['success'] == false) {
+      final error = responseBody['error'] as String? ?? 'Unknown error';
+      throw Exception('Delete comment failed: $error');
     }
   }
 

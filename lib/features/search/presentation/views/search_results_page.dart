@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/hiffi_image.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/search_view_model.dart';
@@ -414,46 +415,11 @@ class _GridVideoCard extends StatelessWidget {
                   SizedBox(height: 6.h),
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 10.r,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        backgroundImage: () {
-                          final profileUrl =
-                              video.profilePicture != null &&
-                                  video.profilePicture!.isNotEmpty
-                              ? ImageUtils.getProfileImageUrl(
-                                  video.profilePicture!,
-                                  cacheBust:
-                                      video.updatedAt.millisecondsSinceEpoch,
-                                )
-                              : null;
-                          return profileUrl != null
-                              ? NetworkImage(
-                                  profileUrl,
-                                  headers: ImageUtils.getProfileImageHeaders(
-                                    profileUrl,
-                                  ),
-                                )
-                              : null;
-                        }(),
-                        child:
-                            video.profilePicture == null ||
-                                video.profilePicture!.isEmpty
-                            ? Text(
-                                video.userUsername.isNotEmpty
-                                    ? video.userUsername[0].toUpperCase()
-                                    : 'U',
-                                style: TextStyle(
-                                  fontSize: 10.sp,
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer,
-                                ),
-                              )
-                            : null,
+                      HiffiAvatar(
+                        imageUrl: video.profilePicture,
+                        size: 20.r,
+                        fallbackText: video.userUsername,
+                        cacheBust: video.updatedAt.millisecondsSinceEpoch,
                       ),
                       SizedBox(width: 6.w),
                       Expanded(
@@ -499,10 +465,11 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final profileUrl = ImageUtils.getProfileImageUrl(
-      user.profilePicture ?? user.avatarUrl ?? '',
-      cacheBust: user.updatedAt?.millisecondsSinceEpoch,
-    );
+    // Use updatedAt timestamp for cache busting, or current timestamp if not available
+    // This ensures we always get the latest profile picture
+    final cacheBust =
+        user.updatedAt?.millisecondsSinceEpoch ??
+        DateTime.now().millisecondsSinceEpoch;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -516,30 +483,11 @@ class _UserCard extends StatelessWidget {
           child: Row(
             children: [
               // Avatar
-              CircleAvatar(
-                radius: 32,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                backgroundImage: profileUrl != null
-                    ? NetworkImage(
-                        profileUrl,
-                        headers: ImageUtils.getProfileImageHeaders(profileUrl),
-                      )
-                    : null,
-                child:
-                    (user.profilePicture == null ||
-                            user.profilePicture!.isEmpty) &&
-                        (user.avatarUrl == null || user.avatarUrl!.isEmpty)
-                    ? Text(
-                        user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
-                        style: TextStyle(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 24,
-                        ),
-                      )
-                    : null,
+              HiffiAvatar(
+                imageUrl: user.profilePicture ?? user.avatarUrl,
+                size: 64,
+                fallbackText: user.name,
+                cacheBust: cacheBust,
               ),
               const SizedBox(width: 16),
               // User info

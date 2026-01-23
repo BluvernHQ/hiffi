@@ -456,6 +456,29 @@ class _CommentTileState extends State<CommentTile> {
 
   @override
   Widget build(BuildContext context) {
+    final user = context.watch<AuthRepository>().currentUser;
+    final userProfile = context.watch<UserViewModel>().currentUser;
+
+    // Check by UID first (most reliable), fallback to username
+    final isOwnComment =
+        (user != null &&
+            (user.uid == widget.comment.commentedBy ||
+                (user.username != null &&
+                    user.username == widget.comment.commentByUsername))) ||
+        (userProfile != null &&
+            (userProfile.uid == widget.comment.commentedBy ||
+                userProfile.username == widget.comment.commentByUsername));
+
+    if (user != null || userProfile != null) {
+      debugPrint(
+        'CommentTile Debug [${widget.comment.commentByUsername}]: '
+        'isOwnComment: $isOwnComment, '
+        'authUserUID: ${user?.uid}, authUsername: ${user?.username}, '
+        'profileUID: ${userProfile?.uid}, profileUsername: ${userProfile?.username}, '
+        'commentedBy: ${widget.comment.commentedBy}, commentUsername: ${widget.comment.commentByUsername}',
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
@@ -485,22 +508,39 @@ class _CommentTileState extends State<CommentTile> {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          widget.comment.commentByUsername ?? 'Anonymous',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                            color: Color(0xFF1A1A1A),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Text(
+                                widget.comment.commentByUsername ?? 'Anonymous',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  color: Color(0xFF1A1A1A),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _formatTime(widget.comment.commentedAt),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF6B6B6B),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _formatTime(widget.comment.commentedAt),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF6B6B6B),
+                        if (isOwnComment)
+                          IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline_rounded,
+                              size: 18,
+                              color: Color(0xFF6B6B6B),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => _showDeleteConfirmation(context),
                           ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -604,22 +644,53 @@ class _CommentTileState extends State<CommentTile> {
                               children: [
                                 Row(
                                   children: [
-                                    Text(
-                                      reply.replyByUsername ?? 'User',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13,
-                                        color: Color(0xFF1A1A1A),
+                                    Expanded(
+                                      child: Row(
+                                        children: [
+                                          Text(
+                                            reply.replyByUsername ?? 'User',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                              color: Color(0xFF1A1A1A),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            _formatTime(reply.repliedAt),
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Color(0xFF6B6B6B),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _formatTime(reply.repliedAt),
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Color(0xFF6B6B6B),
+                                    if ((user != null &&
+                                            (user.uid == reply.repliedBy ||
+                                                (user.username != null &&
+                                                    user.username ==
+                                                        reply
+                                                            .replyByUsername))) ||
+                                        (userProfile != null &&
+                                            (userProfile.uid ==
+                                                    reply.repliedBy ||
+                                                userProfile.username ==
+                                                    reply.replyByUsername)))
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 16,
+                                          color: Color(0xFF6B6B6B),
+                                        ),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        onPressed: () =>
+                                            _showDeleteReplyConfirmation(
+                                              context,
+                                              reply.replyId,
+                                            ),
                                       ),
-                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
@@ -655,23 +726,25 @@ class _CommentTileState extends State<CommentTile> {
                             ),
                           ),
                           HiffiAvatar(
-                            imageUrl: context
+                            imageUrl:
+                                context
                                     .watch<UserViewModel>()
                                     .currentUser
                                     ?.profilePicture ??
                                 context
-                                .watch<AuthRepository>()
-                                .currentUser
-                                ?.profilePicture,
+                                    .watch<AuthRepository>()
+                                    .currentUser
+                                    ?.profilePicture,
                             size: 28,
-                            fallbackText: context
+                            fallbackText:
+                                context
                                     .watch<UserViewModel>()
                                     .currentUser
                                     ?.username ??
                                 context
-                                .watch<AuthRepository>()
-                                .currentUser
-                                ?.username,
+                                    .watch<AuthRepository>()
+                                    .currentUser
+                                    ?.username,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -769,23 +842,19 @@ class _CommentTileState extends State<CommentTile> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   HiffiAvatar(
-                    imageUrl: context
+                    imageUrl:
+                        context
                             .watch<UserViewModel>()
                             .currentUser
                             ?.profilePicture ??
-                      context
-                          .watch<AuthRepository>()
-                          .currentUser
-                          ?.profilePicture,
-                    size: 28,
-                    fallbackText: context
-                            .watch<UserViewModel>()
-                            .currentUser
-                            ?.username ??
                         context
-                        .watch<AuthRepository>()
-                        .currentUser
-                        ?.username,
+                            .watch<AuthRepository>()
+                            .currentUser
+                            ?.profilePicture,
+                    size: 28,
+                    fallbackText:
+                        context.watch<UserViewModel>().currentUser?.username ??
+                        context.watch<AuthRepository>().currentUser?.username,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -876,10 +945,11 @@ class _CommentTileState extends State<CommentTile> {
     final user = context.read<AuthRepository>().currentUser;
     try {
       await widget.controller.postReply(
-        widget.comment.commentId,
-        text,
-        user?.username ?? 'Anonymous',
-        user?.profilePicture,
+        commentId: widget.comment.commentId,
+        text: text,
+        username: user?.username ?? 'Anonymous',
+        uid: user?.uid ?? 'me',
+        profilePicture: user?.profilePicture,
       );
       _replyController.clear();
       setState(() {
@@ -893,6 +963,79 @@ class _CommentTileState extends State<CommentTile> {
       widget.controller.fetchReplies(widget.comment.commentId);
     } catch (e) {
       // Error handling is done in the controller
+    }
+  }
+
+  Future<void> _showDeleteConfirmation(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Comment'),
+        content: const Text('Are you sure you want to delete this comment?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await widget.controller.deleteComment(widget.comment.commentId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete comment: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _showDeleteReplyConfirmation(
+    BuildContext context,
+    String replyId,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Reply'),
+        content: const Text('Are you sure you want to delete this reply?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await widget.controller.deleteReply(widget.comment.commentId, replyId);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete reply: $e')));
+        }
+      }
     }
   }
 
@@ -1004,23 +1147,19 @@ class _CommentComposerState extends State<CommentComposer> {
               Row(
                 children: [
                   HiffiAvatar(
-                    imageUrl: context
+                    imageUrl:
+                        context
                             .watch<UserViewModel>()
                             .currentUser
                             ?.profilePicture ??
                         context
-                        .watch<AuthRepository>()
-                        .currentUser
-                        ?.profilePicture,
-                    size: 32,
-                    fallbackText: context
-                            .watch<UserViewModel>()
+                            .watch<AuthRepository>()
                             .currentUser
-                            ?.username ??
-                        context
-                        .watch<AuthRepository>()
-                        .currentUser
-                        ?.username,
+                            ?.profilePicture,
+                    size: 32,
+                    fallbackText:
+                        context.watch<UserViewModel>().currentUser?.username ??
+                        context.watch<AuthRepository>().currentUser?.username,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1076,16 +1215,18 @@ class _CommentComposerState extends State<CommentComposer> {
 
                             if (isReplying) {
                               widget.controller.postReply(
-                                replyTarget.commentId,
-                                text,
-                                user?.username ?? 'Anonymous',
-                                user?.profilePicture,
+                                commentId: replyTarget.commentId,
+                                text: text,
+                                username: user?.username ?? 'Anonymous',
+                                uid: user?.uid ?? 'me',
+                                profilePicture: user?.profilePicture,
                               );
                             } else {
                               widget.controller.postComment(
-                                text,
-                                user?.username ?? 'Anonymous',
-                                user?.profilePicture,
+                                text: text,
+                                username: user?.username ?? 'Anonymous',
+                                uid: user?.uid ?? 'me',
+                                profilePicture: user?.profilePicture,
                               );
                             }
                             _textController.clear();

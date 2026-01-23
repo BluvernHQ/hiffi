@@ -61,12 +61,17 @@ class SearchViewModel extends ChangeNotifier {
       final userResult = results[0] as UserSearchResult;
       final videoResult = results[1] as VideoSearchResult;
 
-      // Update current user's profile if they appear in search results
-      final updatedUsers = await _updateCurrentUserProfile(userResult.users);
+      // Deduplicate users by UID to prevent showing the same user twice
+      final uniqueUsers = _deduplicateUsersByUid(userResult.users);
 
+      // Update current user's profile if they appear in search results
+      final updatedUsers = await _updateCurrentUserProfile(uniqueUsers);
+
+      // Use the actual deduplicated count, not the API count
+      // This ensures we only show what we actually have
       _userResults = updatedUsers;
       _videoResults = videoResult.videos;
-      _userCount = userResult.count;
+      _userCount = updatedUsers.length; // Use actual displayed count
       _videoCount = videoResult.count;
       _error = null;
     } catch (e) {
@@ -98,11 +103,15 @@ class SearchViewModel extends ChangeNotifier {
     try {
       final result = await _searchRepository.searchUsers(_query, limit: 50);
 
-      // Update current user's profile if they appear in search results
-      final updatedUsers = await _updateCurrentUserProfile(result.users);
+      // Deduplicate users by UID to prevent showing the same user twice
+      final uniqueUsers = _deduplicateUsersByUid(result.users);
 
+      // Update current user's profile if they appear in search results
+      final updatedUsers = await _updateCurrentUserProfile(uniqueUsers);
+
+      // Use the actual deduplicated count, not the API count
       _userResults = updatedUsers;
-      _userCount = result.count;
+      _userCount = updatedUsers.length; // Use actual displayed count
       _error = null;
     } catch (e) {
       _error = 'Failed to search users: ${e.toString()}';
@@ -159,8 +168,11 @@ class SearchViewModel extends ChangeNotifier {
       final userResult = results[0] as UserSearchResult;
       final videoResult = results[1] as VideoSearchResult;
 
+      // Deduplicate users by UID to prevent showing the same user twice
+      final uniqueUsers = _deduplicateUsersByUid(userResult.users);
+
       // Update current user's profile if they appear in suggestions
-      final updatedUsers = await _updateCurrentUserProfile(userResult.users);
+      final updatedUsers = await _updateCurrentUserProfile(uniqueUsers);
 
       return SearchSuggestions(users: updatedUsers, videos: videoResult.videos);
     } catch (e) {
@@ -184,22 +196,65 @@ class SearchViewModel extends ChangeNotifier {
     _clearResults();
   }
 
+  /// Deduplicates users by UID to prevent showing the same user twice
+  /// Only removes true duplicates (same UID), keeps all unique users from API
+  List<UserModel> _deduplicateUsersByUid(List<UserModel> users) {
+    final seenUids = <String>{};
+    final uniqueUsers = <UserModel>[];
+
+    print('🔍 Deduplicating ${users.length} users from API...');
+
+    for (final user in users) {
+      // Use UID if available, otherwise fall back to username
+      final identifier = user.uid ?? user.username;
+
+      if (!seenUids.contains(identifier)) {
+        seenUids.add(identifier);
+        uniqueUsers.add(user);
+      } else {
+        print(
+          '⚠️ Duplicate user removed: ${user.username} (UID: ${user.uid}) - already seen',
+        );
+      }
+    }
+
+    print(
+      '✅ Deduplication complete: ${uniqueUsers.length} unique users (removed ${users.length - uniqueUsers.length} duplicates)',
+    );
+    return uniqueUsers;
+  }
+
   /// Updates the current user's profile in search results with latest data
+  /// IMPORTANT: This only REPLACES an existing user, never adds a new one
   Future<List<UserModel>> _updateCurrentUserProfile(
     List<UserModel> users,
   ) async {
     // Check if user is logged in
     final authUser = _authRepository.currentUser;
-    if (authUser == null || authUser.username == null) {
+    if (authUser == null) {
       return users; // Not logged in, return as-is
     }
 
-    final currentUsername = authUser.username!.toLowerCase();
+    // Try to match by UID first (more reliable), then fall back to username
+    final currentUid = authUser.uid;
+    final currentUsername = authUser.username?.toLowerCase();
 
-    // Find if current user is in the search results
-    final currentUserIndex = users.indexWhere(
-      (user) => user.username.toLowerCase() == currentUsername,
-    );
+    int currentUserIndex = -1;
+
+    // Match by UID if available and not empty (most reliable)
+    if (currentUid.isNotEmpty) {
+      currentUserIndex = users.indexWhere(
+        (user) => user.uid != null && user.uid == currentUid,
+      );
+    }
+
+    // Fall back to username if UID match failed
+    // Note: If multiple users have the same username, this will only match the first one
+    if (currentUserIndex == -1 && currentUsername != null) {
+      currentUserIndex = users.indexWhere(
+        (user) => user.username.toLowerCase() == currentUsername,
+      );
+    }
 
     if (currentUserIndex == -1) {
       return users; // Current user not in results, return as-is
@@ -209,11 +264,26 @@ class SearchViewModel extends ChangeNotifier {
       // Fetch latest profile for current user
       final latestProfile = await _userRepository.getCurrentUser();
 
-      // Replace the search result with latest profile data
+      // IMPORTANT: Only replace, never add - ensure we maintain the same list length
       final updatedUsers = List<UserModel>.from(users);
-      updatedUsers[currentUserIndex] = latestProfile;
+      if (currentUserIndex >= 0 && currentUserIndex < updatedUsers.length) {
+        updatedUsers[currentUserIndex] = latestProfile;
+        print(
+          '✅ Updated current user profile in search results (replaced at index $currentUserIndex)',
+        );
+      } else {
+        print('⚠️ Invalid index for current user update: $currentUserIndex');
+        return users; // Return original if index is invalid
+      }
 
-      print('✅ Updated current user profile in search results');
+      // Verify we didn't accidentally change the list length
+      if (updatedUsers.length != users.length) {
+        print(
+          '⚠️ ERROR: List length changed during profile update! Original: ${users.length}, Updated: ${updatedUsers.length}',
+        );
+        return users; // Return original if length changed
+      }
+
       return updatedUsers;
     } catch (e) {
       print('⚠️ Failed to fetch latest profile for current user: $e');

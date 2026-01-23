@@ -172,11 +172,12 @@ class VideoCommentsController extends ChangeNotifier {
   }
 
   /// Optimistic update for posting a comment.
-  Future<void> postComment(
-    String text,
-    String username,
+  Future<void> postComment({
+    required String text,
+    required String username,
+    required String uid,
     String? profilePicture,
-  ) async {
+  }) async {
     // Trim trailing spaces
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
@@ -186,7 +187,7 @@ class VideoCommentsController extends ChangeNotifier {
     final tempId = DateTime.now().millisecondsSinceEpoch.toString();
     final newComment = CommentModel(
       commentId: tempId,
-      commentedBy: 'me', // Should get real UID from auth
+      commentedBy: uid,
       commentedTo: videoId,
       commentedAt: DateTime.now(),
       comment: trimmedText,
@@ -241,13 +242,69 @@ class VideoCommentsController extends ChangeNotifier {
     }
   }
 
+  /// Deletes a comment.
+  Future<void> deleteComment(String commentId) async {
+    final originalComments = List<CommentModel>.from(_comments);
+    final originalCount = _totalCommentsCount;
+
+    // Optimistic remove
+    _comments.removeWhere((c) => c.commentId == commentId);
+    _totalCommentsCount--;
+    notifyListeners();
+
+    try {
+      await _repository.deleteComment(commentId);
+    } catch (e) {
+      // Rollback on error
+      _comments = originalComments;
+      _totalCommentsCount = originalCount;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Deletes a reply.
+  Future<void> deleteReply(String commentId, String replyId) async {
+    final commentIndex = _comments.indexWhere((c) => c.commentId == commentId);
+    if (commentIndex == -1) return;
+
+    final comment = _comments[commentIndex];
+    final originalReplies = List<ReplyModel>.from(comment.replies);
+    final originalTotalReplies = comment.totalReplies;
+
+    // Optimistic remove from local state
+    final updatedReplies = comment.replies
+        .where((r) => r.replyId != replyId)
+        .toList();
+    _comments[commentIndex] = comment.copyWith(
+      replies: updatedReplies,
+      totalReplies: comment.totalReplies - 1,
+    );
+    notifyListeners();
+
+    try {
+      // The API endpoint provided is /social/videos/comment/$id
+      // We use it for both comments and replies
+      await _repository.deleteComment(replyId);
+    } catch (e) {
+      // Rollback on error
+      _comments[commentIndex] = comment.copyWith(
+        replies: originalReplies,
+        totalReplies: originalTotalReplies,
+      );
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   /// Post a reply to a comment.
-  Future<void> postReply(
-    String commentId,
-    String text,
-    String username,
+  Future<void> postReply({
+    required String commentId,
+    required String text,
+    required String username,
+    required String uid,
     String? profilePicture,
-  ) async {
+  }) async {
     // Trim trailing spaces
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
@@ -260,7 +317,7 @@ class VideoCommentsController extends ChangeNotifier {
     final tempReplyId = DateTime.now().millisecondsSinceEpoch.toString();
     final newReply = ReplyModel(
       replyId: tempReplyId,
-      repliedBy: 'me', // Should get real UID from auth
+      repliedBy: uid,
       repliedTo: commentId,
       repliedAt: DateTime.now(),
       reply: trimmedText,

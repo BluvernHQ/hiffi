@@ -30,14 +30,10 @@ class HiffiImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (imageUrl == null || imageUrl!.isEmpty) {
-      debugPrint('HiffiImage: imageUrl is null or empty');
       return errorWidget ?? _buildErrorWidget();
     }
 
     final headers = ImageUtils.getProfileImageHeaders(imageUrl);
-    debugPrint(
-      'HiffiImage loading: $imageUrl (headers: ${headers != null ? "present (x-api-key: ${headers['x-api-key']?.substring(0, 5)}...)" : "none"})',
-    );
 
     Widget image = CachedNetworkImage(
       imageUrl: imageUrl!,
@@ -45,21 +41,8 @@ class HiffiImage extends StatelessWidget {
       height: height,
       fit: fit,
       httpHeaders: headers,
-      placeholder: (context, url) {
-        debugPrint('HiffiImage placeholder for: $url');
-        return placeholder ?? _buildDefaultPlaceholder();
-      },
-      errorWidget: (context, url, error) {
-        debugPrint('HiffiImage ERROR loading $url: $error');
-        debugPrint('HiffiImage ERROR type: ${error.runtimeType}');
-        // Always use the provided errorWidget if available, otherwise use default
-        return errorWidget ?? _buildErrorWidget();
-      },
-      errorListener: (error) {
-        debugPrint('HiffiImage errorListener: $error');
-      },
-      // Note: Cannot use both placeholder and progressIndicatorBuilder simultaneously
-      // Using placeholder only - it handles both initial loading and progress states
+      placeholder: (context, url) => placeholder ?? _buildDefaultPlaceholder(),
+      errorWidget: (context, url, error) => errorWidget ?? _buildErrorWidget(),
     );
 
     if (borderRadius != null) {
@@ -111,50 +94,34 @@ class HiffiAvatar extends StatelessWidget {
   final String? imageUrl;
   final double size;
   final String? fallbackText;
+  final int? cacheBust;
 
   const HiffiAvatar({
     super.key,
     required this.imageUrl,
     this.size = 40,
     this.fallbackText,
+    this.cacheBust,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Debug: Log the raw input
-    debugPrint(
-      'HiffiAvatar: Raw imageUrl received: "$imageUrl" (type: ${imageUrl.runtimeType}, isEmpty: ${imageUrl?.isEmpty ?? true})',
-    );
-
     // Trim and validate the URL
-    final trimmedUrl = imageUrl != null && imageUrl!.trim().isNotEmpty
+    final trimmedUrl =
+        imageUrl != null &&
+            imageUrl!.trim().isNotEmpty &&
+            imageUrl!.trim().toLowerCase() != 'null'
         ? imageUrl!.trim()
         : null;
 
-    if (trimmedUrl == null) {
-      debugPrint(
-        'HiffiAvatar: No valid URL provided, showing fallback for: ${fallbackText ?? "unknown"}',
-      );
-    }
-
     final processedUrl = trimmedUrl != null
-        ? ImageUtils.getProfileImageUrl(trimmedUrl)
+        ? ImageUtils.getProfileImageUrl(trimmedUrl, cacheBust: cacheBust)
         : null;
 
-    // Debug print to help diagnose issues
-    if (trimmedUrl != null) {
-      if (processedUrl == null) {
-        debugPrint(
-          'HiffiAvatar: ❌ Profile image URL was filtered out or invalid: "$trimmedUrl"',
-        );
-        debugPrint(
-          'HiffiAvatar: isValidImageUrl check: ${ImageUtils.isValidImageUrl(trimmedUrl)}',
-        );
-      } else {
-        debugPrint(
-          'HiffiAvatar: ✅ Processing profile image - Original: "$trimmedUrl" → Processed: "$processedUrl"',
-        );
-      }
+    if (trimmedUrl != null && processedUrl == null) {
+      debugPrint(
+        'HiffiAvatar: profilePicture "$imageUrl" was filtered out as invalid',
+      );
     }
 
     return Container(

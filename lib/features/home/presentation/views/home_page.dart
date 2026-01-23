@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../../auth/data/auth_repository.dart';
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
@@ -16,6 +17,7 @@ import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../search/presentation/widgets/search_overlay.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/widgets/hiffi_logo.dart';
 import '../viewmodels/home_view_model.dart';
 
 class HomePage extends StatefulWidget {
@@ -237,25 +239,17 @@ class _HomePageState extends State<HomePage> {
       },
       child: MainScaffold(
         appBar: AppBar(
+          leadingWidth: 56,
+          titleSpacing: 0,
           leading: Builder(
             builder: (context) {
-              // Only show menu icon if user is authenticated and sidebar is available
-              final authRepository = context.read<AuthRepository>();
-              final isAuthenticated = authRepository.currentUser != null;
-
-              if (!isAuthenticated) {
-                // Return empty widget to hide the icon completely for logged-out users
-                return const SizedBox.shrink();
-              }
-
               final sidebar = AppSidebar.of(context);
-              // If sidebar is not available (shouldn't happen when authenticated, but be safe)
               if (sidebar == null) {
                 return const SizedBox.shrink();
               }
 
               return IconButton(
-                icon: const Icon(Icons.menu),
+                icon: const Icon(Icons.menu_rounded),
                 onPressed: sidebar.toggleSidebar,
                 tooltip: 'Menu',
               );
@@ -296,7 +290,7 @@ class _HomePageState extends State<HomePage> {
                     }
                   },
                 )
-              : SizedBox.shrink(),
+              : const HiffiLogo(size: 28, fontSize: 20),
           actions: [
             if (!_isSearchActive)
               IconButton(
@@ -614,50 +608,11 @@ class _CompactProfileSection extends StatelessWidget {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                backgroundImage: () {
-                  final profileUrl =
-                      user.profilePicture != null &&
-                          user.profilePicture!.isNotEmpty
-                      ? ImageUtils.getProfileImageUrl(
-                          user.profilePicture!,
-                          cacheBust: user.updatedAt?.millisecondsSinceEpoch,
-                        )
-                      : null;
-                  final avatarUrl =
-                      user.avatarUrl != null &&
-                          user.avatarUrl!.isNotEmpty &&
-                          ImageUtils.isValidImageUrl(user.avatarUrl)
-                      ? user.avatarUrl
-                      : null;
-
-                  if (profileUrl != null) {
-                    return NetworkImage(
-                      profileUrl,
-                      headers: ImageUtils.getProfileImageHeaders(profileUrl),
-                    );
-                  } else if (avatarUrl != null &&
-                      ImageUtils.isValidImageUrl(avatarUrl)) {
-                    return NetworkImage(avatarUrl);
-                  }
-                  return null;
-                }(),
-                child:
-                    (user.profilePicture == null ||
-                            user.profilePicture!.isEmpty) &&
-                        (user.avatarUrl == null || user.avatarUrl!.isEmpty)
-                    ? Text(
-                        user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    : null,
+              HiffiAvatar(
+                imageUrl: user.profilePicture ?? user.avatarUrl,
+                size: 56,
+                fallbackText: user.name,
+                cacheBust: user.updatedAt?.millisecondsSinceEpoch,
               ),
               if (user.status?.isLive == true)
                 Positioned(
@@ -980,8 +935,8 @@ class _GridVideoCard extends StatelessWidget {
                               ),
                               child: video.status == 'temp'
                                   ? const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
                                         Text(
                                           '• ',
                                           style: TextStyle(
@@ -1004,20 +959,20 @@ class _GridVideoCard extends StatelessWidget {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         const Icon(
-                                    Icons.visibility,
-                                    size: 12,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _formatCount(video.videoViews),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
+                                          Icons.visibility,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          _formatCount(video.videoViews),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                             ),
                           ),
@@ -1035,9 +990,9 @@ class _GridVideoCard extends StatelessWidget {
                                     color: Colors.white70,
                                     size: 24,
                                   ),
+                                ),
                               ),
                             ),
-                          ),
                         ],
                       ),
               ),
@@ -1066,46 +1021,11 @@ class _GridVideoCard extends StatelessWidget {
                   SizedBox(height: 6.h),
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 10.r,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        backgroundImage: () {
-                          final profileUrl =
-                              video.profilePicture != null &&
-                                  video.profilePicture!.isNotEmpty
-                              ? ImageUtils.getProfileImageUrl(
-                                  video.profilePicture!,
-                                  cacheBust:
-                                      video.updatedAt.millisecondsSinceEpoch,
-                                )
-                              : null;
-                          return profileUrl != null
-                              ? NetworkImage(
-                                  profileUrl,
-                                  headers: ImageUtils.getProfileImageHeaders(
-                                    profileUrl,
-                                  ),
-                                )
-                              : null;
-                        }(),
-                        child:
-                            video.profilePicture == null ||
-                                video.profilePicture!.isEmpty
-                            ? Text(
-                                video.userUsername.isNotEmpty
-                                    ? video.userUsername[0].toUpperCase()
-                                    : 'U',
-                                style: TextStyle(
-                                  fontSize: 10.sp,
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer,
-                                ),
-                              )
-                            : null,
+                      HiffiAvatar(
+                        imageUrl: video.profilePicture,
+                        size: 20.r,
+                        fallbackText: video.userUsername,
+                        cacheBust: video.updatedAt.millisecondsSinceEpoch,
                       ),
                       SizedBox(width: 6.w),
                       Flexible(
@@ -1306,46 +1226,11 @@ class _SearchSuggestionItem extends StatelessWidget {
                     // User info
                     Row(
                       children: [
-                        CircleAvatar(
-                          radius: 10,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer,
-                          backgroundImage: () {
-                            final profileUrl =
-                                video.profilePicture != null &&
-                                    video.profilePicture!.isNotEmpty
-                                ? ImageUtils.getProfileImageUrl(
-                                    video.profilePicture!,
-                                    cacheBust:
-                                        video.updatedAt.millisecondsSinceEpoch,
-                                  )
-                                : null;
-                            return profileUrl != null
-                                ? NetworkImage(
-                                    profileUrl,
-                                    headers: ImageUtils.getProfileImageHeaders(
-                                      profileUrl,
-                                    ),
-                                  )
-                                : null;
-                          }(),
-                          child:
-                              video.profilePicture == null ||
-                                  video.profilePicture!.isEmpty
-                              ? Text(
-                                  video.userUsername.isNotEmpty
-                                      ? video.userUsername[0].toUpperCase()
-                                      : 'U',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onPrimaryContainer,
-                                  ),
-                                )
-                              : null,
+                        HiffiAvatar(
+                          imageUrl: video.profilePicture,
+                          size: 20,
+                          fallbackText: video.userUsername,
+                          cacheBust: video.updatedAt.millisecondsSinceEpoch,
                         ),
                         const SizedBox(width: 6),
                         Flexible(

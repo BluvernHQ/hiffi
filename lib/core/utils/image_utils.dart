@@ -8,7 +8,8 @@ class ImageUtils {
 
   // API key for profile image requests (should be stored securely in production)
   // TODO: Move this to environment variables or secure storage
-  static const String profileImageApiKey = 'gdwvvwwvdyvyvwevyvfwedfwerwf34rt3f3f3';
+  static const String profileImageApiKey =
+      'gdwvvwwvdyvyvwevyvfwedfwerwf34rt3f3f3';
 
   /// Checks if a URL is a valid image URL (not a placeholder)
   static bool isValidImageUrl(String? url) {
@@ -24,6 +25,7 @@ class ImageUtils {
       'https://example.com/newpic.jpg',
       'http://example.com/newpic.jpg',
       'example.com/newpic.jpg',
+      'null',
     ];
 
     final isValid = !invalidUrls.contains(trimmedUrl);
@@ -62,7 +64,7 @@ class ImageUtils {
       // Add cache-busting parameter if provided
       if (cacheBust != null) {
         final separator = trimmedPicture.contains('?') ? '&' : '?';
-        return '$trimmedPicture$separator v=$cacheBust';
+        return '$trimmedPicture${separator}v=$cacheBust';
       }
       return trimmedPicture;
     }

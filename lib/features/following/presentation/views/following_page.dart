@@ -7,7 +7,7 @@ import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
-import '../../../auth/data/auth_repository.dart';
+import '../../../../core/widgets/hiffi_image.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/following_view_model.dart';
 
@@ -39,25 +39,17 @@ class _FollowingPageState extends State<FollowingPage> {
       },
       child: MainScaffold(
         appBar: AppBar(
+          leadingWidth: 56,
+          titleSpacing: 0,
           leading: Builder(
             builder: (context) {
-              // Only show menu icon if user is authenticated and sidebar is available
-              final authRepository = context.read<AuthRepository>();
-              final isAuthenticated = authRepository.currentUser != null;
-
-              if (!isAuthenticated) {
-                // Return empty widget to hide the icon completely for logged-out users
-                return const SizedBox.shrink();
-              }
-
               final sidebar = AppSidebar.of(context);
-              // If sidebar is not available (shouldn't happen when authenticated, but be safe)
               if (sidebar == null) {
                 return const SizedBox.shrink();
               }
 
               return IconButton(
-                icon: const Icon(Icons.menu),
+                icon: const Icon(Icons.menu_rounded),
                 onPressed: sidebar.toggleSidebar,
                 tooltip: 'Menu',
               );
@@ -383,23 +375,23 @@ class _GridVideoCard extends StatelessWidget {
                                       ],
                                     )
                                   : Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
                                         const Icon(
-                                    Icons.visibility,
-                                    size: 12,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _formatCount(video.videoViews),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
+                                          Icons.visibility,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          _formatCount(video.videoViews),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                             ),
                           ),
@@ -417,9 +409,9 @@ class _GridVideoCard extends StatelessWidget {
                                     color: Colors.white70,
                                     size: 24,
                                   ),
+                                ),
                               ),
                             ),
-                          ),
                         ],
                       ),
               ),
@@ -448,46 +440,11 @@ class _GridVideoCard extends StatelessWidget {
                   SizedBox(height: 6.h),
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 10.r,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        backgroundImage: () {
-                          final profileUrl =
-                              video.profilePicture != null &&
-                                  video.profilePicture!.isNotEmpty
-                              ? ImageUtils.getProfileImageUrl(
-                                  video.profilePicture!,
-                                  cacheBust:
-                                      video.updatedAt.millisecondsSinceEpoch,
-                                )
-                              : null;
-                          return profileUrl != null
-                              ? NetworkImage(
-                                  profileUrl,
-                                  headers: ImageUtils.getProfileImageHeaders(
-                                    profileUrl,
-                                  ),
-                                )
-                              : null;
-                        }(),
-                        child:
-                            video.profilePicture == null ||
-                                video.profilePicture!.isEmpty
-                            ? Text(
-                                video.userUsername.isNotEmpty
-                                    ? video.userUsername[0].toUpperCase()
-                                    : 'U',
-                                style: TextStyle(
-                                  fontSize: 10.sp,
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer,
-                                ),
-                              )
-                            : null,
+                      HiffiAvatar(
+                        imageUrl: video.profilePicture,
+                        size: 20.r,
+                        fallbackText: video.userUsername,
+                        cacheBust: video.updatedAt.millisecondsSinceEpoch,
                       ),
                       SizedBox(width: 6.w),
                       Flexible(

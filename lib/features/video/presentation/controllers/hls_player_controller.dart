@@ -176,8 +176,8 @@ class HlsPlayerController extends ChangeNotifier {
       await _fetchProfiles();
       await _setupPlayer();
     } catch (e) {
-      _handleError('Initialization failed: $e');
-    }
+        _handleError('Initialization failed: $e');
+      }
   }
 
   Future<void> _loadUserPreferences() async {
@@ -364,7 +364,7 @@ class HlsPlayerController extends ChangeNotifier {
       // Auto-play if requested
       if (autoPlay) {
         await _videoPlayerController!.play().catchError((e) {
-          debugPrint("Autoplay blocked: $e");
+            debugPrint("Autoplay blocked: $e");
           _videoPlayerController!.setVolume(0.0);
           _videoPlayerController!.play();
         });
@@ -437,11 +437,11 @@ class HlsPlayerController extends ChangeNotifier {
     _hasError = true;
     _errorMessage = message;
     _currentState = PlayerState.error;
-    notifyListeners();
+        notifyListeners();
   }
 
   Future<void> retry() async {
-    await _setupPlayer();
+      await _setupPlayer();
   }
 
   Future<void> changeQuality(VideoProfile profile) async {

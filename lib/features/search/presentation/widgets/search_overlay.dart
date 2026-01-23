@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/hiffi_image.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/search_view_model.dart';
@@ -354,30 +355,11 @@ class _SearchSuggestionTile extends StatelessWidget {
   }
 
   Widget _buildUserAvatar(BuildContext context, UserModel user) {
-    final profileUrl = ImageUtils.getProfileImageUrl(
-      user.profilePicture ?? user.avatarUrl ?? '',
-    );
-
-    return CircleAvatar(
-      radius: 20,
-      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-      backgroundImage: profileUrl != null
-          ? NetworkImage(
-              profileUrl,
-              headers: ImageUtils.getProfileImageHeaders(profileUrl),
-            )
-          : null,
-      child:
-          (user.profilePicture == null || user.profilePicture!.isEmpty) &&
-              (user.avatarUrl == null || user.avatarUrl!.isEmpty)
-          ? Text(
-              user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
-                fontWeight: FontWeight.bold,
-              ),
-            )
-          : null,
+    return HiffiAvatar(
+      imageUrl: user.profilePicture ?? user.avatarUrl,
+      size: 40,
+      fallbackText: user.name,
+      cacheBust: user.updatedAt?.millisecondsSinceEpoch,
     );
   }
 
