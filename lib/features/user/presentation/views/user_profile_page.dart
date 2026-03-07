@@ -216,6 +216,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
           elevation: 0,
           scrolledUnderElevation: 0,
           surfaceTintColor: Colors.transparent,
+          systemOverlayStyle: SystemUiOverlayStyle.light,
+          title: Text(
+            widget.username,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () {
@@ -251,28 +259,134 @@ class _UserProfilePageState extends State<UserProfilePage> {
             ? const ProfileShimmer()
             : viewModel.errorMessage != null
             ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      viewModel.errorMessage ?? 'Failed to load profile',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: () {
-                        viewModel.loadUser(widget.username);
-                      },
-                      child: const Text('Retry'),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color:
+                              (viewModel.errorMessage!.contains(
+                                    'SocketException',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Failed host lookup',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Network is unreachable',
+                                  ))
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.primaryContainer.withOpacity(0.3)
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.errorContainer.withOpacity(0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          (viewModel.errorMessage!.contains(
+                                    'SocketException',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Failed host lookup',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Network is unreachable',
+                                  ))
+                              ? Icons.wifi_off_rounded
+                              : Icons.error_outline_rounded,
+                          size: 64,
+                          color:
+                              (viewModel.errorMessage!.contains(
+                                    'SocketException',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Failed host lookup',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Network is unreachable',
+                                  ))
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Text(
+                        (viewModel.errorMessage!.contains('SocketException') ||
+                                viewModel.errorMessage!.contains(
+                                  'Failed host lookup',
+                                ) ||
+                                viewModel.errorMessage!.contains(
+                                  'Network is unreachable',
+                                ))
+                            ? 'No Internet Connection'
+                            : 'Oops! Something went wrong',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.5,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          (viewModel.errorMessage!.contains(
+                                    'SocketException',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Failed host lookup',
+                                  ) ||
+                                  viewModel.errorMessage!.contains(
+                                    'Network is unreachable',
+                                  ))
+                              ? 'Please check your connection and try again to view this profile.'
+                              : 'We encountered an error while loading the profile. Please try again later.',
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                height: 1.5,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          viewModel.loadUser(widget.username);
+                        },
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text(
+                          'Try Again',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 40,
+                            vertical: 16,
+                          ),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               )
             : user == null
@@ -385,8 +499,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
         Container(
           height: bannerHeight,
           width: double.infinity,
-          decoration: const BoxDecoration(
-            image: DecorationImage(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary,
+            image: const DecorationImage(
               image: AssetImage('assets/abstract-orange-pattern.png'),
               fit: BoxFit.cover,
             ),
@@ -477,7 +592,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                           child: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFF6B35),
+                              color: const Color(0xFFED1C2F),
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.white, width: 3),
                               boxShadow: [
@@ -564,7 +679,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   }
                 },
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF6B35),
+            backgroundColor: const Color(0xFFED1C2F),
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 12),
             shape: RoundedRectangleBorder(
@@ -726,13 +841,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            const Color(0xFFFF6B35).withOpacity(0.1),
-            const Color(0xFFFF6B35).withOpacity(0.05),
+            const Color(0xFFED1C2F).withOpacity(0.1),
+            const Color(0xFFED1C2F).withOpacity(0.05),
           ],
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFFFF6B35).withOpacity(0.3),
+          color: const Color(0xFFED1C2F).withOpacity(0.3),
           width: 1.5,
         ),
       ),
@@ -744,12 +859,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFF6B35).withOpacity(0.2),
+                  color: const Color(0xFFED1C2F).withOpacity(0.2),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
                   Icons.workspace_premium_rounded,
-                  color: Color(0xFFFF6B35),
+                  color: Color(0xFFED1C2F),
                   size: 32,
                 ),
               ),
@@ -795,7 +910,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             const Icon(
                               Icons.video_library_rounded,
                               size: 18,
-                              color: Color(0xFFFF6B35),
+                              color: Color(0xFFED1C2F),
                             ),
                             const SizedBox(width: 8),
                             Flexible(
@@ -816,7 +931,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             const Icon(
                               Icons.music_note_rounded,
                               size: 18,
-                              color: Color(0xFFFF6B35),
+                              color: Color(0xFFED1C2F),
                             ),
                             const SizedBox(width: 8),
                             Flexible(
@@ -843,7 +958,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         icon: const Icon(Icons.arrow_forward_rounded, size: 18),
                         label: const Text('View Creator Studio'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF6B35),
+                          backgroundColor: const Color(0xFFED1C2F),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 20,
@@ -872,7 +987,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             const Icon(
                               Icons.video_library_rounded,
                               size: 18,
-                              color: Color(0xFFFF6B35),
+                              color: Color(0xFFED1C2F),
                             ),
                             const SizedBox(width: 8),
                             Flexible(
@@ -893,7 +1008,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             const Icon(
                               Icons.music_note_rounded,
                               size: 18,
-                              color: Color(0xFFFF6B35),
+                              color: Color(0xFFED1C2F),
                             ),
                             const SizedBox(width: 8),
                             Flexible(
@@ -920,7 +1035,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       icon: const Icon(Icons.arrow_forward_rounded, size: 18),
                       label: const Text('View Creator Studio'),
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF6B35),
+                        backgroundColor: const Color(0xFFED1C2F),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -1388,7 +1503,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                               }
                             },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF6B35),
+                        backgroundColor: const Color(0xFFED1C2F),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -1562,7 +1677,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                             }
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF6B35),
+                      backgroundColor: const Color(0xFFED1C2F),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
@@ -2398,61 +2513,42 @@ class _VideoGridItem extends StatelessWidget {
                 ),
               ),
             ),
-          // 2. Processing indicator or View count overlay (non-interactive)
-          Positioned(
-            top: 8,
-            right: 8,
-            child: IgnorePointer(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: video.status == 'temp'
-                    ? const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '• ',
-                            style: TextStyle(
-                              color: Colors.orangeAccent,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            'processing',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.visibility,
-                            size: 12,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _formatCount(video.videoViews),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
+          // 2. Processing indicator overlay (non-interactive) – only when processing
+          if (video.status == 'temp')
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IgnorePointer(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.7),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '• ',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
+                      Text(
+                        'processing',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
           // 3. More menu (interactive layer on top)
           if (onDelete != null && video.status != 'temp')
             Positioned(

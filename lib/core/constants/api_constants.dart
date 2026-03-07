@@ -1,5 +1,5 @@
 class ApiConstants {
-  static const String baseUrl = 'https://beta.hiffi.com/api';
+  static const String baseUrl = 'https://api.hiffi.com';
 
   // Auth endpoints
   static const String authRegister = '/auth/register';
@@ -43,6 +43,7 @@ class ApiConstants {
       '/social/videos/comments/$videoId';
   static String postReply(String commentId) =>
       '/social/videos/reply/$commentId';
+  static String deleteReply(String replyId) => '/social/videos/reply/$replyId';
   static String getReplies(String commentId) =>
       '/social/videos/replies/$commentId';
   static String followUser(String username) => '/social/users/follow/$username';

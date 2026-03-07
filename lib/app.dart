@@ -27,13 +27,14 @@ class HiffiApp extends StatelessWidget {
 
               return MaterialApp.router(
                 title: 'Hiffi',
+                debugShowCheckedModeBanner: false,
                 theme: ThemeData(
                   useMaterial3: true,
                   colorScheme: const ColorScheme(
                     brightness: Brightness.light,
-                    primary: Color(0xFFFF6B35), // orange
+                    primary: Color(0xFFED1C2F), // red
                     onPrimary: Colors.white,
-                    secondary: Color(0xFFFF8A5B),
+                    secondary: Color(0xFFF14D5D),
                     onSecondary: Colors.white,
                     error: Color(0xFFB00020),
                     onError: Colors.white,
@@ -51,7 +52,7 @@ class HiffiApp extends StatelessWidget {
                   ),
                   elevatedButtonTheme: ElevatedButtonThemeData(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF6B35),
+                      backgroundColor: const Color(0xFFED1C2F),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -61,7 +62,7 @@ class HiffiApp extends StatelessWidget {
                   ),
                   textButtonTheme: TextButtonThemeData(
                     style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFFFF6B35),
+                      foregroundColor: const Color(0xFFED1C2F),
                     ),
                   ),
                   dividerColor: const Color(0xFFE0E0E0),

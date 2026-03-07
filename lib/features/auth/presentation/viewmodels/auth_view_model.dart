@@ -3,7 +3,8 @@ import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/auth_failure.dart';
-import '../../../auth/data/auth_repository.dart';
+import '../../../../core/services/network_connectivity_service.dart';
+import '../../data/auth_repository.dart';
 import '../../../user/data/user_repository.dart';
 
 enum AuthMode { signIn, signUp, verifyOtp, forgotPassword, resetPassword }
@@ -12,11 +13,14 @@ class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
     required AuthRepository authRepository,
     required UserRepository userRepository,
+    NetworkConnectivityService? connectivityService,
   }) : _authRepository = authRepository,
-       _userRepository = userRepository;
+       _userRepository = userRepository,
+       _connectivityService = connectivityService;
 
   final AuthRepository _authRepository;
   final UserRepository _userRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   final usernameController = TextEditingController();
   final signInPasswordController = TextEditingController();
@@ -327,6 +331,12 @@ class AuthViewModel extends ChangeNotifier {
   void _fetchUserProfileAsync() {
     Future.microtask(() async {
       try {
+        // Check for internet connectivity before making the call
+        if (_connectivityService != null && !_connectivityService.isConnected) {
+          print('   🚫 Skipping async profile fetch: No internet connection');
+          return;
+        }
+
         // Wait a bit to ensure token is ready
         await Future.delayed(const Duration(milliseconds: 300));
 

@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:chewie/chewie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
+import 'package:hiffi/core/widgets/hiffi_image.dart';
+import 'package:hiffi/core/utils/image_utils.dart';
 
 /// Production-ready HLS Video Player widget using video_player + chewie.
 ///
@@ -56,7 +59,14 @@ class HlsVideoPlayer extends StatefulWidget {
         'HlsVideoPlayer: Pausing player for videoId $videoId via static method',
       );
       // Get current position and save it before pausing
-      final position = controller.controller?.value.position;
+      Duration? position;
+      try {
+        position = controller.controller?.value.position;
+      } catch (e) {
+        debugPrint(
+          'HlsVideoPlayer: Ignoring position read from disposed controller for $videoId: $e',
+        );
+      }
       if (position != null) {
         // Save position to SharedPreferences
         try {
@@ -106,16 +116,26 @@ class HlsVideoPlayer extends StatefulWidget {
     _controllers.remove(videoId);
     debugPrint('HlsVideoPlayer: Unregistered controller for videoId $videoId');
   }
+
+  static HlsPlayerController? getController(String videoId) {
+    return _controllers[videoId];
+  }
 }
 
 class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   late HlsPlayerController _controller;
   bool _isDisposed = false;
+  bool? _lastFullScreen;
 
   // Gesture control state
   Timer? _tapTimer;
   static const Duration _doubleTapDelay = Duration(milliseconds: 300);
   static const Duration _skipDuration = Duration(seconds: 10);
+
+  // Pull-up to fullscreen (YouTube-style)
+  double _verticalDragUpTotal = 0;
+  static const double _pullToFullscreenThresholdPx = 80;
+  static const double _pullToFullscreenVelocityThreshold = 200;
 
   @override
   void initState() {
@@ -123,12 +143,12 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     _isDisposed = false;
     debugPrint('HlsVideoPlayer: initState() for videoId ${widget.videoId}');
     _controller = HlsPlayerController(
+      video: widget.video,
       videoId: widget.videoId,
       baseVideoUrl: widget.baseVideoUrl,
       autoPlay: widget.autoPlay,
       initialMuted: widget.initialMuted,
       onVideoEnded: widget.onVideoEnded,
-      onShowQualityPicker: _showQualityPicker,
     );
     _controller.addListener(_onControllerStateChanged);
 
@@ -154,12 +174,12 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       _controller.dispose();
 
       _controller = HlsPlayerController(
+        video: widget.video,
         videoId: widget.videoId,
         baseVideoUrl: widget.baseVideoUrl,
         autoPlay: widget.autoPlay,
         initialMuted: widget.initialMuted,
         onVideoEnded: widget.onVideoEnded,
-        onShowQualityPicker: _showQualityPicker,
       );
       _controller.addListener(_onControllerStateChanged);
       HlsVideoPlayer.registerController(widget.videoId, _controller);
@@ -172,6 +192,8 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     debugPrint(
       'HlsVideoPlayer: dispose() called for videoId ${widget.videoId}',
     );
+
+    WakelockPlus.disable();
 
     _tapTimer?.cancel();
     _controller.removeListener(_onControllerStateChanged);
@@ -229,8 +251,59 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     );
   }
 
+  /// Pull-up to fullscreen (YouTube-style): in portrait, drag up to enter fullscreen.
+  void _handleVerticalDragStart(DragStartDetails details) {
+    _verticalDragUpTotal = 0;
+  }
+
+  void _handleVerticalDragUpdate(DragUpdateDetails details) {
+    if (details.delta.dy < 0) _verticalDragUpTotal += -details.delta.dy;
+  }
+
+  void _handleVerticalDragEnd(DragEndDetails details) {
+    if (_isDisposed || !mounted || _controller.isFullScreen) return;
+    if (MediaQuery.of(context).orientation != Orientation.portrait) return;
+    final velocity = details.primaryVelocity ?? 0;
+    final crossedThreshold = _verticalDragUpTotal >= _pullToFullscreenThresholdPx ||
+        (velocity <= 0 && velocity.abs() >= _pullToFullscreenVelocityThreshold);
+    if (crossedThreshold) {
+      debugPrint('HlsVideoPlayer: Pull-up to fullscreen triggered');
+      _controller.enterFullScreen();
+    }
+    _verticalDragUpTotal = 0;
+  }
+
   void _onControllerStateChanged() {
     if (_isDisposed || !mounted) return;
+
+    // Keep screen awake while video is playing (portrait and landscape)
+    if (_controller.isPlaying) {
+      WakelockPlus.enable();
+    } else {
+      WakelockPlus.disable();
+    }
+
+    // Detect manual fullscreen changes (from button)
+    if (_controller.isFullScreen != _lastFullScreen) {
+      final wasFullScreen = _lastFullScreen;
+      _lastFullScreen = _controller.isFullScreen;
+
+      // 💡 GUARD: If we are currently switching profiles, ignore fullscreen state changes.
+      // This prevents the UI from triggering an "exitFullscreen" snap while we're 
+      // just swapping the underlying video player.
+      if (_controller.isSwitchingProfile) {
+        debugPrint('HlsVideoPlayer: Ignoring fullscreen change during profile switch');
+        return;
+      }
+
+      if (wasFullScreen != null) {
+        if (!_controller.isFullScreen) {
+          debugPrint(
+            'HlsVideoPlayer: Manual exit detected',
+          );
+        }
+      }
+    }
 
     widget.onStateChanged?.call(_controller.currentState);
 
@@ -238,114 +311,6 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     // We no longer need to sync fullscreen state since Chewie handles it internally
     // and we're not conditionally rendering based on it.
     setState(() {});
-  }
-
-  void _showQualityPicker(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 12),
-              // Drag Handle
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 20, 16, 16),
-                child: Text(
-                  'Video Quality',
-                  style: TextStyle(
-                    color: Color(0xFF1A1A1A),
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              const SizedBox(height: 8),
-              ..._controller.profiles.map((profile) {
-                final isSelected = _controller.currentProfile == profile;
-                return Material(
-                  color: Colors.transparent,
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 4,
-                    ),
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFFFF6B35).withOpacity(0.1)
-                            : Colors.grey[100],
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        isSelected ? Icons.check : Icons.high_quality,
-                        size: 20,
-                        color: isSelected
-                            ? const Color(0xFFFF6B35)
-                            : Colors.grey[600],
-                      ),
-                    ),
-                    title: Text(
-                      profile.name,
-                      style: TextStyle(
-                        color: isSelected
-                            ? const Color(0xFFFF6B35)
-                            : const Color(0xFF1A1A1A),
-                        fontSize: 16,
-                        fontWeight: isSelected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                      ),
-                    ),
-                    trailing: isSelected
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFF6B35),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text(
-                              'Active',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          )
-                        : null,
-                    onTap: () {
-                      Navigator.pop(context);
-                      _controller.changeQuality(profile);
-                    },
-                  ),
-                );
-              }).toList(),
-              const SizedBox(height: 24),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   @override
@@ -372,7 +337,7 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
                 ElevatedButton(
                   onPressed: () => _controller.retry(),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF6B35),
+                    backgroundColor: const Color(0xFFED1C2F),
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('Retry'),
@@ -384,51 +349,116 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       );
     }
 
-    // Show loading state
-    if (!_controller.isInitialized) {
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: Color(0xFFFF6B35)),
-        ),
-      );
-    }
-
-    // Show player
     final chewieController = _controller.chewieController;
-    if (chewieController == null) {
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: Color(0xFFFF6B35)),
-        ),
-      );
-    }
-
-    // 💡 CRITICAL FIX: Always render the same Chewie widget.
-    // Chewie handles fullscreen internally via overlays, so we shouldn't
-    // conditionally render different widgets based on fullscreen state.
-    // This prevents disposal/recreation during orientation changes, which
-    // causes the "PlayerNotifier used after disposed" error.
-    //
-    // Use a stable key based on videoId to ensure Flutter doesn't unnecessarily
-    // recreate the widget during rebuilds.
-    final playerKey = ValueKey('chewie_${widget.videoId}');
+    final isInitialized = _controller.isInitialized && chewieController != null;
+    final showSwitchingOverlay = _controller.isSwitchingProfile;
+    final containerKey = ValueKey('container_${widget.videoId}_${_controller.currentProfile}');
+    final playerKey = ValueKey('chewie_${widget.videoId}_${_controller.currentProfile}');
 
     return Container(
+      key: containerKey,
       color: Colors.black,
       child: LayoutBuilder(
         builder: (context, constraints) {
           return SizedBox(
             width: constraints.maxWidth,
             height: constraints.maxHeight,
-            child: GestureDetector(
-              onTap: () => _handleTap(context, constraints),
-              onDoubleTapDown: (details) =>
-                  _handleDoubleTap(details, constraints),
-              // Allow taps to pass through to Chewie controls when not in center area
-              behavior: HitTestBehavior.translucent,
-              child: Chewie(key: playerKey, controller: chewieController),
+            child: Stack(
+              children: [
+                // 1. Smooth Transition Backdrop (Blurred Thumbnail)
+                // Shown while the stream is initializing; no spinner overlay.
+                Positioned.fill(
+                  child: AnimatedOpacity(
+                    opacity: isInitialized ? 0.0 : 1.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: HiffiImage(
+                            imageUrl: ImageUtils.getVideoThumbnailUrl(widget.video.videoThumbnail),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                            child: Container(color: Colors.black.withOpacity(0.3)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // 2. The Video Player
+                if (isInitialized)
+                  Positioned.fill(
+                    child: RepaintBoundary(
+                      child: AnimatedOpacity(
+                        opacity: isInitialized ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 400),
+                        child: GestureDetector(
+                          onTap: () => _handleTap(context, constraints),
+                          onDoubleTapDown: (details) =>
+                              _handleDoubleTap(details, constraints),
+                          onVerticalDragStart: _handleVerticalDragStart,
+                          onVerticalDragUpdate: _handleVerticalDragUpdate,
+                          onVerticalDragEnd: _handleVerticalDragEnd,
+                          behavior: HitTestBehavior.translucent,
+                          child: Chewie(key: playerKey, controller: chewieController),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // 3. Keep current frame visible and show loader while switching profile.
+                if (showSwitchingOverlay)
+                  Positioned.fill(
+                    child: AbsorbPointer(
+                      child: Container(
+                        color: Colors.black.withOpacity(0.45),
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFFED1C2F),
+                            strokeWidth: 3,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // 4. Custom Fullscreen Toggle (Absolute Bottom Right)
+                if (isInitialized && !showSwitchingOverlay)
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          if (_controller.isFullScreen) {
+                            _controller.exitFullScreen();
+                          } else {
+                            _controller.enterFullScreen();
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.35),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _controller.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                            color: Colors.white.withOpacity(0.9),
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
         },

@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:in_app_update/in_app_update.dart';
 
 import '../../../auth/data/auth_repository.dart';
 import '../../../../core/utils/image_utils.dart';
@@ -32,6 +34,7 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   bool _isSearchActive = false;
+  bool _isCheckingUpdate = false;
 
   @override
   void initState() {
@@ -39,6 +42,7 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadData(clearViewedUser: true);
       _setupAuthListener();
+      _checkForInAppUpdate();
     });
   }
 
@@ -103,41 +107,6 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Widget _buildNoResultsState(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.search_off,
-            size: 48,
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No videos found',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Try a different search term',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _setupAuthListener() {
     final authRepository = context.read<AuthRepository>();
     _authSubscription = authRepository.authStateChanges().listen((user) {
@@ -146,6 +115,79 @@ class _HomePageState extends State<HomePage> {
         _loadData(clearViewedUser: false);
       }
     });
+  }
+
+  Future<void> _checkForInAppUpdate() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+
+    if (_isCheckingUpdate) {
+      return;
+    }
+
+    setState(() {
+      _isCheckingUpdate = true;
+    });
+
+    try {
+      final info = await InAppUpdate.checkForUpdate();
+
+      if (info.updateAvailability == UpdateAvailability.updateAvailable) {
+        if (info.immediateUpdateAllowed) {
+          await InAppUpdate.performImmediateUpdate().catchError((error) {
+            _showUpdateMessage(
+              'Update failed. Please try again later.',
+            );
+            return AppUpdateResult.inAppUpdateFailed;
+          });
+        } else if (info.flexibleUpdateAllowed) {
+          await InAppUpdate.startFlexibleUpdate().then((_) async {
+            if (!mounted) return;
+            _showUpdateMessage(
+              'A new version is ready. Restart to update.',
+              actionLabel: 'RESTART',
+              onAction: () async {
+                await InAppUpdate.completeFlexibleUpdate().catchError((_) {});
+              },
+            );
+          }).catchError((_) {
+            _showUpdateMessage(
+              'Could not start app update. You can try again later.',
+            );
+          });
+        }
+      }
+    } catch (_) {
+      // Silently ignore update errors to avoid disrupting the user flow
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingUpdate = false;
+        });
+      }
+    }
+  }
+
+  void _showUpdateMessage(
+    String message, {
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: actionLabel != null && onAction != null
+            ? SnackBarAction(
+                label: actionLabel,
+                onPressed: onAction,
+              )
+            : null,
+      ),
+    );
   }
 
   void _loadData({bool clearViewedUser = false}) {
@@ -239,6 +281,7 @@ class _HomePageState extends State<HomePage> {
       },
       child: MainScaffold(
         appBar: AppBar(
+          toolbarHeight: 72,
           leadingWidth: 56,
           titleSpacing: 0,
           leading: Builder(
@@ -290,7 +333,7 @@ class _HomePageState extends State<HomePage> {
                     }
                   },
                 )
-              : const HiffiLogo(size: 28, fontSize: 20),
+              : const HiffiLogo(size: 28),
           actions: [
             if (!_isSearchActive)
               IconButton(
@@ -438,32 +481,164 @@ class _HomePageState extends State<HomePage> {
                               videoViewModel.videos.isEmpty)
                             SliverFillRemaining(
                               child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.error_outline,
-                                      size: 48,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.error,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      videoViewModel.errorMessage!,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodyMedium,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    ElevatedButton(
-                                      onPressed: () {
-                                        videoViewModel.refresh();
-                                      },
-                                      child: const Text('Retry'),
-                                    ),
-                                  ],
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(24),
+                                        decoration: BoxDecoration(
+                                          color:
+                                              (videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'SocketException',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Failed host lookup',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Network is unreachable',
+                                                      ))
+                                              ? Theme.of(context)
+                                                    .colorScheme
+                                                    .primaryContainer
+                                                    .withOpacity(0.3)
+                                              : Theme.of(context)
+                                                    .colorScheme
+                                                    .errorContainer
+                                                    .withOpacity(0.3),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          (videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'SocketException',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Failed host lookup',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Network is unreachable',
+                                                      ))
+                                              ? Icons.wifi_off_rounded
+                                              : Icons.error_outline_rounded,
+                                          size: 64,
+                                          color:
+                                              (videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'SocketException',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Failed host lookup',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Network is unreachable',
+                                                      ))
+                                              ? Theme.of(
+                                                  context,
+                                                ).colorScheme.primary
+                                              : Theme.of(
+                                                  context,
+                                                ).colorScheme.error,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 32),
+                                      Text(
+                                        (videoViewModel.errorMessage!.contains(
+                                                  'SocketException',
+                                                ) ||
+                                                videoViewModel.errorMessage!
+                                                    .contains(
+                                                      'Failed host lookup',
+                                                    ) ||
+                                                videoViewModel.errorMessage!
+                                                    .contains(
+                                                      'Network is unreachable',
+                                                    ))
+                                            ? 'No Internet Connection'
+                                            : 'Oops! Something went wrong',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .headlineSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: -0.5,
+                                            ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                        ),
+                                        child: Text(
+                                          (videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'SocketException',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Failed host lookup',
+                                                      ) ||
+                                                  videoViewModel.errorMessage!
+                                                      .contains(
+                                                        'Network is unreachable',
+                                                      ))
+                                              ? 'Please check your connection and try again to enjoy Hiffi.'
+                                              : 'We encountered an issue while loading your feed. Our team is on it!',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge
+                                              ?.copyWith(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                                height: 1.5,
+                                              ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 40),
+                                      ElevatedButton.icon(
+                                        onPressed: () {
+                                          videoViewModel.refresh();
+                                        },
+                                        icon: const Icon(Icons.refresh_rounded),
+                                        label: const Text(
+                                          'Try Again',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          foregroundColor: Theme.of(
+                                            context,
+                                          ).colorScheme.onPrimary,
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 40,
+                                            vertical: 16,
+                                          ),
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             )
@@ -920,62 +1095,43 @@ class _GridVideoCard extends StatelessWidget {
                               );
                             },
                           ),
-                          // Processing indicator or View count overlay (top right)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.7),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: video.status == 'temp'
-                                  ? const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          '• ',
-                                          style: TextStyle(
-                                            color: Colors.orangeAccent,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          'processing',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.visibility,
-                                          size: 12,
-                                          color: Colors.white,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _formatCount(video.videoViews),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
+                          // Processing indicator overlay (top right) – only when processing
+                          if (video.status == 'temp')
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '• ',
+                                      style: TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
+                                    Text(
+                                      'processing',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ),
                           // Processing Overlay
                           if (video.status == 'temp')
                             IgnorePointer(
@@ -1053,259 +1209,5 @@ class _GridVideoCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
-    return count.toString();
-  }
-}
-
-/// Search suggestion item widget (Twitch-like style)
-class _SearchSuggestionItem extends StatelessWidget {
-  const _SearchSuggestionItem({
-    required this.video,
-    required this.searchQuery,
-    required this.onTap,
-  });
-
-  final VideoModel video;
-  final String searchQuery;
-  final VoidCallback onTap;
-
-  String? get _thumbnailUrl {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
-  /// Highlight matching text in the title
-  List<TextSpan> _buildHighlightedText(String text, String query) {
-    if (query.isEmpty) {
-      return [TextSpan(text: text)];
-    }
-
-    final queryLower = query.toLowerCase();
-    final textLower = text.toLowerCase();
-    final matches = <({int start, int end})>[];
-
-    int start = 0;
-    while ((start = textLower.indexOf(queryLower, start)) != -1) {
-      matches.add((start: start, end: start + query.length));
-      start += query.length;
-    }
-
-    if (matches.isEmpty) {
-      return [TextSpan(text: text)];
-    }
-
-    final spans = <TextSpan>[];
-    int lastEnd = 0;
-
-    for (final match in matches) {
-      if (match.start > lastEnd) {
-        spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
-      }
-      spans.add(
-        TextSpan(
-          text: text.substring(match.start, match.end),
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFFFF6B35),
-          ),
-        ),
-      );
-      lastEnd = match.end;
-    }
-
-    if (lastEnd < text.length) {
-      spans.add(TextSpan(text: text.substring(lastEnd)));
-    }
-
-    return spans;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        hoverColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Thumbnail
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: _thumbnailUrl == null || _thumbnailUrl!.isEmpty
-                    ? Container(
-                        width: 80,
-                        height: 45,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        child: Icon(
-                          Icons.video_library,
-                          size: 24,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                        ),
-                      )
-                    : Image.network(
-                        _thumbnailUrl!,
-                        headers: ImageUtils.getVideoThumbnailHeaders(),
-                        width: 80,
-                        height: 45,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: 80,
-                            height: 45,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              Icons.broken_image,
-                              size: 24,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                          );
-                        },
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            width: 80,
-                            height: 45,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                value:
-                                    loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                    : null,
-                                strokeWidth: 2,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(width: 12),
-              // Video info
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Title with highlighted search query
-                    RichText(
-                      text: TextSpan(
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                        children: _buildHighlightedText(
-                          video.videoTitle,
-                          searchQuery,
-                        ),
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    // User info
-                    Row(
-                      children: [
-                        HiffiAvatar(
-                          imageUrl: video.profilePicture,
-                          size: 20,
-                          fallbackText: video.userUsername,
-                          cacheBust: video.updatedAt.millisecondsSinceEpoch,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            video.userUsername.isNotEmpty
-                                ? video.userUsername.toLowerCase()
-                                : 'Unknown',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withOpacity(0.8),
-                                ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    // Views
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.visibility,
-                          size: 12,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurfaceVariant.withOpacity(0.6),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${_formatCount(video.videoViews)} views',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant.withOpacity(0.6),
-                                fontSize: 11,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              // Arrow icon
-              Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.primaryContainer.withOpacity(0.3),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.arrow_forward,
-                  size: 14,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
-    return count.toString();
   }
 }

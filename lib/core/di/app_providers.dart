@@ -17,12 +17,20 @@ import '../../features/search/presentation/viewmodels/search_view_model.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
 import '../routes/app_router.dart';
 import '../services/api_client.dart';
+import '../services/network_connectivity_service.dart';
 import '../services/notification_service.dart';
+import '../services/analytics_service.dart';
 
 List<SingleChildWidget> buildAppProviders() {
   return [
+    Provider<NetworkConnectivityService>(
+      create: (_) => NetworkConnectivityService(),
+      dispose: (_, service) => service.dispose(),
+    ),
     Provider<ApiClient>(
-      create: (context) => ApiClient(),
+      create: (context) => ApiClient(
+        connectivityService: context.read<NetworkConnectivityService>(),
+      ),
       dispose: (_, client) => client.dispose(),
     ),
     Provider<AuthRepository>(
@@ -47,6 +55,10 @@ List<SingleChildWidget> buildAppProviders() {
           AppRouter(authRepository: context.read<AuthRepository>()),
       dispose: (_, router) => router.dispose(),
     ),
+    Provider<AnalyticsService>(
+      create: (context) =>
+          AnalyticsService(appRouter: context.read<AppRouter>()),
+    ),
     Provider<WebRtcService>(create: (_) => WebRtcService()),
     Provider<SpacesService>(
       create: (_) => SpacesService(
@@ -60,11 +72,14 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) => AuthViewModel(
         authRepository: context.read<AuthRepository>(),
         userRepository: context.read<UserRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       ),
     ),
     ChangeNotifierProvider<UserViewModel>(
-      create: (context) =>
-          UserViewModel(userRepository: context.read<UserRepository>()),
+      create: (context) => UserViewModel(
+        userRepository: context.read<UserRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
+      ),
     ),
     ChangeNotifierProvider<HomeViewModel>(
       create: (context) => HomeViewModel(
@@ -84,8 +99,10 @@ List<SingleChildWidget> buildAppProviders() {
       ),
     ),
     ChangeNotifierProvider<VideoViewModel>(
-      create: (context) =>
-          VideoViewModel(videoRepository: context.read<VideoRepository>()),
+      create: (context) => VideoViewModel(
+        videoRepository: context.read<VideoRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
+      ),
     ),
     ChangeNotifierProvider<SearchViewModel>(
       create: (context) => SearchViewModel(

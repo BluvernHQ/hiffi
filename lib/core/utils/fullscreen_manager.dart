@@ -18,16 +18,26 @@ class FullscreenManager {
     ]);
   }
 
-  /// Exits fullscreen mode: restores portrait orientation and system UI.
+  /// Exits fullscreen mode: restores system UI and forces portrait orientation initially.
   static Future<void> exitFullscreen() async {
-    await Future.wait([
-      // Restore system overlays (status bar, navigation bar)
-      SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.edgeToEdge,
-        overlays: SystemUiOverlay.values,
-      ),
-      // Restore portrait orientation
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    // 1. Restore system overlays immediately
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
+
+    // 2. Force portrait orientation to ensure we exit landscape mode
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+
+    // 3. After a short delay, allow all orientations again
+    await Future.delayed(const Duration(milliseconds: 500));
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
     ]);
   }
 
@@ -38,6 +48,14 @@ class FullscreenManager {
       DeviceOrientation.portraitDown,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  /// Locks orientation to portrait (standard app state).
+  static Future<void> lockToPortrait() async {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
     ]);
   }
 }

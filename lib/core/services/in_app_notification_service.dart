@@ -108,7 +108,7 @@ class InAppNotificationService {
             ],
           ],
         ),
-        backgroundColor: const Color(0xFFFF6B35), // Orange theme color
+        backgroundColor: const Color(0xFFED1C2F), // Red theme color
         behavior: SnackBarBehavior.floating,
         duration: const Duration(
           seconds: 2,

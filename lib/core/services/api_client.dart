@@ -6,11 +6,30 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../constants/api_constants.dart';
+import '../exceptions/api_exception.dart';
+import 'network_connectivity_service.dart';
 import 'token_storage_service.dart';
 
 class ApiClient {
-  ApiClient();
+  ApiClient({NetworkConnectivityService? connectivityService})
+    : _connectivityService = connectivityService;
+
+  final NetworkConnectivityService? _connectivityService;
   final http.Client _client = http.Client();
+
+  Future<void> _checkConnectivity() async {
+    if (_connectivityService != null) {
+      final isConnected = _connectivityService.checkConnectivitySync();
+      if (!isConnected) {
+        developer.log(
+          'No internet connection - skipping API call',
+          name: 'hiffi.api',
+        );
+        print('   🚫 No internet connection - skipping API call');
+        throw NoInternetException();
+      }
+    }
+  }
 
   // Custom HTTP client for uploads with relaxed certificate validation (dev only)
   http.Client? _uploadClient;
@@ -71,6 +90,7 @@ class ApiClient {
     bool requiresAuth = false,
     bool optionalAuth = false,
   }) async {
+    await _checkConnectivity();
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
     developer.log('GET $url', name: 'hiffi.api');
@@ -143,6 +163,7 @@ class ApiClient {
     String? idToken,
     Map<String, String>? headers,
   }) async {
+    await _checkConnectivity();
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
     developer.log('POST $url', name: 'hiffi.api');
@@ -219,6 +240,7 @@ class ApiClient {
     Map<String, dynamic> body, {
     bool requiresAuth = false,
   }) async {
+    await _checkConnectivity();
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
     developer.log('PUT $url', name: 'hiffi.api');
@@ -287,6 +309,7 @@ class ApiClient {
     String endpoint, {
     bool requiresAuth = false,
   }) async {
+    await _checkConnectivity();
     final url = Uri.parse('${ApiConstants.baseUrl}$endpoint');
 
     developer.log('DELETE $url', name: 'hiffi.api');

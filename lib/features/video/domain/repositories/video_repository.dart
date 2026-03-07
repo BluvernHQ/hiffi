@@ -68,6 +68,7 @@ abstract class VideoRepository {
   });
   Future<void> deleteVideo(String videoId);
   Future<void> deleteComment(String commentId);
+  Future<void> deleteReply(String replyId);
 }
 
 class VideoRepositoryImpl implements VideoRepository {
@@ -798,6 +799,26 @@ class VideoRepositoryImpl implements VideoRepository {
     if (responseBody != null && responseBody['success'] == false) {
       final error = responseBody['error'] as String? ?? 'Unknown error';
       throw Exception('Delete comment failed: $error');
+    }
+  }
+
+  @override
+  Future<void> deleteReply(String replyId) async {
+    final response = await _apiClient.delete(
+      ApiConstants.deleteReply(replyId),
+      requiresAuth: true,
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      throw Exception('Failed to delete reply: ${response.statusCode}');
+    }
+
+    final responseBody = response.body.isNotEmpty
+        ? jsonDecode(response.body)
+        : null;
+    if (responseBody != null && responseBody['success'] == false) {
+      final error = responseBody['error'] as String? ?? 'Unknown error';
+      throw Exception('Delete reply failed: $error');
     }
   }
 

@@ -128,7 +128,7 @@ class HiffiAvatar extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: const Color(0xFFFF6B35).withOpacity(0.1),
+        color: const Color(0xFFED1C2F).withOpacity(0.1),
         shape: BoxShape.circle,
       ),
       child: processedUrl != null
@@ -151,14 +151,14 @@ class HiffiAvatar extends StatelessWidget {
         child: Text(
           fallbackText![0].toUpperCase(),
           style: TextStyle(
-            color: const Color(0xFFFF6B35),
+            color: const Color(0xFFED1C2F),
             fontWeight: FontWeight.bold,
             fontSize: size * 0.4,
           ),
         ),
       );
     }
-    return Icon(Icons.person, size: size * 0.6, color: const Color(0xFFFF6B35));
+    return Icon(Icons.person, size: size * 0.6, color: const Color(0xFFED1C2F));
   }
 
   Widget _buildPlaceholder() {

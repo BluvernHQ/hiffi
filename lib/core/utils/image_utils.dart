@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart';
 /// Utility functions for handling image URLs, especially profile pictures
 class ImageUtils {
   // Base URL for profile images
-  static const String profileImageBaseUrl =
-      'https://black-paper-83cf.hiffi.workers.dev';
+  static const String profileImageBaseUrl = 'https://prod.hiffi.workers.dev';
+
+  /// Base URL for video and thumbnail media (Workers).
+  /// Use same host as profile for prod; override for dev if media is on a different Workers subdomain.
+  static const String mediaBaseUrl = 'https://prod.hiffi.workers.dev';
 
   // API key for profile image requests (should be stored securely in production)
   // TODO: Move this to environment variables or secure storage
@@ -114,14 +117,42 @@ class ImageUtils {
     return null;
   }
 
+  /// Resolves the API video_url to a full, playable progressive MP4 URL.
+  ///
+  /// The API may return:
+  /// - Relative path: "videos/{id}/original.mp4" → prepend [mediaBaseUrl].
+  /// - Full URL without file: "https://.../videos/{id}" → append "/{profile}.mp4".
+  /// - Full URL with file: "https://.../videos/{id}/original.mp4" → return as-is.
+  static String resolveVideoPlaybackUrl(String videoUrl,
+      {String profile = 'original'}) {
+    final trimmed = videoUrl.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    // Already a full URL
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (trimmed.toLowerCase().endsWith('.mp4')) {
+        // If it's already an MP4 URL and we want a specific profile, replace it
+        if (profile != 'original' && trimmed.endsWith('/original.mp4')) {
+          return trimmed.replaceFirst('/original.mp4', '/$profile.mp4');
+        }
+        return trimmed;
+      }
+      final base = trimmed.endsWith('/') ? trimmed : '$trimmed/';
+      return '${base}$profile.mp4';
+    }
+
+    // Relative path: prepend media base
+    final path = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+    if (profile != 'original' && path.endsWith('/original.mp4')) {
+      return '$mediaBaseUrl${path.replaceFirst('/original.mp4', '/$profile.mp4')}';
+    }
+    return '$mediaBaseUrl$path';
+  }
+
   /// Constructs a video URL for accessing videos via Cloudflare Workers
-  ///
-  /// The video URL from the API is already a full Workers URL:
-  /// "https://black-paper-83cf.hiffi.workers.dev/videos/{videoID}"
-  ///
-  /// This function just returns the URL as-is (for consistency and potential future processing)
+  /// (legacy; prefer [resolveVideoPlaybackUrl] for playback)
   static String getVideoUrl(String videoUrl) {
-    return videoUrl;
+    return resolveVideoPlaybackUrl(videoUrl);
   }
 
   /// Gets headers required for video requests (Workers URL)
@@ -154,7 +185,7 @@ class ImageUtils {
         ? videoThumbnail
         : '/$videoThumbnail';
 
-    return '$profileImageBaseUrl$path';
+    return '$mediaBaseUrl$path';
   }
 
   /// Gets headers required for video thumbnail requests

@@ -3,14 +3,19 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/api_exception.dart';
+import '../../../../core/services/network_connectivity_service.dart';
 import '../../data/user_repository.dart';
 import '../../domain/models/user_model.dart';
 
 class UserViewModel extends ChangeNotifier {
-  UserViewModel({required UserRepository userRepository})
-    : _userRepository = userRepository;
+  UserViewModel({
+    required UserRepository userRepository,
+    NetworkConnectivityService? connectivityService,
+  }) : _userRepository = userRepository,
+       _connectivityService = connectivityService;
 
   final UserRepository _userRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   UserModel?
   _currentUser; // The logged-in user (should never be overwritten by loadUser)
@@ -144,6 +149,19 @@ class UserViewModel extends ChangeNotifier {
   }
 
   Future<void> loadCurrentUser() async {
+    // If we're already loading, don't start another request
+    if (_isLoading) return;
+
+    // Check for internet connectivity before making the call
+    if (_connectivityService != null && !_connectivityService.isConnected) {
+      developer.log(
+        'Skipping loadCurrentUser: No internet connection',
+        name: 'hiffi.user',
+      );
+      _setError('No internet connection. Please check your settings.');
+      return;
+    }
+
     _setLoading(true);
     _setError(null);
 
@@ -160,7 +178,9 @@ class UserViewModel extends ChangeNotifier {
         name: 'hiffi.user',
         error: error,
       );
-      if (error is ApiException) {
+      if (error is NoInternetException) {
+        _setError('No internet connection');
+      } else if (error is ApiException) {
         _setError(error.message);
         // If 401 Unauthorized, clear the current user and set flag to prevent infinite retry loops
         if (error.statusCode == 401) {
@@ -183,6 +203,20 @@ class UserViewModel extends ChangeNotifier {
   }
 
   Future<void> loadUser(String username) async {
+    // If we're already loading, don't start another request
+    if (_isLoading) return;
+
+    // Check for internet connectivity before making the call
+    if (_connectivityService != null && !_connectivityService.isConnected) {
+      developer.log(
+        'Skipping loadUser: No internet connection',
+        name: 'hiffi.user',
+      );
+      _errorMessage = 'No internet connection';
+      notifyListeners();
+      return;
+    }
+
     _setLoading(true);
     _setError(null);
     _viewedUser = null; // Clear previous viewed user
@@ -214,7 +248,9 @@ class UserViewModel extends ChangeNotifier {
       // Clear viewed user on error
       _viewedUser = null;
       _isLoading = false;
-      if (error is ApiException) {
+      if (error is NoInternetException) {
+        _errorMessage = 'No internet connection';
+      } else if (error is ApiException) {
         _errorMessage = error.message;
       } else {
         _errorMessage = 'Failed to load user: $error';
@@ -578,10 +614,7 @@ class UserViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      developer.log(
-        'Verifying email update OTP: id=$id',
-        name: 'hiffi.user',
-      );
+      developer.log('Verifying email update OTP: id=$id', name: 'hiffi.user');
       _currentUser = await _userRepository.verifyEmailUpdateOTP(
         id: id,
         otp: otp,

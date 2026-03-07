@@ -57,6 +57,8 @@ class _SearchResultsPageState extends State<SearchResultsPage>
       ),
       body: searchViewModel.isLoading
           ? const Center(child: CircularProgressIndicator())
+          : searchViewModel.error != null
+          ? _buildErrorState(searchViewModel)
           : searchViewModel.hasNoResults
           ? _buildEmptyState()
           : TabBarView(
@@ -67,6 +69,95 @@ class _SearchResultsPageState extends State<SearchResultsPage>
                 _buildUserResults(searchViewModel),
               ],
             ),
+    );
+  }
+
+  Widget _buildErrorState(SearchViewModel viewModel) {
+    final error = viewModel.error ?? '';
+    final isNoInternet =
+        error.contains('SocketException') ||
+        error.contains('Failed host lookup') ||
+        error.contains('Network is unreachable');
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isNoInternet
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.primaryContainer.withOpacity(0.3)
+                    : Theme.of(
+                        context,
+                      ).colorScheme.errorContainer.withOpacity(0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isNoInternet
+                    ? Icons.wifi_off_rounded
+                    : Icons.error_outline_rounded,
+                size: 64,
+                color: isNoInternet
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.error,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              isNoInternet
+                  ? 'No Internet Connection'
+                  : 'Oops! Something went wrong',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                isNoInternet
+                    ? 'Please check your connection and try again to search on Hiffi.'
+                    : 'We encountered an error while searching. Please try again later.',
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton.icon(
+              onPressed: () {
+                viewModel.search(widget.query);
+              },
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text(
+                'Try Again',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 40,
+                  vertical: 16,
+                ),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -353,7 +444,7 @@ class _GridVideoCard extends StatelessWidget {
                                     Text(
                                       '• ',
                                       style: TextStyle(
-                                        color: Colors.orangeAccent,
+                                        color: Colors.redAccent,
                                         fontSize: 14,
                                         fontWeight: FontWeight.bold,
                                       ),

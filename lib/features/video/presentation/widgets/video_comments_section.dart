@@ -61,7 +61,7 @@ class InlineCommentEntryBar extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   border: Border.all(
-                    color: const Color(0xFFFF6B35).withOpacity(0.3),
+                    color: const Color(0xFFED1C2F).withOpacity(0.3),
                     width: 1,
                   ),
                   borderRadius: BorderRadius.circular(20),
@@ -88,7 +88,7 @@ class InlineCommentEntryBar extends StatelessWidget {
               },
               icon: const Icon(
                 Icons.send_rounded,
-                color: Color(0xFFFF6B35),
+                color: Color(0xFFED1C2F),
                 size: 20,
               ),
               padding: EdgeInsets.zero,
@@ -208,7 +208,7 @@ class LatestCommentPreview extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFFFF6B35),
+                        color: Color(0xFFED1C2F),
                       ),
                     ),
                   ],
@@ -307,7 +307,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
                         widget.controller.comments.isEmpty) {
                       return const Center(
                         child: CircularProgressIndicator(
-                          color: Color(0xFFFF6B35),
+                          color: Color(0xFFED1C2F),
                         ),
                       );
                     }
@@ -592,7 +592,7 @@ class _CommentTileState extends State<CommentTile> {
                       _showReplies
                           ? Icons.keyboard_arrow_up
                           : Icons.keyboard_arrow_down,
-                      color: const Color(0xFFFF6B35),
+                      color: const Color(0xFFED1C2F),
                       size: 20,
                     ),
                     Text(
@@ -601,7 +601,7 @@ class _CommentTileState extends State<CommentTile> {
                           : '${widget.comment.totalReplies} reply${widget.comment.totalReplies == 1 ? '' : 's'}',
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFFFF6B35),
+                        color: Color(0xFFED1C2F),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -761,7 +761,7 @@ class _CommentTileState extends State<CommentTile> {
                                   borderRadius: BorderRadius.circular(20),
                                   borderSide: BorderSide(
                                     color: const Color(
-                                      0xFFFF6B35,
+                                      0xFFED1C2F,
                                     ).withOpacity(0.3),
                                     width: 1,
                                   ),
@@ -770,7 +770,7 @@ class _CommentTileState extends State<CommentTile> {
                                   borderRadius: BorderRadius.circular(20),
                                   borderSide: BorderSide(
                                     color: const Color(
-                                      0xFFFF6B35,
+                                      0xFFED1C2F,
                                     ).withOpacity(0.3),
                                     width: 1,
                                   ),
@@ -778,7 +778,7 @@ class _CommentTileState extends State<CommentTile> {
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(20),
                                   borderSide: const BorderSide(
-                                    color: Color(0xFFFF6B35),
+                                    color: Color(0xFFED1C2F),
                                     width: 1.5,
                                   ),
                                 ),
@@ -800,7 +800,7 @@ class _CommentTileState extends State<CommentTile> {
                           IconButton(
                             icon: const Icon(
                               Icons.send_rounded,
-                              color: Color(0xFFFF6B35),
+                              color: Color(0xFFED1C2F),
                               size: 20,
                             ),
                             onPressed: () {
@@ -870,21 +870,21 @@ class _CommentTileState extends State<CommentTile> {
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
                           borderSide: BorderSide(
-                            color: const Color(0xFFFF6B35).withOpacity(0.3),
+                            color: const Color(0xFFED1C2F).withOpacity(0.3),
                             width: 1,
                           ),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
                           borderSide: BorderSide(
-                            color: const Color(0xFFFF6B35).withOpacity(0.3),
+                            color: const Color(0xFFED1C2F).withOpacity(0.3),
                             width: 1,
                           ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(20),
                           borderSide: const BorderSide(
-                            color: Color(0xFFFF6B35),
+                            color: Color(0xFFED1C2F),
                             width: 1.5,
                           ),
                         ),
@@ -906,7 +906,7 @@ class _CommentTileState extends State<CommentTile> {
                   IconButton(
                     icon: const Icon(
                       Icons.send_rounded,
-                      color: Color(0xFFFF6B35),
+                      color: Color(0xFFED1C2F),
                       size: 20,
                     ),
                     onPressed: () {
@@ -1167,7 +1167,7 @@ class _CommentComposerState extends State<CommentComposer> {
                       decoration: BoxDecoration(
                         border: Border.all(
                           color: _textController.text.trim().isNotEmpty
-                              ? const Color(0xFFFF6B35).withOpacity(0.5)
+                              ? const Color(0xFFED1C2F).withOpacity(0.5)
                               : Colors.grey[300]!,
                           width: 1,
                         ),
@@ -1201,7 +1201,7 @@ class _CommentComposerState extends State<CommentComposer> {
                     icon: Icon(
                       Icons.send_rounded,
                       color: _canSend
-                          ? const Color(0xFFFF6B35)
+                          ? const Color(0xFFED1C2F)
                           : Colors.grey[300],
                       size: 20,
                     ),

@@ -57,6 +57,9 @@ class VideoCommentsController extends ChangeNotifier {
         page: 1,
         limit: 1,
       );
+      debugPrint(
+        'VideoCommentsController: Received latest comment preview from backend',
+      );
       _comments = response.comments;
       _totalCommentsCount = response.count;
 
@@ -95,6 +98,9 @@ class VideoCommentsController extends ChangeNotifier {
         videoId,
         page: 1,
         limit: 50,
+      );
+      debugPrint(
+        'VideoCommentsController: Received ${response.comments.length} comments from backend',
       );
       _comments = response.comments;
       _totalCommentsCount = response.count;
@@ -226,6 +232,9 @@ class VideoCommentsController extends ChangeNotifier {
         page: 1,
         limit: 50,
       );
+      debugPrint(
+        'VideoCommentsController: Received ${response.replies.length} replies for comment $commentId from backend',
+      );
 
       // Enrich replies with profile pictures if available
       List<ReplyModel> enrichedReplies = response.replies;
@@ -283,9 +292,7 @@ class VideoCommentsController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // The API endpoint provided is /social/videos/comment/$id
-      // We use it for both comments and replies
-      await _repository.deleteComment(replyId);
+      await _repository.deleteReply(replyId);
     } catch (e) {
       // Rollback on error
       _comments[commentIndex] = comment.copyWith(

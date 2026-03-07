@@ -24,6 +24,9 @@ class CommentModel {
   final String? profilePicture;
 
   factory CommentModel.fromJson(Map<String, dynamic> json) {
+    final id = json['comment_id'] as String;
+    debugPrint('CommentModel: Parsed comment_id: $id from backend');
+
     // Try to get profile picture from various possible fields
     final profilePic =
         json['profile_picture'] as String? ??
@@ -173,6 +176,9 @@ class ReplyModel {
   final String? profilePicture;
 
   factory ReplyModel.fromJson(Map<String, dynamic> json) {
+    final id = json['reply_id'] as String;
+    debugPrint('ReplyModel: Parsed reply_id: $id from backend');
+
     return ReplyModel(
       replyId: json['reply_id'] as String,
       repliedBy: json['replied_by'] as String,

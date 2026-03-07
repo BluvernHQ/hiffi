@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_analytics/observer.dart';
+import 'package:flutter_estatisticas/umami_navigation_observer.dart';
+import 'package:flutter_estatisticas/umami_service.dart';
 
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/presentation/viewmodels/auth_view_model.dart';
@@ -16,23 +20,44 @@ import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
+import '../presentation/splash_screen.dart';
 
 class AppRouter {
-  AppRouter({required AuthRepository authRepository})
-    : _authRepository = authRepository,
-      _navigatorKey = GlobalKey<NavigatorState>() {
+  AppRouter({
+    required AuthRepository authRepository,
+    FirebaseAnalytics? analytics,
+    UmamiService? umamiService,
+  })  : _authRepository = authRepository,
+        _analytics = analytics ?? FirebaseAnalytics.instance,
+        _umamiService = umamiService ??
+            UmamiService(
+              endpoint: 'https://analytics.superlabs.co',
+              website: 'b7a2884e-fdec-4b9f-9ff8-29c5a4e63454',
+              hostname: 'hiffi.com',
+            ),
+        _navigatorKey = GlobalKey<NavigatorState>() {
     _refreshListenable = RouterRefreshStream(
       _authRepository.authStateChanges(),
     );
 
     router = GoRouter(
       navigatorKey: _navigatorKey,
-      initialLocation: '/home',
+      initialLocation: '/',
       refreshListenable: _refreshListenable,
       debugLogDiagnostics: true,
+      observers: [
+        FirebaseAnalyticsObserver(analytics: _analytics),
+        UmamiNavigationObserver(_umamiService),
+      ],
       routes: [
         GoRoute(
+          path: '/',
+          name: 'splash',
+          builder: (context, state) => const SplashScreen(),
+        ),
+        GoRoute(
           path: '/login',
+          name: 'login',
           builder: (context, state) {
             // Get return route from query parameters
             final returnRoute = state.uri.queryParameters['returnTo'];
@@ -44,6 +69,7 @@ class AppRouter {
         ),
         GoRoute(
           path: '/signup',
+          name: 'signup',
           builder: (context, state) {
             // Get return route from query parameters
             final returnRoute = state.uri.queryParameters['returnTo'];
@@ -53,22 +79,30 @@ class AppRouter {
             );
           },
         ),
-        GoRoute(path: '/home', builder: (context, state) => const HomePage()),
+        GoRoute(
+          path: '/home',
+          name: 'home',
+          builder: (context, state) => const HomePage(),
+        ),
         GoRoute(
           path: '/following',
+          name: 'following',
           builder: (context, state) => const FollowingPage(),
         ),
 
         GoRoute(
           path: '/upload/video',
+          name: 'video_upload',
           builder: (context, state) => const VideoUploadPage(),
         ),
         GoRoute(
           path: '/become-creator',
+          name: 'become_creator',
           builder: (context, state) => const BecomeCreatorPage(),
         ),
         GoRoute(
           path: '/users/:username',
+          name: 'user_profile',
           builder: (context, state) {
             final username = state.pathParameters['username'] ?? '';
             return UserProfilePage(username: username);
@@ -76,6 +110,7 @@ class AppRouter {
         ),
         GoRoute(
           path: '/video/:videoId',
+          name: 'video_detail',
           builder: (context, state) {
             final videoId = state.pathParameters['videoId'] ?? '';
             // Try to get video from extra first, then from cache
@@ -105,6 +140,7 @@ class AppRouter {
         ),
         GoRoute(
           path: '/search',
+          name: 'search',
           builder: (context, state) {
             final query = state.uri.queryParameters['q'] ?? '';
             return SearchResultsPage(query: query);
@@ -168,6 +204,12 @@ class AppRouter {
   late final RouterRefreshStream _refreshListenable;
   final AuthRepository _authRepository;
   final GlobalKey<NavigatorState> _navigatorKey;
+
+  final FirebaseAnalytics _analytics;
+  final UmamiService _umamiService;
+
+  FirebaseAnalytics get analytics => _analytics;
+  UmamiService get umamiService => _umamiService;
 
   GlobalKey<NavigatorState> get navigatorKey => _navigatorKey;
 

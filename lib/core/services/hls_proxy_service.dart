@@ -23,7 +23,7 @@ class HlsProxyService {
     if (_server != null) return _port!;
 
     // The base proxy handler for our workers domain
-    final baseProxy = proxyHandler('https://black-paper-83cf.hiffi.workers.dev');
+    final baseProxy = proxyHandler('https://prod.hiffi.workers.dev');
 
     final handler = const Pipeline()
         .addMiddleware(logRequests())

@@ -2,7 +2,6 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:hiffi/core/services/media/hiffi_audio_handler.dart';
-import 'package:hiffi/core/services/hls_source_resolver.dart';
 import 'package:hiffi/core/services/hls_proxy_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
@@ -22,7 +21,6 @@ class MediaSyncService {
   HiffiAudioHandler? _audioHandler;
   HlsPlayerController? _currentVideoController;
   VideoModel? _currentVideo;
-  final HlsSourceResolver _hlsResolver = HlsSourceResolver();
 
   bool _isBackgrounded = false;
   Duration? _lastVideoPosition;
@@ -31,14 +29,20 @@ class MediaSyncService {
   // Callbacks for UI-controlled navigation
   VoidCallback? _onNextRequested;
   VoidCallback? _onPreviousRequested;
+  bool Function()? _hasPreviousVideo;
+
+  /// Whether there is a previous video to go back to (e.g. after tapping Next).
+  bool get hasPreviousVideo => _hasPreviousVideo?.call() ?? false;
 
   /// Registers navigation callbacks from the UI.
   void registerNavigationCallbacks({
     VoidCallback? onNext,
     VoidCallback? onPrevious,
+    bool Function()? hasPreviousVideo,
   }) {
     _onNextRequested = onNext;
     _onPreviousRequested = onPrevious;
+    _hasPreviousVideo = hasPreviousVideo;
 
     // Update notification controls visibility
     _syncVideoToNotification();
@@ -57,7 +61,7 @@ class MediaSyncService {
     _audioHandler = await AudioService.init(
       builder: () => HiffiAudioHandler(),
       config: AudioServiceConfig(
-        androidNotificationChannelId: 'com.example.hiffi.channel.audio',
+        androidNotificationChannelId: 'com.hiffi.app.channel.audio',
         androidNotificationChannelName: 'Hiffi Playback',
         androidNotificationOngoing: true, // Persistent notification
         androidStopForegroundOnPause: true, // Required when ongoing is true
@@ -281,6 +285,16 @@ class MediaSyncService {
     _onPreviousRequested?.call();
   }
 
+  /// Request to play the next recommended video (e.g. from in-player controls).
+  void requestNextVideo() {
+    _onNextRequested?.call();
+  }
+
+  /// Request to play the previous video (e.g. from in-player controls).
+  void requestPreviousVideo() {
+    _onPreviousRequested?.call();
+  }
+
   /// Updates the MediaSession metadata while the video is in foreground.
   /// This ensures the notification is ready BEFORE the app is minimized.
   void _updateForegroundMetadata() {
@@ -289,13 +303,7 @@ class MediaSyncService {
         _currentVideoController == null)
       return;
 
-    final hlsUrl =
-        _currentVideoController!.currentProfile?.playlistUrl ??
-        _currentVideoController!.baseVideoUrl;
-
-    final resolvedUrl = hlsUrl.contains('/hls/')
-        ? hlsUrl
-        : '$hlsUrl/hls/master.m3u8';
+    final playbackUrl = _currentVideoController!.currentPlaybackUrl;
     final artworkUrl = HlsProxyService().getProxiedUrl(
       ImageUtils.getVideoThumbnailUrl(_currentVideo!.videoThumbnail) ?? '',
     );
@@ -310,7 +318,7 @@ class MediaSyncService {
         artUri: Uri.tryParse(artworkUrl),
         duration: _currentVideoController!.duration,
         playable: true,
-        extras: {'videoId': _currentVideo!.videoId, 'url': resolvedUrl},
+        extras: {'videoId': _currentVideo!.videoId, 'url': playbackUrl},
       ),
     );
 
@@ -384,20 +392,8 @@ class MediaSyncService {
 
       // 3. Start background audio service
       if (_audioHandler != null && _lastVideoPosition != null) {
-        // ... (rest of the HLS resolution logic stays the same)
-        String hlsUrl;
-        if (_currentVideoController!.currentProfile != null &&
-            _currentVideoController!.currentProfile!.playlistUrl.isNotEmpty) {
-          hlsUrl = _currentVideoController!.currentProfile!.playlistUrl;
-        } else {
-          // Resolve HLS URL from base URL using the resolver
-          hlsUrl = _hlsResolver.resolveHlsUrl(
-            _currentVideoController!.baseVideoUrl,
-          );
-        }
-
-        // 💡 FIX: Use the local proxy for background playback to handle segment rewriting
-        final proxiedUrl = HlsProxyService().getProxiedUrl(hlsUrl);
+        final playbackUrl = _currentVideoController!.currentPlaybackUrl;
+        final proxiedUrl = HlsProxyService().getProxiedUrl(playbackUrl);
 
         debugPrint(
           'MediaSyncService: Starting background audio via Proxy: $proxiedUrl',

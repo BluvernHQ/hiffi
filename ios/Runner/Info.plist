@@ -49,6 +49,8 @@
 		<string>This app needs camera access to join video calls.</string>
 		<key>NSMicrophoneUsageDescription</key>
 		<string>This app needs microphone access to capture audio for calls.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Hiffi needs access to your photo library so you can select and upload videos and images from your device.</string>
 		<key>UIStatusBarHidden</key>
 		<true/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>

@@ -153,7 +153,7 @@ class _AppSidebarState extends State<AppSidebar>
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const HiffiLogo(size: 32, fontSize: 22),
+                                  const HiffiLogo(size: 32),
                                   IconButton(
                                     onPressed: _toggleSidebar,
                                     icon: const Icon(Icons.close_rounded),

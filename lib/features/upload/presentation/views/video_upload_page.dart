@@ -229,7 +229,7 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: const Text('Upload canceled'),
-                      backgroundColor: Colors.orange,
+                      backgroundColor: Colors.red,
                       behavior: SnackBarBehavior.floating,
                     ),
                   );
@@ -632,21 +632,21 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
+                      color: Colors.red.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: Colors.orange.withOpacity(0.3),
+                        color: Colors.red.withOpacity(0.3),
                         width: 1,
                       ),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.cancel_outlined, color: Colors.orange),
+                        Icon(Icons.cancel_outlined, color: Colors.red),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             viewModel.errorMessage ?? 'Upload canceled',
-                            style: TextStyle(color: Colors.orange.shade900),
+                            style: TextStyle(color: Colors.red.shade900),
                           ),
                         ),
                       ],

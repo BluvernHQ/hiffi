@@ -5,7 +5,7 @@ import 'package:hiffi/core/services/media/media_sync_service.dart';
 
 /// Service to handle Picture-in-Picture mode via Platform Channels.
 class PipService {
-  static const MethodChannel _channel = MethodChannel('com.example.hiffi/pip');
+  static const MethodChannel _channel = MethodChannel('com.hiffi.app/pip');
 
   /// Notifier for PiP mode changes.
   static final ValueNotifier<bool> isInPipMode = ValueNotifier<bool>(false);

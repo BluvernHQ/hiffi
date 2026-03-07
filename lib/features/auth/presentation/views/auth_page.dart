@@ -142,7 +142,7 @@ class _AuthPageState extends State<AuthPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const HiffiLogo(size: 48, fontSize: 32),
+                    const HiffiLogo(size: 80),
                     const SizedBox(height: 8),
                     Text(
                       isSignIn

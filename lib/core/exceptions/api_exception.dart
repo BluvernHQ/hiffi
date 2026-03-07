@@ -7,3 +7,11 @@ class ApiException implements Exception {
   @override
   String toString() => 'ApiException: $message (Status: $statusCode)';
 }
+
+class NoInternetException implements Exception {
+  final String message;
+  NoInternetException([this.message = 'No internet connection']);
+
+  @override
+  String toString() => 'NoInternetException: $message';
+}

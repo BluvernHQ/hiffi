@@ -39,6 +39,7 @@ class _FollowingPageState extends State<FollowingPage> {
       },
       child: MainScaffold(
         appBar: AppBar(
+          toolbarHeight: 72,
           leadingWidth: 56,
           titleSpacing: 0,
           leading: Builder(
@@ -72,28 +73,132 @@ class _FollowingPageState extends State<FollowingPage> {
                     followingViewModel.videos.isEmpty)
                   SliverFillRemaining(
                     child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 48,
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            followingViewModel.errorMessage!,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              followingViewModel.refresh();
-                            },
-                            child: const Text('Retry'),
-                          ),
-                        ],
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(24),
+                              decoration: BoxDecoration(
+                                color:
+                                    (followingViewModel.errorMessage!.contains(
+                                          'SocketException',
+                                        ) ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Failed host lookup') ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Network is unreachable'))
+                                    ? Theme.of(context)
+                                          .colorScheme
+                                          .primaryContainer
+                                          .withOpacity(0.3)
+                                    : Theme.of(context)
+                                          .colorScheme
+                                          .errorContainer
+                                          .withOpacity(0.3),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                (followingViewModel.errorMessage!.contains(
+                                          'SocketException',
+                                        ) ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Failed host lookup') ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Network is unreachable'))
+                                    ? Icons.wifi_off_rounded
+                                    : Icons.error_outline_rounded,
+                                size: 64,
+                                color:
+                                    (followingViewModel.errorMessage!.contains(
+                                          'SocketException',
+                                        ) ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Failed host lookup') ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Network is unreachable'))
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                            const SizedBox(height: 32),
+                            Text(
+                              (followingViewModel.errorMessage!.contains(
+                                        'SocketException',
+                                      ) ||
+                                      followingViewModel.errorMessage!.contains(
+                                        'Failed host lookup',
+                                      ) ||
+                                      followingViewModel.errorMessage!.contains(
+                                        'Network is unreachable',
+                                      ))
+                                  ? 'No Internet Connection'
+                                  : 'Oops! Something went wrong',
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: -0.5,
+                                  ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 12),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              child: Text(
+                                (followingViewModel.errorMessage!.contains(
+                                          'SocketException',
+                                        ) ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Failed host lookup') ||
+                                        followingViewModel.errorMessage!
+                                            .contains('Network is unreachable'))
+                                    ? 'Please check your connection and try again to see your following feed.'
+                                    : 'We encountered an error while loading your following feed.',
+                                style: Theme.of(context).textTheme.bodyLarge
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                      height: 1.5,
+                                    ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                            const SizedBox(height: 40),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                followingViewModel.refresh();
+                              },
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text(
+                                'Try Again',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.primary,
+                                foregroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.onPrimary,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 40,
+                                  vertical: 16,
+                                ),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   )
@@ -339,62 +444,43 @@ class _GridVideoCard extends StatelessWidget {
                               );
                             },
                           ),
-                          // Processing indicator or View count overlay (top right)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.7),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: video.status == 'temp'
-                                  ? const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          '• ',
-                                          style: TextStyle(
-                                            color: Colors.orangeAccent,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Text(
-                                          'processing',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.visibility,
-                                          size: 12,
-                                          color: Colors.white,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _formatCount(video.videoViews),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
+                          // Processing indicator overlay (top right) – only when processing
+                          if (video.status == 'temp')
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '• ',
+                                      style: TextStyle(
+                                        color: Colors.redAccent,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
+                                    Text(
+                                      'processing',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ),
                           // Processing Overlay
                           if (video.status == 'temp')
                             IgnorePointer(
@@ -472,14 +558,5 @@ class _GridVideoCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _formatCount(int count) {
-    if (count >= 1000000) {
-      return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
-      return '${(count / 1000).toStringAsFixed(1)}K';
-    }
-    return count.toString();
   }
 }

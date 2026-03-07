@@ -61,7 +61,7 @@ class _BecomeCreatorPageState extends State<BecomeCreatorPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    const primaryColor = Color(0xFFFF6B35); // Orange color
+    const primaryColor = Color(0xFFED1C2F); // Red color
 
     return Scaffold(
       backgroundColor: Colors.white,

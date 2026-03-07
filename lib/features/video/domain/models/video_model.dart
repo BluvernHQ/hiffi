@@ -17,6 +17,8 @@ class VideoModel {
     this.userVoteStatus,
     this.profilePicture,
     this.status,
+    this.originalProfile,
+    this.profiles = const [],
   });
 
   final String videoId;
@@ -36,6 +38,8 @@ class VideoModel {
   final String? userVoteStatus; // 'upvoted', 'downvoted', or null
   final String? profilePicture; // Profile picture URL path from API
   final String? status; // 'temp' for processing videos
+  final String? originalProfile; // e.g., '720p'
+  final List<String> profiles; // e.g., ['240p', '480p']
 
   factory VideoModel.fromJson(Map<String, dynamic> json) {
     // Some API endpoints return user info in a nested 'user' object
@@ -101,6 +105,11 @@ class VideoModel {
           userData?['profile_picture'] as String? ??
           userData?['avatar_url'] as String?,
       status: json['status'] as String?,
+      originalProfile: json['original_profile'] as String?,
+      profiles: (json['profiles'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
     );
   }
 
@@ -123,6 +132,8 @@ class VideoModel {
       if (userVoteStatus != null) 'user_vote_status': userVoteStatus,
       if (profilePicture != null) 'profile_picture': profilePicture,
       if (status != null) 'status': status,
+      if (originalProfile != null) 'original_profile': originalProfile,
+      'profiles': profiles,
     };
   }
 
@@ -145,6 +156,8 @@ class VideoModel {
     String? userVoteStatus,
     String? profilePicture,
     String? status,
+    String? originalProfile,
+    List<String>? profiles,
   }) {
     return VideoModel(
       videoId: videoId ?? this.videoId,
@@ -164,6 +177,8 @@ class VideoModel {
       userVoteStatus: userVoteStatus ?? this.userVoteStatus,
       profilePicture: profilePicture ?? this.profilePicture,
       status: status ?? this.status,
+      originalProfile: originalProfile ?? this.originalProfile,
+      profiles: profiles ?? this.profiles,
     );
   }
 }
