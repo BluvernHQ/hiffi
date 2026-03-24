@@ -138,10 +138,7 @@ class MediaSyncService {
 
   /// Syncs video player state TO the notification controls.
   void _syncVideoToNotification() {
-    if (_isSyncing ||
-        _audioHandler == null ||
-        _isBackgrounded ||
-        _currentVideoController == null)
+    if (_isSyncing || _audioHandler == null || _currentVideoController == null)
       return;
 
     _isSyncing = true;
@@ -230,9 +227,11 @@ class MediaSyncService {
 
   /// Called from AudioHandler when user taps Pause in notification while app is in foreground.
   void pauseFromNotification() {
-    if (PipService.isTransitioningFromPip) {
+    // Don't pause while PiP is active or mid-transition – PipService will
+    // call us again once the PiP window state is settled.
+    if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
       debugPrint(
-        'MediaSyncService: Skipping pause request during PiP transition',
+        'MediaSyncService: Skipping pause request – inside PiP window',
       );
       return;
     }
@@ -341,177 +340,34 @@ class MediaSyncService {
     );
   }
 
-  /// Switches from video playback to background audio playback.
+  /// Marks that the app moved to background.
   ///
-  /// This is called when the app goes to background (paused/inactive).
-  /// The video player is paused and audio_service takes over playback.
+  /// In the unified playback model we no longer start a separate audio
+  /// pipeline here; the same video player keeps owning playback and we
+  /// just expose controls via the existing MediaSession.
   Future<void> switchToBackground() async {
     if (_isBackgrounded) {
       debugPrint('MediaSyncService: Already backgrounded, skipping');
       return;
     }
 
-    if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
-      debugPrint(
-        'MediaSyncService: In PiP or transitioning from PiP, skipping background audio switch',
-      );
-      return;
-    }
-
-    if (_currentVideoController == null || _currentVideo == null) {
-      debugPrint(
-        'MediaSyncService: Cannot switch to background - no active video',
-      );
-      return;
-    }
-
-    final videoController = _currentVideoController!.controller;
-    if (videoController == null || !videoController.value.isInitialized) {
-      debugPrint('MediaSyncService: Video controller not initialized');
-      return;
-    }
-
-    debugPrint('MediaSyncService: Switching to background audio playback');
-
-    _isSyncing = true; // Block listeners during transition
-    try {
-      // 1. Get current playback state from video player
-      final isPlaying = videoController.value.isPlaying;
-      _lastVideoPosition = videoController.value.position;
-      final duration = _currentVideoController!.duration;
-
-      debugPrint(
-        'MediaSyncService: Video state - playing: $isPlaying, position: ${_lastVideoPosition?.inSeconds}s, duration: ${duration.inSeconds}s',
-      );
-
-      // 2. Pause video player (stop rendering)
-      if (isPlaying) {
-        await _currentVideoController!.pause();
-        debugPrint('MediaSyncService: Video player paused');
-      }
-
-      // 3. Start background audio service
-      if (_audioHandler != null && _lastVideoPosition != null) {
-        final playbackUrl = _currentVideoController!.currentPlaybackUrl;
-        final proxiedUrl = HlsProxyService().getProxiedUrl(playbackUrl);
-
-        debugPrint(
-          'MediaSyncService: Starting background audio via Proxy: $proxiedUrl',
-        );
-
-        await _audioHandler!.startPlayback(
-          videoId: _currentVideo!.videoId,
-          url: proxiedUrl,
-          title: _currentVideo!.videoTitle,
-          artist: _currentVideo!.userUsername,
-          artwork: HlsProxyService().getProxiedUrl(
-            ImageUtils.getVideoThumbnailUrl(_currentVideo!.videoThumbnail) ??
-                '',
-          ),
-          duration: duration.inMilliseconds > 0 ? duration : null,
-          position: _lastVideoPosition!,
-          autoPlay: isPlaying,
-          headers: {'x-api-key': ImageUtils.profileImageApiKey},
-        );
-
-        // Update background controls with next/prev
-        _audioHandler!.playbackState.add(
-          _audioHandler!.playbackState.value.copyWith(
-            controls: [
-              MediaControl.skipToPrevious,
-              MediaControl.rewind,
-              if (isPlaying) MediaControl.pause else MediaControl.play,
-              MediaControl.fastForward,
-              MediaControl.skipToNext,
-            ],
-            androidCompactActionIndices: const [0, 2, 4],
-          ),
-        );
-
-        _isBackgrounded = true;
-        debugPrint(
-          'MediaSyncService: Successfully switched to background audio',
-        );
-      } else {
-        debugPrint('MediaSyncService: Audio handler not available');
-      }
-    } catch (e, stackTrace) {
-      debugPrint('MediaSyncService: Failed to switch to background: $e');
-      debugPrint('MediaSyncService: Stack trace: $stackTrace');
-      _isBackgrounded = false;
-
-      // Try to resume video if background switch failed
-      try {
-        await _currentVideoController?.play();
-      } catch (e) {
-        debugPrint('MediaSyncService: Failed to resume video: $e');
-      }
-    } finally {
-      _isSyncing = false;
-    }
+    debugPrint('MediaSyncService: Marking as backgrounded (unified player)');
+    _isBackgrounded = true;
   }
 
-  /// Switches from background audio back to foreground video playback.
+  /// Marks that the app came back to foreground.
   ///
-  /// This is called when the app comes back to foreground (resumed).
-  /// Audio service stops and video player resumes from the same position.
+  /// In the unified playback model we don't restart a separate audio
+  /// pipeline here; we just resume normal video-driven syncing.
   Future<void> switchToForeground() async {
     if (!_isBackgrounded) {
       debugPrint('MediaSyncService: Not backgrounded, skipping');
       return;
     }
 
-    if (_currentVideoController == null) {
-      debugPrint('MediaSyncService: No video controller available');
-      return;
-    }
-
-    debugPrint('MediaSyncService: Switching to foreground video playback');
-
-    _isSyncing = true; // Block listeners during transition
-    try {
-      // 1. Get current position from audio handler
-      Duration? position;
-      if (_audioHandler != null) {
-        position = _audioHandler!.currentPosition;
-        final wasPlaying = _audioHandler!.isPlaying;
-
-        debugPrint(
-          'MediaSyncService: Audio state - position: ${position.inSeconds}s, playing: $wasPlaying',
-        );
-
-        // 2. Stop background audio service
-        await _audioHandler!.stop();
-        debugPrint('MediaSyncService: Background audio stopped');
-      } else {
-        // Fallback to last known position
-        position = _lastVideoPosition;
-      }
-
-      // 3. Sync video controller to audio position
-      final videoController = _currentVideoController!.controller;
-      if (videoController != null && position != null) {
-        // Seek to the position from audio playback
-        await videoController.seekTo(position);
-        debugPrint(
-          'MediaSyncService: Video seeked to position: ${position.inSeconds}s',
-        );
-
-        // Resume video playback
-        await _currentVideoController!.play();
-        debugPrint('MediaSyncService: Video playback resumed');
-      }
-
-      _isBackgrounded = false;
-      _lastVideoPosition = null;
-      debugPrint('MediaSyncService: Successfully switched to foreground video');
-    } catch (e, stackTrace) {
-      debugPrint('MediaSyncService: Failed to switch to foreground: $e');
-      debugPrint('MediaSyncService: Stack trace: $stackTrace');
-      _isBackgrounded = false;
-    } finally {
-      _isSyncing = false;
-    }
+    debugPrint('MediaSyncService: Marking as foreground (unified player)');
+    _isBackgrounded = false;
+    _lastVideoPosition = null;
   }
 
   /// Gets whether the service is currently in background mode
@@ -528,10 +384,8 @@ class MediaSyncService {
       _currentVideoController = null;
       _currentVideo = null;
 
-      // Stop background audio if it was playing for this video
-      if (!_isBackgrounded) {
-        _audioHandler?.stop();
-      }
+      // Stop notification handler if we no longer have a player
+      _audioHandler?.stop();
     }
   }
 

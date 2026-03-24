@@ -1,15 +1,13 @@
 import 'dart:async';
-import 'dart:ui';
+
+import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:chewie/chewie.dart';
+import 'package:hiffi/core/services/media/media_sync_service.dart';
+import 'package:hiffi/features/video/domain/models/video_model.dart';
+import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
-import 'package:hiffi/features/video/domain/models/video_model.dart';
-import 'package:hiffi/core/services/media/media_sync_service.dart';
-import 'package:hiffi/core/widgets/hiffi_image.dart';
-import 'package:hiffi/core/utils/image_utils.dart';
 
 /// Production-ready HLS Video Player widget using video_player + chewie.
 ///
@@ -120,6 +118,18 @@ class HlsVideoPlayer extends StatefulWidget {
   static HlsPlayerController? getController(String videoId) {
     return _controllers[videoId];
   }
+
+  /// Truly disposes and removes the controller for a given videoId.
+  /// Call this when permanently leaving the video (page dispose / video change).
+  /// Do NOT call this during PiP transitions – the controller must stay alive.
+  static void disposeForVideo(String videoId) {
+    final controller = _controllers[videoId];
+    if (controller != null) {
+      controller.dispose();
+      _controllers.remove(videoId);
+      debugPrint('HlsVideoPlayer: Permanently disposed controller for $videoId');
+    }
+  }
 }
 
 class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
@@ -142,21 +152,33 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     super.initState();
     _isDisposed = false;
     debugPrint('HlsVideoPlayer: initState() for videoId ${widget.videoId}');
-    _controller = HlsPlayerController(
-      video: widget.video,
-      videoId: widget.videoId,
-      baseVideoUrl: widget.baseVideoUrl,
-      autoPlay: widget.autoPlay,
-      initialMuted: widget.initialMuted,
-      onVideoEnded: widget.onVideoEnded,
-    );
+
+    // Reuse existing controller if one is alive for this videoId.
+    // This is the key to surviving PiP-induced widget rebuilds:
+    // when Android resizes the window for PiP the widget tree is torn down
+    // and reconstructed, but the underlying VideoPlayerController must keep
+    // playing at its current position rather than restarting from 0.
+    final existing = HlsVideoPlayer._controllers[widget.videoId];
+    if (existing != null && !existing.isDisposed) {
+      _controller = existing;
+      debugPrint(
+        'HlsVideoPlayer: Reusing existing controller for ${widget.videoId} '
+        '(pos: ${existing.controller?.value.position})',
+      );
+    } else {
+      _controller = HlsPlayerController(
+        video: widget.video,
+        videoId: widget.videoId,
+        baseVideoUrl: widget.baseVideoUrl,
+        autoPlay: widget.autoPlay,
+        initialMuted: widget.initialMuted,
+        onVideoEnded: widget.onVideoEnded,
+      );
+      HlsVideoPlayer.registerController(widget.videoId, _controller);
+      MediaSyncService().setCurrentPlayer(_controller, widget.video);
+    }
+
     _controller.addListener(_onControllerStateChanged);
-
-    // Register controller for external pause access
-    HlsVideoPlayer.registerController(widget.videoId, _controller);
-
-    // Register with MediaSyncService for background audio transitions
-    MediaSyncService().setCurrentPlayer(_controller, widget.video);
   }
 
   @override
@@ -166,23 +188,33 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     if (oldWidget.videoId != widget.videoId ||
         oldWidget.baseVideoUrl != widget.baseVideoUrl) {
       debugPrint(
-        'HlsVideoPlayer: didUpdateWidget() - videoId changed from ${oldWidget.videoId} to ${widget.videoId}.',
+        'HlsVideoPlayer: didUpdateWidget() - videoId changed from '
+        '${oldWidget.videoId} to ${widget.videoId}.',
       );
 
-      HlsVideoPlayer.unregisterController(oldWidget.videoId);
       _controller.removeListener(_onControllerStateChanged);
-      _controller.dispose();
+      // Permanently dispose the old video's controller since we are
+      // intentionally switching to a different video.
+      HlsVideoPlayer.disposeForVideo(oldWidget.videoId);
 
-      _controller = HlsPlayerController(
-        video: widget.video,
-        videoId: widget.videoId,
-        baseVideoUrl: widget.baseVideoUrl,
-        autoPlay: widget.autoPlay,
-        initialMuted: widget.initialMuted,
-        onVideoEnded: widget.onVideoEnded,
-      );
+      // Reuse if a controller already exists for the new videoId (unlikely
+      // but safe), otherwise create fresh.
+      final existing = HlsVideoPlayer._controllers[widget.videoId];
+      if (existing != null && !existing.isDisposed) {
+        _controller = existing;
+      } else {
+        _controller = HlsPlayerController(
+          video: widget.video,
+          videoId: widget.videoId,
+          baseVideoUrl: widget.baseVideoUrl,
+          autoPlay: widget.autoPlay,
+          initialMuted: widget.initialMuted,
+          onVideoEnded: widget.onVideoEnded,
+        );
+        HlsVideoPlayer.registerController(widget.videoId, _controller);
+        MediaSyncService().setCurrentPlayer(_controller, widget.video);
+      }
       _controller.addListener(_onControllerStateChanged);
-      HlsVideoPlayer.registerController(widget.videoId, _controller);
     }
   }
 
@@ -190,24 +222,19 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   void dispose() {
     _isDisposed = true;
     debugPrint(
-      'HlsVideoPlayer: dispose() called for videoId ${widget.videoId}',
+      'HlsVideoPlayer: dispose() called for videoId ${widget.videoId} '
+      '(controller kept alive in registry for PiP survival)',
     );
 
     WakelockPlus.disable();
-
     _tapTimer?.cancel();
     _controller.removeListener(_onControllerStateChanged);
 
-    // 💡 ARCHITECTURAL FIX: We no longer dispose ChewieController here.
-    // ChewieController is now owned by HlsPlayerController, which survives
-    // when the HlsVideoPlayer widget is moved in the tree (e.g., rotation).
-    // It will be disposed only when HlsPlayerController is disposed.
-    //
-    // Chewie automatically restores orientation when disposed, so we don't need
-    // to manually call FullscreenManager here.
-
-    HlsVideoPlayer.unregisterController(widget.videoId);
-    _controller.dispose();
+    // Intentionally do NOT dispose the controller or remove it from the registry.
+    // The controller must survive PiP-induced widget rebuild cycles so playback
+    // continues at the exact same position when the widget is recreated.
+    // VideoPlayerPage.dispose() will call HlsVideoPlayer.disposeForVideo() to
+    // truly release resources when the user navigates away permanently.
 
     super.dispose();
   }
@@ -281,6 +308,13 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       WakelockPlus.enable();
     } else {
       WakelockPlus.disable();
+    }
+
+    // Ensure we don't end up with double audio: if background audio is
+    // still active and the inline player starts playing, force a switch
+    // back to foreground video playback.
+    if (_controller.isPlaying && MediaSyncService().isBackgrounded) {
+      MediaSyncService().switchToForeground();
     }
 
     // Detect manual fullscreen changes (from button)
@@ -365,27 +399,19 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
             height: constraints.maxHeight,
             child: Stack(
               children: [
-                // 1. Smooth Transition Backdrop (Blurred Thumbnail)
-                // Shown while the stream is initializing; no spinner overlay.
+                // 1. Loading overlay while the stream is initializing.
                 Positioned.fill(
                   child: AnimatedOpacity(
                     opacity: isInitialized ? 0.0 : 1.0,
                     duration: const Duration(milliseconds: 300),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: HiffiImage(
-                            imageUrl: ImageUtils.getVideoThumbnailUrl(widget.video.videoThumbnail),
-                            fit: BoxFit.cover,
-                          ),
+                    child: Container(
+                      color: Colors.black,
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFFED1C2F),
+                          strokeWidth: 3,
                         ),
-                        Positioned.fill(
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                            child: Container(color: Colors.black.withOpacity(0.3)),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),

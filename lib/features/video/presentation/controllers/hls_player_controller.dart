@@ -79,6 +79,7 @@ class HlsPlayerController extends ChangeNotifier {
   VideoPlayerController? get controller => _videoPlayerController;
   ChewieController? get chewieController => _chewieController;
   bool get isInitialized => _isInitialized;
+  bool get isDisposed => _isDisposed;
   bool get hasError => _hasError;
   String? get errorMessage => _errorMessage;
   PlayerState get currentState => _currentState;

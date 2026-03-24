@@ -19,6 +19,7 @@ import '../../features/user/presentation/views/become_creator_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
+import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
 import '../presentation/splash_screen.dart';
 
@@ -139,6 +140,23 @@ class AppRouter {
           },
         ),
         GoRoute(
+          path: '/watch/:videoId',
+          name: 'watch_video',
+          builder: (context, state) {
+            final videoId = state.pathParameters['videoId'] ?? '';
+
+            if (videoId.isEmpty) {
+              // Invalid deep link: send to home instead of crashing.
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (context.mounted) context.go('/home');
+              });
+              return const SizedBox.shrink();
+            }
+
+            return WatchScreen(videoId: videoId);
+          },
+        ),
+        GoRoute(
           path: '/search',
           name: 'search',
           builder: (context, state) {
@@ -168,6 +186,7 @@ class AppRouter {
         final onHome = state.uri.path == '/home';
         final onFollowing = state.uri.path == '/following';
         final onVideo = state.uri.path.startsWith('/video/');
+        final onWatch = state.uri.path.startsWith('/watch/');
         final onSearch = state.uri.path == '/search';
 
         if (!isLoggedIn) {
@@ -183,6 +202,7 @@ class AppRouter {
               onHome ||
               onFollowing ||
               onVideo ||
+              onWatch ||
               onSearch) {
             return null;
           }

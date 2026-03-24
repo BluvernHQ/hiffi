@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../features/auth/data/auth_repository.dart';
 import 'app_sidebar.dart';
+import '../utils/responsive.dart';
 
 class MainScaffold extends StatelessWidget {
   final Widget child;
@@ -22,7 +23,9 @@ class MainScaffold extends StatelessWidget {
       isAuthenticated: isAuthenticated,
         child: Scaffold(
           appBar: appBar,
-          body: SafeArea(child: child),
+          body: SafeArea(
+            child: ResponsiveMaxWidth(child: child),
+          ),
         ),
     );
   }

@@ -7,6 +7,7 @@ import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/following_view_model.dart';
@@ -278,7 +279,7 @@ class _FollowingPageState extends State<FollowingPage> {
                     padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
                     sliver: SliverGrid(
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
+                        crossAxisCount: responsiveGridColumns(context),
                         mainAxisSpacing: 12.h,
                         crossAxisSpacing: 12.w,
                         childAspectRatio: _calculateAspectRatio(context),
@@ -320,21 +321,17 @@ class _FollowingPageState extends State<FollowingPage> {
 // Calculate aspect ratio based on screen width and content height
 double _calculateAspectRatio(BuildContext context) {
   final screenWidth = MediaQuery.of(context).size.width;
-  // Calculate card width: (screen width - left padding - right padding - spacing) / 2
-  final horizontalPadding = 12.w * 2; // Left + right padding
-  final spacing = 12.w; // Space between cards
-  final cardWidth = (screenWidth - horizontalPadding - spacing) / 2;
+  final columns = responsiveGridColumns(context).toDouble();
+  final horizontalPadding = 12.w * 2;
+  final spacing = 12.w;
+  final cardWidth =
+      (screenWidth - horizontalPadding - spacing * (columns - 1)) / columns;
 
-  // Thumbnail maintains 16:9 aspect ratio
   final thumbnailHeight = cardWidth * (9 / 16);
-
-  // Text section height (responsive)
-  final textSectionHeight = 60.h + 8.h; // Text section + spacing
-
-  // Total card height
+  final textSectionHeight =
+      responsiveGridTextSectionHeight(context) + 8.h;
   final totalHeight = thumbnailHeight + textSectionHeight;
 
-  // Return aspect ratio (width / height)
   return cardWidth / totalHeight;
 }
 
@@ -503,24 +500,27 @@ class _GridVideoCard extends StatelessWidget {
               ),
             ),
             SizedBox(height: 8.h),
-            // Title and User section - Responsive height
+            // Title and User section – responsive font sizes for tablet (YouTube-style: 2 lines + ellipsis)
             SizedBox(
-              height: 60.h, // Responsive height to ensure visibility
+              height: responsiveGridTextSectionHeight(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Flexible(
-                    child: Text(
-                      video.videoTitle,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        height: 1.3,
-                        fontSize: 13.sp,
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        video.videoTitle,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                          fontSize: responsiveGridTitleFontSize(context),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   SizedBox(height: 6.h),
@@ -528,7 +528,7 @@ class _GridVideoCard extends StatelessWidget {
                     children: [
                       HiffiAvatar(
                         imageUrl: video.profilePicture,
-                        size: 20.r,
+                        size: responsiveGridAvatarSize(context),
                         fallbackText: video.userUsername,
                         cacheBust: video.updatedAt.millisecondsSinceEpoch,
                       ),
@@ -543,7 +543,7 @@ class _GridVideoCard extends StatelessWidget {
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.onSurfaceVariant.withOpacity(0.8),
-                                fontSize: 11.sp,
+                                fontSize: responsiveGridSubtitleFontSize(context),
                               ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

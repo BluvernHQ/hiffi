@@ -4,81 +4,83 @@ import 'package:flutter/widgets.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 
 /// Service to handle Picture-in-Picture mode via Platform Channels.
+///
+/// YouTube-style design: the video player is NEVER paused when entering PiP.
+/// PiP is just a different window on the same running player.
+/// We only pause when PiP is explicitly CLOSED (dismissed) by the user.
 class PipService {
   static const MethodChannel _channel = MethodChannel('com.hiffi.app/pip');
 
-  /// Notifier for PiP mode changes.
+  /// Whether the app is currently in PiP mode.
   static final ValueNotifier<bool> isInPipMode = ValueNotifier<bool>(false);
 
-  /// Flag to prevent background audio switch during PiP expansion.
+  /// True while the PiP→fullscreen expansion animation is in progress.
+  /// Used to prevent false "paused" lifecycle signals from interrupting playback.
   static bool isTransitioningFromPip = false;
 
-  /// Initializes the PiP service and sets up native callbacks.
   static void initialize() {
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'onPictureInPictureModeChanged') {
-        final bool isPip = call.arguments as bool;
-        debugPrint('PipService: PiP mode changed to $isPip');
+      if (call.method != 'onPictureInPictureModeChanged') return;
 
-        if (isInPipMode.value && !isPip) {
-          // 💡 EXPANSION/CLOSING detected
-          isTransitioningFromPip = true;
+      final bool isPip = call.arguments as bool;
+      debugPrint('PipService: PiP mode changed → $isPip');
 
-          // Keep isInPipMode true for a while to lock MediaSyncService
-          // until lifecycle states stabilize.
-          Future.delayed(const Duration(milliseconds: 1000), () {
-            isTransitioningFromPip = false;
-            isInPipMode.value = false;
-            debugPrint('PipService: Transition lock released');
-          });
+      if (isPip) {
+        // ─── Entering PiP ───────────────────────────────────────────────
+        // Keep the player running; just record that we are in PiP.
+        isInPipMode.value = true;
+        debugPrint('PipService: Entered PiP – player continues uninterrupted');
+      } else {
+        // ─── Leaving PiP (expand back to full-screen OR closed) ─────────
+        isTransitioningFromPip = true;
 
-          // Determine if we are expanding or closing.
-          Future.delayed(const Duration(milliseconds: 500), () {
-            final state = WidgetsBinding.instance.lifecycleState;
-            debugPrint('PipService: Exited PiP check, current state: $state');
+        // Wait for Flutter's lifecycle to stabilize after the animation.
+        Future.delayed(const Duration(milliseconds: 600), () {
+          isTransitioningFromPip = false;
+          isInPipMode.value = false;
+          debugPrint('PipService: PiP transition lock released');
+        });
 
-            final isClosing = state != AppLifecycleState.resumed;
+        // After a short delay, check if the app is visible again.
+        Future.delayed(const Duration(milliseconds: 300), () {
+          final lifecycle = WidgetsBinding.instance.lifecycleState;
+          debugPrint('PipService: Post-PiP lifecycle = $lifecycle');
 
-            if (isClosing) {
-              debugPrint('PipService: PiP closed, ensuring pause');
-              MediaSyncService().pauseFromNotification();
-              MediaSyncService().switchToBackground();
-            } else {
-              debugPrint('PipService: PiP expanded, forcing play');
-              // Force play to ensure any accidental lifecycle pauses are overridden
-              MediaSyncService().playFromNotification();
-            }
-          });
-        } else {
-          // 💡 ENTERING PiP or other state
-          isInPipMode.value = isPip;
-        }
+          if (lifecycle == AppLifecycleState.resumed) {
+            // User expanded PiP back to full screen – keep playing.
+            debugPrint('PipService: Expanded to fullscreen – ensuring play');
+            MediaSyncService().playFromNotification();
+          } else {
+            // PiP window was closed / dismissed – pause cleanly.
+            debugPrint('PipService: PiP dismissed – pausing');
+            MediaSyncService().pauseFromNotification();
+          }
+        });
       }
     });
   }
 
-  /// Updates the player status on the native side.
-  /// If [active] is true, the native side will allow entering PiP when user leaves the app.
+  /// Tells the native side whether a video is active so it can decide
+  /// whether to enter PiP when the user presses Home.
   static Future<void> updatePlayerStatus(bool active) async {
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
         await _channel.invokeMethod('updatePlayerStatus', active);
       }
     } on PlatformException catch (e) {
-      debugPrint('PipService: Failed to update player status: ${e.message}');
+      debugPrint('PipService: updatePlayerStatus failed: ${e.message}');
     }
   }
 
-  /// Triggers the native Picture-in-Picture mode.
+  /// Explicitly enters PiP mode (e.g., when the user taps a PiP button).
   static Future<void> enterPiP() async {
     try {
-      // Only attempt on Android for now as iOS handles it differently via AVPlayerLayer
       if (defaultTargetPlatform == TargetPlatform.android) {
         await _channel.invokeMethod('enterPiP');
-        debugPrint('PipService: Successfully requested PiP mode');
+        debugPrint('PipService: enterPiP requested');
       }
     } on PlatformException catch (e) {
-      debugPrint('PipService: Failed to enter PiP mode: ${e.message}');
+      debugPrint('PipService: enterPiP failed: ${e.message}');
     }
   }
 }

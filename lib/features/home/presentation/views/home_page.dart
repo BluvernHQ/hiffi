@@ -19,6 +19,7 @@ import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../search/presentation/widgets/search_overlay.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
+import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../viewmodels/home_view_model.dart';
 
@@ -699,11 +700,9 @@ class _HomePageState extends State<HomePage> {
                               padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
                               sliver: SliverGrid(
                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
+                                  crossAxisCount: responsiveGridColumns(context),
                                   mainAxisSpacing: 12.h,
                                   crossAxisSpacing: 12.w,
-                                  // Calculate aspect ratio based on screen size
-                                  // Thumbnail (16:9) + spacing + text section (60h)
                                   childAspectRatio: _calculateAspectRatio(
                                     context,
                                   ),
@@ -920,8 +919,9 @@ class _SignInPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isTablet = isTabletOrLarger(context);
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(isTablet ? 20 : 16),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
@@ -929,14 +929,15 @@ class _SignInPrompt extends StatelessWidget {
       child: Row(
         children: [
           CircleAvatar(
-            radius: 24,
+            radius: isTablet ? 28 : 24,
             backgroundColor: Theme.of(context).colorScheme.primaryContainer,
             child: Icon(
               Icons.person_outline,
               color: Theme.of(context).colorScheme.onPrimaryContainer,
+              size: isTablet ? 28 : 24,
             ),
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: isTablet ? 16 : 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -944,17 +945,20 @@ class _SignInPrompt extends StatelessWidget {
               children: [
                 Text(
                   'Sign in to access your profile',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: isTablet ? 14 : null,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Upload videos and manage your account',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant
+                        .withOpacity(0.7),
+                    fontSize: isTablet ? 13 : null,
                   ),
                 ),
               ],
@@ -971,21 +975,23 @@ class _SignInPrompt extends StatelessWidget {
 // Calculate aspect ratio based on screen width and content height
 double _calculateAspectRatio(BuildContext context) {
   final screenWidth = MediaQuery.of(context).size.width;
-  // Calculate card width: (screen width - left padding - right padding - spacing) / 2
-  final horizontalPadding = 12.w * 2; // Left + right padding
-  final spacing = 12.w; // Space between cards
-  final cardWidth = (screenWidth - horizontalPadding - spacing) / 2;
+  final columns = responsiveGridColumns(context).toDouble();
+  // Card width: (screen width - left padding - right padding - (columns-1)*spacing) / columns
+  final horizontalPadding = 12.w * 2;
+  final spacing = 12.w;
+  final cardWidth =
+      (screenWidth - horizontalPadding - spacing * (columns - 1)) / columns;
 
   // Thumbnail maintains 16:9 aspect ratio
   final thumbnailHeight = cardWidth * (9 / 16);
 
-  // Text section height (responsive)
-  final textSectionHeight = 60.h + 8.h; // Text section + spacing
+  // Text section height: responsive so cards stay balanced on tablet
+  final textSectionHeight =
+      responsiveGridTextSectionHeight(context) + 8.h;
 
   // Total card height
   final totalHeight = thumbnailHeight + textSectionHeight;
 
-  // Return aspect ratio (width / height)
   return cardWidth / totalHeight;
 }
 
@@ -1154,24 +1160,27 @@ class _GridVideoCard extends StatelessWidget {
               ),
             ),
             SizedBox(height: 8.h),
-            // Title and User section - Responsive height
+            // Title and User section – responsive font sizes for tablet (YouTube-style: 2 lines + ellipsis)
             SizedBox(
-              height: 60.h, // Responsive height to ensure visibility
+              height: responsiveGridTextSectionHeight(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Flexible(
-                    child: Text(
-                      video.videoTitle,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        height: 1.3,
-                        fontSize: 13.sp,
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        video.videoTitle,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                          fontSize: responsiveGridTitleFontSize(context),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   SizedBox(height: 6.h),
@@ -1179,7 +1188,7 @@ class _GridVideoCard extends StatelessWidget {
                     children: [
                       HiffiAvatar(
                         imageUrl: video.profilePicture,
-                        size: 20.r,
+                        size: responsiveGridAvatarSize(context),
                         fallbackText: video.userUsername,
                         cacheBust: video.updatedAt.millisecondsSinceEpoch,
                       ),
@@ -1194,7 +1203,7 @@ class _GridVideoCard extends StatelessWidget {
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.onSurfaceVariant.withOpacity(0.8),
-                                fontSize: 11.sp,
+                                fontSize: responsiveGridSubtitleFontSize(context),
                               ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

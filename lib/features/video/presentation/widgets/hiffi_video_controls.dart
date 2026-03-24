@@ -10,11 +10,6 @@ import 'package:hiffi/core/services/media/media_sync_service.dart';
 // Chewie provides PlayerNotifier in the widget tree; we need it for hide/show sync.
 // ignore: implementation_imports
 import 'package:chewie/src/notifiers/player_notifier.dart';
-// ignore: implementation_imports
-import 'package:chewie/src/material/widgets/options_dialog.dart';
-// ignore: implementation_imports
-import 'package:chewie/src/material/widgets/playback_speed_dialog.dart';
-
 /// Video controls with center Play/Pause only and Previous/Next video buttons.
 /// Seeking is handled by double-tap gestures (left = backward, right = forward).
 class HiffiVideoControls extends StatefulWidget {
@@ -195,65 +190,10 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
     );
   }
 
-  List<OptionItem> _buildOptions(BuildContext context) {
-    final options = <OptionItem>[
-      OptionItem(
-        onTap: (context) async {
-          Navigator.pop(context);
-          _onSpeedButtonTap();
-        },
-        iconData: Icons.speed,
-        title: chewieController.optionsTranslation?.playbackSpeedButtonText ??
-            'Playback speed',
-      ),
-    ];
-    if (chewieController.additionalOptions != null &&
-        chewieController.additionalOptions!(context).isNotEmpty) {
-      options.addAll(chewieController.additionalOptions!(context));
-    }
-    return options;
-  }
-
   Widget _buildOptionsButton() {
-    return IconButton(
-      onPressed: () async {
-        _hideTimer?.cancel();
-        if (chewieController.optionsBuilder != null) {
-          await chewieController.optionsBuilder!(
-            context,
-            _buildOptions(context),
-          );
-        } else {
-          await showModalBottomSheet<OptionItem>(
-            context: context,
-            isScrollControlled: true,
-            useRootNavigator: chewieController.useRootNavigator,
-            builder: (context) => OptionsDialog(
-              options: _buildOptions(context),
-              cancelButtonText:
-                  chewieController.optionsTranslation?.cancelButtonText,
-            ),
-          );
-        }
-        if (_latestValue.isPlaying) _startHideTimer();
-      },
-      icon: const Icon(Icons.more_vert, color: Colors.white),
-    );
-  }
-
-  Future<void> _onSpeedButtonTap() async {
-    _hideTimer?.cancel();
-    final chosenSpeed = await showModalBottomSheet<double>(
-      context: context,
-      isScrollControlled: true,
-      useRootNavigator: chewieController.useRootNavigator,
-      builder: (context) => PlaybackSpeedDialog(
-        speeds: chewieController.playbackSpeeds,
-        selected: _latestValue.playbackSpeed,
-      ),
-    );
-    if (chosenSpeed != null) controller.setPlaybackSpeed(chosenSpeed);
-    if (_latestValue.isPlaying) _startHideTimer();
+    // The in-player options menu has been removed in favor of the
+    // app bar overflow menu on the video page.
+    return const SizedBox.shrink();
   }
 
   Widget _buildHitArea() {

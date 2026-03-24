@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
 import '../../../auth/data/auth_repository.dart';
@@ -15,7 +16,9 @@ import 'package:hiffi/features/video/presentation/controllers/video_comments_con
 import 'package:hiffi/features/video/presentation/widgets/video_comments_section.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/fullscreen_manager.dart';
+import '../../../../core/services/pip_service.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/utils/responsive.dart';
 import '../../../../core/services/media/media_sync_service.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
@@ -89,8 +92,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   // Flag to prevent autoplay when returning from auth (video should be paused)
   bool _isReturningFromAuth = false;
 
-  // Suggested videos for autoplay
+  // Suggested videos for autoplay (loaded on page; not tied to portrait-only subtree)
   List<VideoModel> _suggestedVideos = [];
+  String? _suggestedSeed;
+  bool _suggestedLoading = false;
+  bool _suggestedError = false;
+  bool _suggestedNoInternet = false;
 
   // Previous-video stack: when user taps Next we push current; Previous pops and navigates back
   final List<VideoModel> _videoHistory = [];
@@ -161,6 +168,67 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     // 5️⃣ Fetch lightweight preview data
     _commentsController.fetchLatestComment();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSuggestedVideosForPlayer();
+    });
+  }
+
+  String _generateSuggestedSeed() {
+    const chars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random();
+    return String.fromCharCodes(
+      Iterable.generate(
+        32,
+        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+      ),
+    );
+  }
+
+  Future<void> _loadSuggestedVideosForPlayer({bool useNewSeed = false}) async {
+    final forVideoId = _video.videoId;
+    setState(() {
+      _suggestedLoading = true;
+      _suggestedError = false;
+      _suggestedNoInternet = false;
+    });
+    try {
+      if (useNewSeed || _suggestedSeed == null) {
+        _suggestedSeed = _generateSuggestedSeed();
+      }
+      final videoRepository = context.read<VideoRepository>();
+      final videos = await videoRepository.getVideos(
+        page: 1,
+        limit: 10,
+        seed: _suggestedSeed,
+      );
+      if (!mounted || _video.videoId != forVideoId) {
+        return;
+      }
+      setState(() {
+        _suggestedVideos = videos
+            .where((video) => video.videoId != forVideoId)
+            .take(6)
+            .toList();
+        _suggestedLoading = false;
+        _suggestedError = false;
+        _suggestedNoInternet = false;
+      });
+    } catch (e) {
+      if (!mounted || _video.videoId != forVideoId) {
+        return;
+      }
+      final errorString = e.toString();
+      final isNoInternet = errorString.contains('SocketException') ||
+          errorString.contains('Failed host lookup') ||
+          errorString.contains('Network is unreachable');
+      setState(() {
+        _suggestedLoading = false;
+        _suggestedError = true;
+        _suggestedNoInternet = isNoInternet;
+      });
+    }
   }
 
   void _playNextVideo() {
@@ -212,10 +280,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   @override
   void deactivate() {
-    debugPrint(
-      'VideoPlayerPage: deactivate() called - widget being removed from tree',
-    );
-    _pauseVideo();
+    // Only pause when navigating away from the page, NOT when entering PiP.
+    // In PiP the player should keep running – we just lose the full-screen UI.
+    if (!PipService.isInPipMode.value && !PipService.isTransitioningFromPip) {
+      debugPrint('VideoPlayerPage: deactivate() – pausing (not PiP)');
+      _pauseVideo();
+    } else {
+      debugPrint('VideoPlayerPage: deactivate() – PiP active, NOT pausing');
+    }
     super.deactivate();
   }
 
@@ -224,12 +296,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     super.didChangeAppLifecycleState(state);
 
     if (state == AppLifecycleState.paused) {
-      debugPrint(
-        'VideoPlayerPage: App paused - switching to background audio if needed',
-      );
+      // When entering PiP the lifecycle fires "paused" too.
+      // We must NOT pause the player or start a background engine here.
+      if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
+        debugPrint('VideoPlayerPage: lifecycle paused – inside PiP, ignoring');
+        return;
+      }
+      debugPrint('VideoPlayerPage: lifecycle paused – going to background');
       MediaSyncService().switchToBackground();
     } else if (state == AppLifecycleState.resumed) {
-      debugPrint('VideoPlayerPage: App resumed - returning to foreground');
+      debugPrint('VideoPlayerPage: lifecycle resumed – back to foreground');
       MediaSyncService().switchToForeground();
     }
   }
@@ -322,6 +398,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       );
     }
 
+    // Permanently release the old video's controller before switching.
+    // This is a deliberate video change, not a PiP rebuild, so we dispose now.
+    HlsVideoPlayer.disposeForVideo(_video.videoId);
+
     await HlsPlayerController.clearPlaybackPosition(newVideo.videoId);
 
     _isNavigatingAway = false;
@@ -356,6 +436,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     await _fetchAndInitializePlayer();
     await _loadUserAndFollowStatus();
     _commentsController.fetchLatestComment();
+    await _loadSuggestedVideosForPlayer(useNewSeed: true);
   }
 
   Future<void> _loadUserAndFollowStatus() async {
@@ -525,10 +606,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   @override
   void dispose() {
     debugPrint('VideoPlayerPage: dispose() called - cleaning up resources');
-    FullscreenManager.lockToPortrait(); // Lock back to portrait when leaving
+    FullscreenManager.lockToPortrait();
     WidgetsBinding.instance.removeObserver(this);
     _pauseVideo();
     _commentsController.dispose();
+    // Permanently dispose the HlsPlayerController now that the page is gone.
+    // HlsVideoPlayer.dispose() intentionally keeps the controller alive in the
+    // registry so PiP-induced widget rebuilds can reuse it. This call is the
+    // definitive teardown that actually releases the VideoPlayerController.
+    if (!_isLoading && !_hasError) {
+      HlsVideoPlayer.disposeForVideo(_video.videoId);
+    }
     super.dispose();
   }
 
@@ -539,6 +627,231 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       backgroundColor: Colors.transparent,
       builder: (context) =>
           CommentsBottomSheet(controller: _commentsController),
+    );
+  }
+
+  Future<void> _showVideoOptionsBottomSheet() async {
+    final controller = HlsVideoPlayer.getController(_video.videoId);
+    if (controller == null) return;
+
+    final chewie = controller.chewieController;
+    final playbackSpeeds = chewie?.playbackSpeeds ?? const [0.5, 1.0, 1.5, 2.0];
+    final currentSpeed = controller.controller?.value.playbackSpeed ?? 1.0;
+    // Ensure we don't show duplicate quality entries (e.g. "original" twice).
+    final profiles = controller.availableProfiles.toSet().toList();
+    final currentProfile = controller.currentProfile;
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        double selectedSpeed = currentSpeed;
+        String selectedProfile = currentProfile;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 18,
+                        offset: const Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[400],
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Playback & quality',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.of(context).pop(),
+                            tooltip: 'Close',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Fine-tune how this video plays.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      // Playback speed row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Playback speed',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            '${selectedSpeed.toStringAsFixed(2).replaceFirst(RegExp(r"\.00$"), "")}x',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: playbackSpeeds.map((speed) {
+                            final isSelected =
+                                (speed - selectedSpeed).abs() < 0.001;
+                            final label = speed
+                                .toStringAsFixed(2)
+                                .replaceFirst(RegExp(r"\.00$"), '');
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text('${label}x'),
+                                selected: isSelected,
+                                onSelected: (_) {
+                                  setModalState(() {
+                                    selectedSpeed = speed;
+                                  });
+                                  controller.controller
+                                      ?.setPlaybackSpeed(speed);
+                                },
+                                selectedColor:
+                                    const Color(0xFFED1C2F).withOpacity(0.1),
+                                labelStyle: TextStyle(
+                                  fontWeight:
+                                      isSelected ? FontWeight.w600 : null,
+                                  color: isSelected
+                                      ? const Color(0xFFED1C2F)
+                                      : Colors.black87,
+                                ),
+                                backgroundColor: const Color(0xFFF5F5F5),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      if (profiles.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Quality',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              selectedProfile == 'original'
+                                  ? 'Original'
+                                  : selectedProfile.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: profiles.map((profile) {
+                              final isSelected = profile == selectedProfile;
+                              final label = profile == 'original'
+                                  ? 'Original'
+                                  : profile.toUpperCase();
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: ChoiceChip(
+                                  label: Text(label),
+                                  selected: isSelected,
+                                  onSelected: (_) {
+                                    setModalState(() {
+                                      selectedProfile = profile;
+                                    });
+                                    controller.setProfile(profile);
+                                  },
+                                  selectedColor:
+                                      const Color(0xFFED1C2F).withOpacity(0.1),
+                                  labelStyle: TextStyle(
+                                    fontWeight:
+                                        isSelected ? FontWeight.w600 : null,
+                                    color: isSelected
+                                        ? const Color(0xFFED1C2F)
+                                        : Colors.black87,
+                                  ),
+                                  backgroundColor:
+                                      const Color(0xFFF5F5F5),
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+  void _shareVideo() {
+    final videoId = _video.videoId;
+    if (videoId.isEmpty) return;
+
+    final url = 'https://www.hiffi.com/watch/$videoId';
+    final title = _video.videoTitle;
+
+    Share.share(
+      url,
+      subject: title.isNotEmpty ? title : 'Watch this video on Hiffi',
     );
   }
 
@@ -647,6 +960,89 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
+  Widget _buildVideoChild() {
+    if (_isLoading) return const VideoPlayerShimmer();
+    if (_video.status == 'temp') {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.sync, color: Colors.redAccent, size: 48),
+            SizedBox(height: 16),
+            Text(
+              'Video is processing...',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_hasError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline_rounded,
+              color: Colors.white70,
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _isNoInternet ? 'No Internet Connection' : 'Failed to load video',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            if (_isNoInternet) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Please check your network and try again.',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _isLoading = true;
+                  _hasError = false;
+                  _isNoInternet = false;
+                });
+                _fetchAndInitializePlayer();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFED1C2F),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_videoUrlFromApi != null) {
+      return HlsVideoPlayer(
+        key: _playerKey,
+        video: _video,
+        videoId: _video.videoId,
+        baseVideoUrl: _videoUrlFromApi!,
+        autoPlay: !_isNavigatingAway && !_isReturningFromAuth,
+        onVideoEnded: _onVideoEnded,
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = HlsVideoPlayer.getController(_video.videoId);
@@ -692,10 +1088,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         final screenHeight = isLandscape
             ? min(size.width, size.height)
             : max(size.width, size.height);
-        final videoWidth = isLandscape ? screenWidth - padding.horizontal : screenWidth;
+        // On tablet/iPad portrait, constrain video width so it doesn't stretch too much
+        final contentWidth = isLandscape
+            ? screenWidth
+            : min(screenWidth, kMaxContentWidth);
+        final videoWidth = isLandscape ? screenWidth - padding.horizontal : contentWidth;
         final videoHeight = isLandscape
             ? screenHeight - padding.vertical
-            : screenWidth * (9 / 16);
+            : contentWidth * (9 / 16);
         final videoPadding = isLandscape
             ? padding
             : EdgeInsets.only(top: padding.top);
@@ -721,6 +1121,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         padding: const EdgeInsets.all(8),
                       ),
                     ),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.more_vert, color: Colors.white),
+                        onPressed: _showVideoOptionsBottomSheet,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black.withOpacity(0.5),
+                          padding: const EdgeInsets.all(8),
+                        ),
+                      ),
+                    ],
                     systemOverlayStyle: const SystemUiOverlayStyle(
                       statusBarColor: Colors.transparent,
                       statusBarIconBrightness: Brightness.light,
@@ -740,112 +1150,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   SliverToBoxAdapter(
                     child: Container(
                       color: Colors.black,
-                      child: Padding(
-                        padding: videoPadding,
-                        child: Container(
-                          width: videoWidth,
-                          height: videoHeight,
-                          color: Colors.black,
-                          child: _isLoading
-                          ? const VideoPlayerShimmer()
-                          : _video.status == 'temp'
-                          ? const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.sync,
-                                    color: Colors.redAccent,
-                                    size: 48,
-                                  ),
-                                  SizedBox(height: 16),
-                                  Text(
-                                    'Video is processing...',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
+                      child: isLandscape
+                          ? Padding(
+                              padding: videoPadding,
+                              child: Container(
+                                width: videoWidth,
+                                height: videoHeight,
+                                color: Colors.black,
+                                child: _buildVideoChild(),
                               ),
                             )
-                          : _hasError
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    _isNoInternet
-                                        ? Icons.wifi_off_rounded
-                                        : Icons.error_outline_rounded,
-                                    color: Colors.white70,
-                                    size: 48,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    _isNoInternet
-                                        ? 'No Internet Connection'
-                                        : 'Failed to load video',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  if (_isNoInternet) ...[
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Please check your network and try again.',
-                                      style: TextStyle(
-                                        color: Colors.white60,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                  const SizedBox(height: 24),
-                                  ElevatedButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _isLoading = true;
-                                        _hasError = false;
-                                        _isNoInternet = false;
-                                      });
-                                      _fetchAndInitializePlayer();
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFED1C2F),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 24,
-                                        vertical: 12,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                    ),
-                                    child: const Text(
-                                      'Retry',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                          : Center(
+                              child: Padding(
+                                padding: videoPadding,
+                                child: Container(
+                                  width: videoWidth,
+                                  height: videoHeight,
+                                  color: Colors.black,
+                                  child: _buildVideoChild(),
+                                ),
                               ),
-                            )
-                          : _videoUrlFromApi != null
-                          ? HlsVideoPlayer(
-                              key: _playerKey,
-                              video: _video,
-                              videoId: _video.videoId,
-                              baseVideoUrl: _videoUrlFromApi!,
-                              autoPlay:
-                                  !_isNavigatingAway && !_isReturningFromAuth,
-                              onVideoEnded: _onVideoEnded,
-                            )
-                          : const SizedBox.shrink(),
-                        ),
-                      ),
+                            ),
                     ),
                   ),
                   if (!isLandscape) ...[
@@ -899,115 +1224,133 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                               ],
                             ),
                             const SizedBox(height: 12),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF5F5F5),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _VideoActionButton(
-                                    icon: _isUpvoted
-                                        ? Icons.thumb_up
-                                        : Icons.thumb_up_outlined,
-                                    label: _formatCount(_upvoteCount),
-                                    isActive: _isUpvoted,
-                                    onTap: () async {
-                                      final authRepository = context
-                                          .read<AuthRepository>();
-                                      if (authRepository.currentUser == null) {
-                                        _showSignInRequiredDialog();
-                                        return;
-                                      }
-                                      final wasUpvoted = _isUpvoted;
-                                      final previousUpvoteCount = _upvoteCount;
-                                      final wasDownvoted = _isDownvoted;
-                                      final previousDownvoteCount =
-                                          _downvoteCount;
-                                      setState(() {
-                                        if (_isUpvoted) {
-                                          _isUpvoted = false;
-                                          _upvoteCount--;
-                                        } else {
-                                          if (_isDownvoted) {
-                                            _isDownvoted = false;
-                                            _downvoteCount--;
+                            Row(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF5F5F5),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _VideoActionButton(
+                                        icon: _isUpvoted
+                                            ? Icons.thumb_up
+                                            : Icons.thumb_up_outlined,
+                                        label: _formatCount(_upvoteCount),
+                                        isActive: _isUpvoted,
+                                        onTap: () async {
+                                          final authRepository =
+                                              context.read<AuthRepository>();
+                                          if (authRepository.currentUser ==
+                                              null) {
+                                            _showSignInRequiredDialog();
+                                            return;
                                           }
-                                          _isUpvoted = true;
-                                          _upvoteCount++;
-                                        }
-                                      });
-                                      try {
-                                        await context
-                                            .read<VideoRepository>()
-                                            .upvoteVideo(_video.videoId);
-                                      } catch (e) {
-                                        if (mounted)
+                                          final wasUpvoted = _isUpvoted;
+                                          final previousUpvoteCount =
+                                              _upvoteCount;
+                                          final wasDownvoted = _isDownvoted;
+                                          final previousDownvoteCount =
+                                              _downvoteCount;
                                           setState(() {
-                                            _isUpvoted = wasUpvoted;
-                                            _upvoteCount = previousUpvoteCount;
-                                            _isDownvoted = wasDownvoted;
-                                            _downvoteCount =
-                                                previousDownvoteCount;
+                                            if (_isUpvoted) {
+                                              _isUpvoted = false;
+                                              _upvoteCount--;
+                                            } else {
+                                              if (_isDownvoted) {
+                                                _isDownvoted = false;
+                                                _downvoteCount--;
+                                              }
+                                              _isUpvoted = true;
+                                              _upvoteCount++;
+                                            }
                                           });
-                                      }
-                                    },
-                                  ),
-                                  Container(
-                                    width: 1,
-                                    height: 20,
-                                    color: Colors.grey[300],
-                                  ),
-                                  _VideoActionButton(
-                                    icon: _isDownvoted
-                                        ? Icons.thumb_down
-                                        : Icons.thumb_down_outlined,
-                                    label: '',
-                                    isActive: _isDownvoted,
-                                    onTap: () async {
-                                      final authRepository = context
-                                          .read<AuthRepository>();
-                                      if (authRepository.currentUser == null) {
-                                        _showSignInRequiredDialog();
-                                        return;
-                                      }
-                                      final wasDownvoted = _isDownvoted;
-                                      final previousDownvoteCount =
-                                          _downvoteCount;
-                                      final wasUpvoted = _isUpvoted;
-                                      final previousUpvoteCount = _upvoteCount;
-                                      setState(() {
-                                        if (_isDownvoted) {
-                                          _isDownvoted = false;
-                                          _downvoteCount--;
-                                        } else {
-                                          if (_isUpvoted) {
-                                            _isUpvoted = false;
-                                            _upvoteCount--;
+                                          try {
+                                            await context
+                                                .read<VideoRepository>()
+                                                .upvoteVideo(_video.videoId);
+                                          } catch (e) {
+                                            if (mounted) {
+                                              setState(() {
+                                                _isUpvoted = wasUpvoted;
+                                                _upvoteCount =
+                                                    previousUpvoteCount;
+                                                _isDownvoted = wasDownvoted;
+                                                _downvoteCount =
+                                                    previousDownvoteCount;
+                                              });
+                                            }
                                           }
-                                          _isDownvoted = true;
-                                          _downvoteCount++;
-                                        }
-                                      });
-                                      try {
-                                        await context
-                                            .read<VideoRepository>()
-                                            .downvoteVideo(_video.videoId);
-                                      } catch (e) {
-                                        if (mounted)
+                                        },
+                                      ),
+                                      Container(
+                                        width: 1,
+                                        height: 20,
+                                        color: Colors.grey[300],
+                                      ),
+                                      _VideoActionButton(
+                                        icon: _isDownvoted
+                                            ? Icons.thumb_down
+                                            : Icons.thumb_down_outlined,
+                                        label: '',
+                                        isActive: _isDownvoted,
+                                        onTap: () async {
+                                          final authRepository =
+                                              context.read<AuthRepository>();
+                                          if (authRepository.currentUser ==
+                                              null) {
+                                            _showSignInRequiredDialog();
+                                            return;
+                                          }
+                                          final wasDownvoted = _isDownvoted;
+                                          final previousDownvoteCount =
+                                              _downvoteCount;
+                                          final wasUpvoted = _isUpvoted;
+                                          final previousUpvoteCount =
+                                              _upvoteCount;
                                           setState(() {
-                                            _isDownvoted = wasDownvoted;
-                                            _downvoteCount =
-                                                previousDownvoteCount;
-                                            _isUpvoted = wasUpvoted;
-                                            _upvoteCount = previousUpvoteCount;
+                                            if (_isDownvoted) {
+                                              _isDownvoted = false;
+                                              _downvoteCount--;
+                                            } else {
+                                              if (_isUpvoted) {
+                                                _isUpvoted = false;
+                                                _upvoteCount--;
+                                              }
+                                              _isDownvoted = true;
+                                              _downvoteCount++;
+                                            }
                                           });
-                                      }
-                                    },
+                                          try {
+                                            await context
+                                                .read<VideoRepository>()
+                                                .downvoteVideo(_video.videoId);
+                                          } catch (e) {
+                                            if (mounted) {
+                                              setState(() {
+                                                _isDownvoted = wasDownvoted;
+                                                _downvoteCount =
+                                                    previousDownvoteCount;
+                                                _isUpvoted = wasUpvoted;
+                                                _upvoteCount =
+                                                    previousUpvoteCount;
+                                              });
+                                            }
+                                          }
+                                        },
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
+                                ),
+                                const SizedBox(width: 12),
+                                IconButton(
+                                  icon: const Icon(Icons.share),
+                                  color: const Color(0xFF1A1A1A),
+                                  onPressed: _shareVideo,
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1256,11 +1599,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     ),
                     SliverToBoxAdapter(
                       child: _SuggestedVideosSection(
-                        currentVideoId: _video.videoId,
+                        videos: _suggestedVideos,
+                        isLoading: _suggestedLoading,
+                        hasError: _suggestedError,
+                        isNoInternet: _suggestedNoInternet,
+                        onRetry: () => _loadSuggestedVideosForPlayer(),
                         onVideoSelected: (video) =>
                             _replaceVideo(video, pushCurrentToHistory: true),
-                        onVideosLoaded: (videos) =>
-                            setState(() => _suggestedVideos = videos),
                       ),
                     ),
                   ],
@@ -1339,117 +1684,48 @@ class _VideoActionButton extends StatelessWidget {
   }
 }
 
-class _SuggestedVideosSection extends StatefulWidget {
-  final String currentVideoId;
-  final Function(VideoModel) onVideoSelected;
-  final Function(List<VideoModel>)? onVideosLoaded;
+class _SuggestedVideosSection extends StatelessWidget {
   const _SuggestedVideosSection({
-    required this.currentVideoId,
+    required this.videos,
+    required this.isLoading,
+    required this.hasError,
+    required this.isNoInternet,
+    required this.onRetry,
     required this.onVideoSelected,
-    this.onVideosLoaded,
   });
-  @override
-  State<_SuggestedVideosSection> createState() =>
-      _SuggestedVideosSectionState();
-}
 
-class _SuggestedVideosSectionState extends State<_SuggestedVideosSection> {
-  List<VideoModel> _suggestedVideos = [];
-  bool _isLoading = false;
-  bool _hasError = false;
-  bool _isNoInternet = false;
-  String? _seed;
-  String _generateNewSeed() {
-    const chars =
-        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final random = Random();
-    return String.fromCharCodes(
-      Iterable.generate(
-        32,
-        (_) => chars.codeUnitAt(random.nextInt(chars.length)),
-      ),
-    );
-  }
-
-  Future<void> _loadSuggestedVideos({bool useNewSeed = false}) async {
-    setState(() {
-      _isLoading = true;
-      _hasError = false;
-      _isNoInternet = false;
-    });
-    try {
-      if (useNewSeed || _seed == null) _seed = _generateNewSeed();
-      final videos = await context.read<VideoRepository>().getVideos(
-        page: 1,
-        limit: 10,
-        seed: _seed,
-      );
-      if (mounted) {
-        setState(() {
-          _suggestedVideos = videos
-              .where((video) => video.videoId != widget.currentVideoId)
-              .take(6)
-              .toList();
-          _isLoading = false;
-          _hasError = false;
-          _isNoInternet = false;
-        });
-        widget.onVideosLoaded?.call(_suggestedVideos);
-      }
-    } catch (e) {
-      if (mounted) {
-        final errorString = e.toString();
-        final isNoInternet =
-            errorString.contains('SocketException') ||
-            errorString.contains('Failed host lookup') ||
-            errorString.contains('Network is unreachable');
-
-        setState(() {
-          _isLoading = false;
-          _hasError = true;
-          _isNoInternet = isNoInternet;
-        });
-      }
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSuggestedVideos();
-  }
-
-  @override
-  void didUpdateWidget(_SuggestedVideosSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.currentVideoId != widget.currentVideoId)
-      _loadSuggestedVideos(useNewSeed: true);
-  }
+  final List<VideoModel> videos;
+  final bool isLoading;
+  final bool hasError;
+  final bool isNoInternet;
+  final VoidCallback onRetry;
+  final void Function(VideoModel) onVideoSelected;
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading)
+    if (isLoading) {
       return const Padding(
         padding: EdgeInsets.all(16),
         child: Center(
           child: CircularProgressIndicator(color: Color(0xFFED1C2F)),
         ),
       );
+    }
 
-    if (_hasError) {
+    if (hasError) {
       return Container(
         color: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         child: Column(
           children: [
             Icon(
-              _isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline,
+              isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline,
               color: const Color(0xFF6B6B6B),
               size: 40,
             ),
             const SizedBox(height: 12),
             Text(
-              _isNoInternet
+              isNoInternet
                   ? 'No Internet Connection'
                   : 'Failed to load suggested videos',
               style: const TextStyle(
@@ -1461,7 +1737,7 @@ class _SuggestedVideosSectionState extends State<_SuggestedVideosSection> {
             ),
             const SizedBox(height: 16),
             TextButton.icon(
-              onPressed: () => _loadSuggestedVideos(),
+              onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text('Retry'),
               style: TextButton.styleFrom(
@@ -1473,7 +1749,7 @@ class _SuggestedVideosSectionState extends State<_SuggestedVideosSection> {
       );
     }
 
-    if (_suggestedVideos.isEmpty) return const SizedBox.shrink();
+    if (videos.isEmpty) return const SizedBox.shrink();
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.all(16),
@@ -1493,14 +1769,14 @@ class _SuggestedVideosSectionState extends State<_SuggestedVideosSection> {
             height: 220,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: _suggestedVideos.length,
+              itemCount: videos.length,
               itemBuilder: (context, index) => Padding(
                 padding: EdgeInsets.only(
-                  right: index == _suggestedVideos.length - 1 ? 0 : 12,
+                  right: index == videos.length - 1 ? 0 : 12,
                 ),
                 child: _SuggestedVideoCard(
-                  video: _suggestedVideos[index],
-                  onTap: widget.onVideoSelected,
+                  video: videos[index],
+                  onTap: onVideoSelected,
                 ),
               ),
             ),

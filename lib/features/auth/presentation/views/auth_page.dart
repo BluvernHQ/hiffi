@@ -663,36 +663,51 @@ class _OtpInputState extends State<_OtpInput> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: List.generate(6, (index) {
-              final isFocused = widget.controller.text.length == index;
-              final hasValue = widget.controller.text.length > index;
+              final text = widget.controller.text;
+              final len = text.length;
+              final hasDigit = index < len;
+              // Slot where the next digit will go (0–5); none when all 6 entered
+              final isActive = index == len && len < 6;
+
+              final scheme = theme.colorScheme;
+              late final Color bg;
+              late final Color borderColor;
+              late final double borderWidth;
+
+              if (hasDigit) {
+                bg = scheme.primaryContainer.withOpacity(0.35);
+                borderColor = scheme.primary.withOpacity(0.55);
+                borderWidth = 1.5;
+              } else if (isActive) {
+                bg = scheme.primary.withOpacity(0.14);
+                borderColor = scheme.primary;
+                borderWidth = 2;
+              } else {
+                // Pending / not-yet-filled: always visible vs active & filled
+                bg = scheme.surfaceContainerHighest.withOpacity(0.85);
+                borderColor = scheme.outlineVariant;
+                borderWidth = 1;
+              }
 
               return Container(
                 width: 45,
                 height: 55,
                 decoration: BoxDecoration(
-                  color: hasValue
-                      ? Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer.withOpacity(0.2)
-                      : Theme.of(
-                          context,
-                        ).colorScheme.surfaceVariant.withOpacity(0.4),
+                  color: bg,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isFocused
-                        ? Theme.of(context).colorScheme.primary
-                        : hasValue
-                        ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
-                        : Colors.transparent,
-                    width: 2,
+                    color: borderColor,
+                    width: borderWidth,
                   ),
                 ),
                 child: Center(
                   child: Text(
-                    hasValue ? widget.controller.text[index] : '',
+                    hasDigit ? text[index] : '',
                     style: theme.textTheme.headlineMedium?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onSurface,
+                      color: hasDigit
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant.withOpacity(0.35),
                     ),
                   ),
                 ),

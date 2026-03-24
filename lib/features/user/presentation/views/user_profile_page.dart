@@ -14,6 +14,7 @@ import '../../domain/models/user_model.dart';
 import '../viewmodels/user_view_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/utils/responsive.dart';
 import '../../../../core/utils/file_validation_utils.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/hiffi_image.dart';
@@ -1132,15 +1133,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
   }
 
   Widget _buildVideoList(BuildContext context, bool isOwnProfile) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth <= 640;
-
-    // Mobile: Horizontal ListView with Landscape Thumbnails
-    if (isMobile) {
-      // Landscape aspect ratio: 16:9 (width:height)
-      // Increased size: Width 200px, Height = 200 * (9/16) = 112.5px
+    // Use responsive breakpoints: horizontal list on mobile, grid on tablet/iPad
+    if (!isTabletOrLarger(context)) {
+      // Mobile: Horizontal ListView with Landscape Thumbnails
       const itemWidth = 200.0;
-      const itemHeight = 112.5; // 200 * (9/16) = 112.5
+      const itemHeight = 112.5; // 200 * (9/16)
 
       return SizedBox(
         height: itemHeight,
@@ -1169,8 +1166,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
       );
     }
 
-    // Tablet/Desktop: Grid View
-    final crossAxisCount = screenWidth > 1024 ? 4 : 2;
+    // Tablet/iPad: Grid with responsive columns (2/3/4)
+    final crossAxisCount = responsiveGridColumns(context);
 
     return GridView.builder(
       shrinkWrap: true,
