@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 class NetworkConnectivityService {
   NetworkConnectivityService() {
     _connectivity = Connectivity();
-    _init();
+    _initFuture = _init();
   }
 
   Connectivity _connectivity = Connectivity();
@@ -14,6 +14,12 @@ class NetworkConnectivityService {
   StreamSubscription<List<ConnectivityResult>>? _subscription;
   bool _isConnected = false;
   bool _isInitialized = false;
+  late final Future<void> _initFuture;
+
+  /// Wait until the first platform connectivity check has finished.
+  /// Call this before reading [isConnected] on cold start to avoid a false
+  /// "offline" while [_init] is still in flight.
+  Future<void> ensureInitialized() => _initFuture;
 
   /// Stream of connectivity status changes
   Stream<bool> get connectivityStream {

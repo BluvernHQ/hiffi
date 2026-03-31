@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
@@ -21,9 +21,11 @@ import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
 import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
-import '../presentation/splash_screen.dart';
-
 class AppRouter {
+  /// For [RouteAware] on [VideoPlayerPage] (PiP eligibility when another route covers the player).
+  final RouteObserver<ModalRoute<void>> routeObserver =
+      RouteObserver<ModalRoute<void>>();
+
   AppRouter({
     required AuthRepository authRepository,
     FirebaseAnalytics? analytics,
@@ -43,19 +45,15 @@ class AppRouter {
 
     router = GoRouter(
       navigatorKey: _navigatorKey,
-      initialLocation: '/',
+      initialLocation: '/home',
       refreshListenable: _refreshListenable,
       debugLogDiagnostics: true,
       observers: [
+        routeObserver,
         FirebaseAnalyticsObserver(analytics: _analytics),
         UmamiNavigationObserver(_umamiService),
       ],
       routes: [
-        GoRoute(
-          path: '/',
-          name: 'splash',
-          builder: (context, state) => const SplashScreen(),
-        ),
         GoRoute(
           path: '/login',
           name: 'login',
@@ -165,7 +163,7 @@ class AppRouter {
           },
         ),
       ],
-      redirect: (context, state) async {
+      redirect: (context, state) {
         final authViewModel = _readAuthViewModel(context);
         final isPostSignUpPending =
             authViewModel?.isPostSignUpRedirectPending ?? false;
@@ -173,9 +171,6 @@ class AppRouter {
         if (isPostSignUpPending) {
           return state.uri.path == '/login' ? null : '/login';
         }
-
-        // Wait a tiny bit to ensure auth state is updated
-        await Future.delayed(const Duration(milliseconds: 100));
 
         final isLoggedIn = _authRepository.currentUser != null;
         final loggingIn = state.uri.path == '/login';

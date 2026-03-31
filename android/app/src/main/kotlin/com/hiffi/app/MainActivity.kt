@@ -1,6 +1,7 @@
 package com.hiffi.app
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.util.Rational
@@ -33,6 +34,10 @@ class MainActivity : AudioServiceActivity() {
                 }
                 "enterPiP" -> {
                     enterPipIfNeeded()
+                    result.success(null)
+                }
+                "expandFromPip" -> {
+                    expandFromPip()
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -76,6 +81,20 @@ class MainActivity : AudioServiceActivity() {
             } catch (e: Exception) {
                 // Device might not support PiP or aspect ratio is invalid.
             }
+        }
+    }
+
+    /// Brings the app out of PiP back into the normal task window.
+    private fun expandFromPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!isInPictureInPictureMode) return
+        try {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "expandFromPip failed", e)
         }
     }
 

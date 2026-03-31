@@ -27,9 +27,7 @@ class FullscreenManager {
     );
 
     // 2. Force portrait orientation to ensure we exit landscape mode
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
     // 3. After a short delay, allow all orientations again
     await Future.delayed(const Duration(milliseconds: 500));

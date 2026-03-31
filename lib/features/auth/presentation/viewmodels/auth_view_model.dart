@@ -331,10 +331,13 @@ class AuthViewModel extends ChangeNotifier {
   void _fetchUserProfileAsync() {
     Future.microtask(() async {
       try {
-        // Check for internet connectivity before making the call
-        if (_connectivityService != null && !_connectivityService.isConnected) {
-          print('   🚫 Skipping async profile fetch: No internet connection');
-          return;
+        final connectivity = _connectivityService;
+        if (connectivity != null) {
+          await connectivity.ensureInitialized();
+          if (!connectivity.isConnected) {
+            print('   🚫 Skipping async profile fetch: No internet connection');
+            return;
+          }
         }
 
         // Wait a bit to ensure token is ready

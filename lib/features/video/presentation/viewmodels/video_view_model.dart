@@ -34,11 +34,14 @@ class VideoViewModel extends ChangeNotifier {
   Future<void> loadVideos({bool refresh = false, String? searchQuery}) async {
     if (_isLoading) return;
 
-    // Check for internet connectivity before making the call
-    if (_connectivityService != null && !_connectivityService.isConnected) {
-      _errorMessage = 'No internet connection';
-      notifyListeners();
-      return;
+    final connectivity = _connectivityService;
+    if (connectivity != null) {
+      await connectivity.ensureInitialized();
+      if (!connectivity.isConnected) {
+        _errorMessage = 'No internet connection';
+        notifyListeners();
+        return;
+      }
     }
 
     // If search query changed, reset pagination

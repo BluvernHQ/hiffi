@@ -256,7 +256,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ],
                 ),
               )
-            : viewModel.isLoading || (!_hasAttemptedLoad && user == null)
+            : ((!_hasAttemptedLoad && user == null) ||
+                  (user == null && viewModel.isLoading))
             ? const ProfileShimmer()
             : viewModel.errorMessage != null
             ? Center(
@@ -656,7 +657,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
-          onPressed: viewModel.isLoading
+          onPressed: viewModel.isFollowActionLoading
               ? null
               : () async {
                   try {
@@ -665,7 +666,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     } else {
                       await viewModel.followUser(widget.username);
                     }
-                    await viewModel.loadUser(widget.username);
                   } catch (e) {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -687,7 +687,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
               borderRadius: BorderRadius.circular(18),
             ),
           ),
-          child: viewModel.isLoading
+          child: viewModel.isFollowActionLoading
               ? const InlineShimmer(width: 20, height: 20)
               : Text(
                   user.isFollowing == true ? 'Following' : 'Follow',
@@ -1069,12 +1069,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
         ),
         const SizedBox(height: 8),
         if (_isLoadingVideos)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.all(32.0),
-              child: CircularProgressIndicator(),
-            ),
-          )
+          _buildVideoListShimmer(context)
         else if (_videosError != null)
           Center(
             child: Padding(
@@ -1129,6 +1124,48 @@ class _UserProfilePageState extends State<UserProfilePage> {
         else
           _buildVideoList(context, isOwnProfile),
       ],
+    );
+  }
+
+  Widget _buildVideoListShimmer(BuildContext context) {
+    if (!isTabletOrLarger(context)) {
+      const itemWidth = 200.0;
+      const itemHeight = 112.5;
+      return SizedBox(
+        height: itemHeight,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          itemCount: 4,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (context, index) {
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: const InlineShimmer(width: itemWidth, height: itemHeight),
+            );
+          },
+        ),
+      );
+    }
+
+    final crossAxisCount = responsiveGridColumns(context);
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 16 / 9,
+      ),
+      itemCount: crossAxisCount * 2,
+      itemBuilder: (context, index) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: const InlineShimmer(width: double.infinity, height: 110),
+        );
+      },
     );
   }
 

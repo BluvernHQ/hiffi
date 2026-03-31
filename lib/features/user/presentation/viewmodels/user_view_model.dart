@@ -22,6 +22,7 @@ class UserViewModel extends ChangeNotifier {
   UserModel? _viewedUser; // The user being viewed in profile pages
   bool _isLoading = false;
   bool _isCheckingAvailability = false;
+  bool _isFollowActionLoading = false;
   String? _errorMessage;
   String? _usernameAvailabilityMessage;
   bool? _isUsernameAvailable;
@@ -56,6 +57,7 @@ class UserViewModel extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   bool get isCheckingAvailability => _isCheckingAvailability;
+  bool get isFollowActionLoading => _isFollowActionLoading;
   String? get errorMessage => _errorMessage;
   String? get usernameAvailabilityMessage => _usernameAvailabilityMessage;
   bool? get isUsernameAvailable => _isUsernameAvailable;
@@ -152,14 +154,17 @@ class UserViewModel extends ChangeNotifier {
     // If we're already loading, don't start another request
     if (_isLoading) return;
 
-    // Check for internet connectivity before making the call
-    if (_connectivityService != null && !_connectivityService.isConnected) {
-      developer.log(
-        'Skipping loadCurrentUser: No internet connection',
-        name: 'hiffi.user',
-      );
-      _setError('No internet connection. Please check your settings.');
-      return;
+    final connectivity = _connectivityService;
+    if (connectivity != null) {
+      await connectivity.ensureInitialized();
+      if (!connectivity.isConnected) {
+        developer.log(
+          'Skipping loadCurrentUser: No internet connection',
+          name: 'hiffi.user',
+        );
+        _setError('No internet connection. Please check your settings.');
+        return;
+      }
     }
 
     _setLoading(true);
@@ -206,21 +211,23 @@ class UserViewModel extends ChangeNotifier {
     // If we're already loading, don't start another request
     if (_isLoading) return;
 
-    // Check for internet connectivity before making the call
-    if (_connectivityService != null && !_connectivityService.isConnected) {
-      developer.log(
-        'Skipping loadUser: No internet connection',
-        name: 'hiffi.user',
-      );
-      _errorMessage = 'No internet connection';
-      notifyListeners();
-      return;
+    final connectivity = _connectivityService;
+    if (connectivity != null) {
+      await connectivity.ensureInitialized();
+      if (!connectivity.isConnected) {
+        developer.log(
+          'Skipping loadUser: No internet connection',
+          name: 'hiffi.user',
+        );
+        _errorMessage = 'No internet connection';
+        notifyListeners();
+        return;
+      }
     }
 
     _setLoading(true);
     _setError(null);
-    _viewedUser = null; // Clear previous viewed user
-    notifyListeners(); // Notify that we're starting to load
+    // Keep existing user on screen while refreshing to avoid full-page flicker.
 
     try {
       developer.log('Loading user: $username', name: 'hiffi.user');
@@ -430,24 +437,25 @@ class UserViewModel extends ChangeNotifier {
   }
 
   Future<void> followUser(String username) async {
-    _setLoading(true);
+    if (_isFollowActionLoading) return;
+    _isFollowActionLoading = true;
     _setError(null);
+    final previousViewedUser = _viewedUser;
 
     try {
       developer.log('Following user: $username', name: 'hiffi.user');
-      await _userRepository.followUser(username);
-
-      // Reload user to get updated follow status
       if (_viewedUser?.username == username) {
-        // If viewing the user being followed, reload to update isFollowing
-        await loadUser(username);
-      } else {
-        // Reload current user to update following count
-        await loadCurrentUser();
+        _viewedUser = _viewedUser!.copyWith(
+          isFollowing: true,
+          followers: _viewedUser!.followers + 1,
+        );
       }
-
+      notifyListeners();
+      await _userRepository.followUser(username);
       developer.log('User followed successfully', name: 'hiffi.user');
     } catch (error) {
+      _viewedUser = previousViewedUser;
+      notifyListeners();
       developer.log(
         'Failed to follow user: $error',
         name: 'hiffi.user',
@@ -460,29 +468,34 @@ class UserViewModel extends ChangeNotifier {
       }
       rethrow;
     } finally {
-      _setLoading(false);
+      _isFollowActionLoading = false;
+      notifyListeners();
     }
   }
 
   Future<void> unfollowUser(String username) async {
-    _setLoading(true);
+    if (_isFollowActionLoading) return;
+    _isFollowActionLoading = true;
     _setError(null);
+    final previousViewedUser = _viewedUser;
 
     try {
       developer.log('Unfollowing user: $username', name: 'hiffi.user');
-      await _userRepository.unfollowUser(username);
-
-      // Reload user to get updated follow status
       if (_viewedUser?.username == username) {
-        // If viewing the user being unfollowed, reload to update isFollowing
-        await loadUser(username);
-      } else {
-        // Reload current user to update following count
-        await loadCurrentUser();
+        final nextFollowers = _viewedUser!.followers > 0
+            ? _viewedUser!.followers - 1
+            : 0;
+        _viewedUser = _viewedUser!.copyWith(
+          isFollowing: false,
+          followers: nextFollowers,
+        );
       }
-
+      notifyListeners();
+      await _userRepository.unfollowUser(username);
       developer.log('User unfollowed successfully', name: 'hiffi.user');
     } catch (error) {
+      _viewedUser = previousViewedUser;
+      notifyListeners();
       developer.log(
         'Failed to unfollow user: $error',
         name: 'hiffi.user',
@@ -495,7 +508,8 @@ class UserViewModel extends ChangeNotifier {
       }
       rethrow;
     } finally {
-      _setLoading(false);
+      _isFollowActionLoading = false;
+      notifyListeners();
     }
   }
 

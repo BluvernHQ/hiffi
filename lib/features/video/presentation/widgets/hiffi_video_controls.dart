@@ -1,21 +1,42 @@
 import 'dart:async';
 
 import 'package:chewie/chewie.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:hiffi/core/services/media/media_sync_service.dart';
+import 'package:hiffi/core/services/pip_service.dart';
 
 // Chewie provides PlayerNotifier in the widget tree; we need it for hide/show sync.
 // ignore: implementation_imports
 import 'package:chewie/src/notifiers/player_notifier.dart';
 /// Video controls with center Play/Pause only and Previous/Next video buttons.
 /// Seeking is handled by double-tap gestures (left = backward, right = forward).
+///
+/// PiP: no persistent chrome — tap the surface to show a bottom bar (play, skip,
+/// fullscreen, open app); auto-hides after a few seconds.
 class HiffiVideoControls extends StatefulWidget {
-  const HiffiVideoControls({this.showPlayButton = true, super.key});
+  const HiffiVideoControls({
+    this.showPlayButton = true,
+    this.fullscreenUiListenable,
+    this.onToggleInAppFullscreen,
+    this.onPipExpandToApp,
+    this.onPipEnterFullscreen,
+    super.key,
+  });
 
   final bool showPlayButton;
+
+  /// Syncs toolbar fullscreen icon when using [onToggleInAppFullscreen].
+  final ValueNotifier<bool>? fullscreenUiListenable;
+
+  /// In-app fullscreen (immersive + landscape); used when Chewie fullscreen is off.
+  final VoidCallback? onToggleInAppFullscreen;
+
+  final Future<void> Function()? onPipExpandToApp;
+  final Future<void> Function()? onPipEnterFullscreen;
 
   @override
   State<HiffiVideoControls> createState() => _HiffiVideoControlsState();
@@ -27,7 +48,11 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   double? _latestVolume;
   Timer? _hideTimer;
   Timer? _initTimer;
+  Timer? _pipOverlayHideTimer;
   bool _dragging = false;
+
+  /// PiP: bottom bar visible after user taps the video; hidden by default.
+  bool _pipOverlayVisible = false;
 
   final double _barHeight = 48.0 * 1.5;
   final double _marginSize = 5.0;
@@ -41,10 +66,22 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   void initState() {
     super.initState();
     notifier = Provider.of<PlayerNotifier>(context, listen: false);
+    PipService.isInPipMode.addListener(_onPipModeChanged);
+  }
+
+  void _onPipModeChanged() {
+    if (!PipService.isInPipMode.value) {
+      _pipOverlayHideTimer?.cancel();
+      if (_pipOverlayVisible && mounted) {
+        setState(() => _pipOverlayVisible = false);
+      }
+    }
   }
 
   @override
   void dispose() {
+    PipService.isInPipMode.removeListener(_onPipModeChanged);
+    _pipOverlayHideTimer?.cancel();
     _dispose();
     super.dispose();
   }
@@ -126,10 +163,124 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
     });
   }
 
+  static const Duration _pipOverlayAutoHide = Duration(seconds: 5);
+
+  void _schedulePipOverlayHide() {
+    _pipOverlayHideTimer?.cancel();
+    _pipOverlayHideTimer = Timer(_pipOverlayAutoHide, () {
+      if (!mounted || !PipService.isInPipMode.value) return;
+      setState(() => _pipOverlayVisible = false);
+    });
+  }
+
+  void _onPipScrimTap() {
+    setState(() {
+      if (_pipOverlayVisible) {
+        _pipOverlayVisible = false;
+        _pipOverlayHideTimer?.cancel();
+      } else {
+        _pipOverlayVisible = true;
+        _schedulePipOverlayHide();
+      }
+    });
+  }
+
+  Widget _buildPipOverlayBar(BuildContext context) {
+    final isFinished = (_latestValue.position >= _latestValue.duration) &&
+        _latestValue.duration.inSeconds > 0;
+    return Material(
+      color: Colors.black.withOpacity(0.78),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.skip_previous),
+                color: Colors.white,
+                iconSize: 26,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                onPressed: MediaSyncService().hasPreviousVideo
+                    ? () {
+                        _schedulePipOverlayHide();
+                        MediaSyncService().requestPreviousVideo();
+                      }
+                    : null,
+              ),
+              IconButton(
+                icon: Icon(
+                  isFinished
+                      ? Icons.replay
+                      : (_latestValue.isPlaying
+                          ? Icons.pause
+                          : Icons.play_arrow),
+                ),
+                color: Colors.white,
+                iconSize: 34,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                onPressed: () {
+                  _schedulePipOverlayHide();
+                  _playPause();
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.skip_next),
+                color: Colors.white,
+                iconSize: 26,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                onPressed: () {
+                  _schedulePipOverlayHide();
+                  MediaSyncService().requestNextVideo();
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_full),
+                color: Colors.white,
+                iconSize: 24,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                tooltip: 'Open app',
+                onPressed: widget.onPipExpandToApp == null
+                    ? null
+                    : () async {
+                        _schedulePipOverlayHide();
+                        await widget.onPipExpandToApp!();
+                      },
+              ),
+              IconButton(
+                icon: const Icon(Icons.fullscreen),
+                color: Colors.white,
+                iconSize: 24,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                tooltip: 'Fullscreen',
+                onPressed: widget.onPipEnterFullscreen == null
+                    ? null
+                    : () async {
+                        _schedulePipOverlayHide();
+                        await widget.onPipEnterFullscreen!();
+                      },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onExpandCollapse() {
     setState(() {
       notifier.hideStuff = true;
-      chewieController.toggleFullScreen();
+      if (widget.onToggleInAppFullscreen != null) {
+        widget.onToggleInAppFullscreen!();
+      } else {
+        chewieController.toggleFullScreen();
+      }
       Timer(const Duration(milliseconds: 300), () {
         if (mounted) _cancelAndRestartTimer();
       });
@@ -148,6 +299,35 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
           );
     }
 
+    return ValueListenableBuilder<bool>(
+      valueListenable: PipService.isInPipMode,
+      builder: (context, inPip, _) {
+        if (inPip) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _onPipScrimTap,
+                ),
+              ),
+              if (_pipOverlayVisible)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _buildPipOverlayBar(context),
+                ),
+            ],
+          );
+        }
+        return _buildFullScreenControls(context);
+      },
+    );
+  }
+
+  Widget _buildFullScreenControls(BuildContext context) {
     return MouseRegion(
       onHover: (_) => _cancelAndRestartTimer(),
       child: GestureDetector(
@@ -332,7 +512,9 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
                     if (chewieController.allowMuting)
                       _buildMuteButton(controller),
                     const Spacer(),
-                    if (chewieController.allowFullScreen) _buildExpandButton(),
+                    if (chewieController.allowFullScreen ||
+                        widget.onToggleInAppFullscreen != null)
+                      _buildFullscreenToolbarButton(),
                   ],
                 ),
               ),
@@ -412,7 +594,29 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
     );
   }
 
-  Widget _buildExpandButton() {
+  Widget _buildFullscreenToolbarButton() {
+    final listenable = widget.fullscreenUiListenable;
+    if (widget.onToggleInAppFullscreen != null && listenable != null) {
+      return ValueListenableBuilder<bool>(
+        valueListenable: listenable,
+        builder: (context, inFs, _) {
+          return GestureDetector(
+            onTap: _onExpandCollapse,
+            child: Container(
+              height: _barHeight + (inFs ? 15.0 : 0),
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.only(left: 8, right: 8),
+              child: Center(
+                child: Icon(
+                  inFs ? Icons.fullscreen_exit : Icons.fullscreen,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
     return GestureDetector(
       onTap: _onExpandCollapse,
       child: Container(

@@ -4,6 +4,7 @@ import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
+import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -127,7 +128,9 @@ class HlsVideoPlayer extends StatefulWidget {
     if (controller != null) {
       controller.dispose();
       _controllers.remove(videoId);
-      debugPrint('HlsVideoPlayer: Permanently disposed controller for $videoId');
+      debugPrint(
+        'HlsVideoPlayer: Permanently disposed controller for $videoId',
+      );
     }
   }
 }
@@ -291,7 +294,8 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     if (_isDisposed || !mounted || _controller.isFullScreen) return;
     if (MediaQuery.of(context).orientation != Orientation.portrait) return;
     final velocity = details.primaryVelocity ?? 0;
-    final crossedThreshold = _verticalDragUpTotal >= _pullToFullscreenThresholdPx ||
+    final crossedThreshold =
+        _verticalDragUpTotal >= _pullToFullscreenThresholdPx ||
         (velocity <= 0 && velocity.abs() >= _pullToFullscreenVelocityThreshold);
     if (crossedThreshold) {
       debugPrint('HlsVideoPlayer: Pull-up to fullscreen triggered');
@@ -323,18 +327,18 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       _lastFullScreen = _controller.isFullScreen;
 
       // 💡 GUARD: If we are currently switching profiles, ignore fullscreen state changes.
-      // This prevents the UI from triggering an "exitFullscreen" snap while we're 
+      // This prevents the UI from triggering an "exitFullscreen" snap while we're
       // just swapping the underlying video player.
       if (_controller.isSwitchingProfile) {
-        debugPrint('HlsVideoPlayer: Ignoring fullscreen change during profile switch');
+        debugPrint(
+          'HlsVideoPlayer: Ignoring fullscreen change during profile switch',
+        );
         return;
       }
 
       if (wasFullScreen != null) {
         if (!_controller.isFullScreen) {
-          debugPrint(
-            'HlsVideoPlayer: Manual exit detected',
-          );
+          debugPrint('HlsVideoPlayer: Manual exit detected');
         }
       }
     }
@@ -386,8 +390,12 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     final chewieController = _controller.chewieController;
     final isInitialized = _controller.isInitialized && chewieController != null;
     final showSwitchingOverlay = _controller.isSwitchingProfile;
-    final containerKey = ValueKey('container_${widget.videoId}_${_controller.currentProfile}');
-    final playerKey = ValueKey('chewie_${widget.videoId}_${_controller.currentProfile}');
+    final containerKey = ValueKey(
+      'container_${widget.videoId}_${_controller.currentProfile}',
+    );
+    final playerKey = ValueKey(
+      'chewie_${widget.videoId}_${_controller.currentProfile}',
+    );
 
     return Container(
       key: containerKey,
@@ -417,21 +425,35 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
                 ),
 
                 // 2. The Video Player
+                // In PiP, do not wrap Chewie in this GestureDetector — it wins the gesture
+                // arena over [HiffiVideoControls] corner InkWells so expand/fullscreen never fire.
                 if (isInitialized)
                   Positioned.fill(
                     child: RepaintBoundary(
                       child: AnimatedOpacity(
                         opacity: isInitialized ? 1.0 : 0.0,
                         duration: const Duration(milliseconds: 400),
-                        child: GestureDetector(
-                          onTap: () => _handleTap(context, constraints),
-                          onDoubleTapDown: (details) =>
-                              _handleDoubleTap(details, constraints),
-                          onVerticalDragStart: _handleVerticalDragStart,
-                          onVerticalDragUpdate: _handleVerticalDragUpdate,
-                          onVerticalDragEnd: _handleVerticalDragEnd,
-                          behavior: HitTestBehavior.translucent,
-                          child: Chewie(key: playerKey, controller: chewieController),
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: PipService.isInPipMode,
+                          builder: (context, inPip, _) {
+                            final chewie = Chewie(
+                              key: playerKey,
+                              controller: chewieController,
+                            );
+                            if (inPip) {
+                              return chewie;
+                            }
+                            return GestureDetector(
+                              onTap: () => _handleTap(context, constraints),
+                              onDoubleTapDown: (details) =>
+                                  _handleDoubleTap(details, constraints),
+                              onVerticalDragStart: _handleVerticalDragStart,
+                              onVerticalDragUpdate: _handleVerticalDragUpdate,
+                              onVerticalDragEnd: _handleVerticalDragEnd,
+                              behavior: HitTestBehavior.translucent,
+                              child: chewie,
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -453,37 +475,6 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
                     ),
                   ),
 
-                // 4. Custom Fullscreen Toggle (Absolute Bottom Right)
-                if (isInitialized && !showSwitchingOverlay)
-                  Positioned(
-                    bottom: 8,
-                    right: 8,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () {
-                          if (_controller.isFullScreen) {
-                            _controller.exitFullScreen();
-                          } else {
-                            _controller.enterFullScreen();
-                          }
-                        },
-                        borderRadius: BorderRadius.circular(20),
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.35),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _controller.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                            color: Colors.white.withOpacity(0.9),
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           );

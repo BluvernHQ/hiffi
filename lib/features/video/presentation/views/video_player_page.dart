@@ -20,6 +20,7 @@ import '../../../../core/services/pip_service.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/services/media/media_sync_service.dart';
+import '../../../../core/routes/app_router.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
 
@@ -61,7 +62,7 @@ class VideoPlayerPage extends StatefulWidget {
 }
 
 class _VideoPlayerPageState extends State<VideoPlayerPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   late VideoModel _video;
   bool _isLoading = true;
   bool _hasError = false;
@@ -110,6 +111,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   DateTime? _fullscreenEnteredAt;
   DateTime? _fullscreenExitedAt;
   bool _lastKnownFullscreenState = false;
+
+  RouteObserver<ModalRoute<void>>? _routeObserver;
+  bool _routeAwareSubscribed = false;
 
   @override
   void initState() {
@@ -170,8 +174,32 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _commentsController.fetchLatestComment();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) PipService.setVideoPlayerPageSurfaceActive(true);
       _loadSuggestedVideosForPlayer();
     });
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    // Route is visible again (e.g. popped a screen that was on top of the player).
+    PipService.setVideoPlayerPageSurfaceActive(true);
+  }
+
+  @override
+  void deactivate() {
+    // Do not clear PiP surface here: on Home/Recents, [isInPipMode] is still false until
+    // native PiP starts, so we'd tell Android isPlayerActive=false and break the mini player.
+    // In-app "another route on top" is handled by [didPushNext] / [didPopNext].
+    // Only pause when navigating away from the page, NOT when entering PiP.
+    // In PiP the player should keep running – we just lose the full-screen UI.
+    if (!PipService.isInPipMode.value && !PipService.isTransitioningFromPip) {
+      debugPrint('VideoPlayerPage: deactivate() – pausing (not PiP)');
+      _pauseVideo();
+    } else {
+      debugPrint('VideoPlayerPage: deactivate() – PiP active, NOT pausing');
+    }
+    super.deactivate();
   }
 
   String _generateSuggestedSeed() {
@@ -220,7 +248,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         return;
       }
       final errorString = e.toString();
-      final isNoInternet = errorString.contains('SocketException') ||
+      final isNoInternet =
+          errorString.contains('SocketException') ||
           errorString.contains('Failed host lookup') ||
           errorString.contains('Network is unreachable');
       setState(() {
@@ -276,19 +305,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _routeObserver ??= context.read<AppRouter>().routeObserver;
+    final route = ModalRoute.of(context);
+    if (!_routeAwareSubscribed && route != null) {
+      _routeObserver!.subscribe(this, route);
+      _routeAwareSubscribed = true;
+    }
   }
 
   @override
-  void deactivate() {
-    // Only pause when navigating away from the page, NOT when entering PiP.
-    // In PiP the player should keep running – we just lose the full-screen UI.
-    if (!PipService.isInPipMode.value && !PipService.isTransitioningFromPip) {
-      debugPrint('VideoPlayerPage: deactivate() – pausing (not PiP)');
-      _pauseVideo();
-    } else {
-      debugPrint('VideoPlayerPage: deactivate() – PiP active, NOT pausing');
-    }
-    super.deactivate();
+  void didPushNext() {
+    // Another GoRoute was pushed on top (e.g. login) — block PiP from Home until user returns.
+    PipService.setVideoPlayerPageSurfaceActive(false);
+  }
+
+  @override
+  void didPopNext() {
+    // Covered route was popped; video page is visible again.
+    PipService.setVideoPlayerPageSurfaceActive(true);
   }
 
   @override
@@ -385,8 +419,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  Future<void> _replaceVideo(VideoModel newVideo,
-      {bool pushCurrentToHistory = false}) async {
+  Future<void> _replaceVideo(
+    VideoModel newVideo, {
+    bool pushCurrentToHistory = false,
+  }) async {
     debugPrint(
       'VideoPlayerPage: Replacing video ${_video.videoId} with ${newVideo.videoId}',
     );
@@ -606,6 +642,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   @override
   void dispose() {
     debugPrint('VideoPlayerPage: dispose() called - cleaning up resources');
+    if (_routeAwareSubscribed) {
+      _routeObserver?.unsubscribe(this);
+      _routeAwareSubscribed = false;
+    }
+    PipService.setVideoPlayerPageSurfaceActive(false);
     FullscreenManager.lockToPortrait();
     WidgetsBinding.instance.removeObserver(this);
     _pauseVideo();
@@ -628,6 +669,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       builder: (context) =>
           CommentsBottomSheet(controller: _commentsController),
     );
+  }
+
+  void _handleCreatorProfileTap() {
+    if (_video.userUsername.isEmpty) return;
+
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Sign in to view profile'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      return;
+    }
+
+    _pauseVideo();
+    context.push('/users/${_video.userUsername}');
   }
 
   Future<void> _showVideoOptionsBottomSheet() async {
@@ -705,10 +767,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       const SizedBox(height: 4),
                       Text(
                         'Fine-tune how this video plays.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       ),
                       const SizedBox(height: 16),
                       // Playback speed row
@@ -750,14 +809,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   setModalState(() {
                                     selectedSpeed = speed;
                                   });
-                                  controller.controller
-                                      ?.setPlaybackSpeed(speed);
+                                  controller.controller?.setPlaybackSpeed(
+                                    speed,
+                                  );
                                 },
-                                selectedColor:
-                                    const Color(0xFFED1C2F).withOpacity(0.1),
+                                selectedColor: const Color(
+                                  0xFFED1C2F,
+                                ).withOpacity(0.1),
                                 labelStyle: TextStyle(
-                                  fontWeight:
-                                      isSelected ? FontWeight.w600 : null,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : null,
                                   color: isSelected
                                       ? const Color(0xFFED1C2F)
                                       : Colors.black87,
@@ -813,17 +875,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                     });
                                     controller.setProfile(profile);
                                   },
-                                  selectedColor:
-                                      const Color(0xFFED1C2F).withOpacity(0.1),
+                                  selectedColor: const Color(
+                                    0xFFED1C2F,
+                                  ).withOpacity(0.1),
                                   labelStyle: TextStyle(
-                                    fontWeight:
-                                        isSelected ? FontWeight.w600 : null,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : null,
                                     color: isSelected
                                         ? const Color(0xFFED1C2F)
                                         : Colors.black87,
                                   ),
-                                  backgroundColor:
-                                      const Color(0xFFF5F5F5),
+                                  backgroundColor: const Color(0xFFF5F5F5),
                                   materialTapTargetSize:
                                       MaterialTapTargetSize.shrinkWrap,
                                 ),
@@ -842,6 +905,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       },
     );
   }
+
   void _shareVideo() {
     final videoId = _video.videoId;
     if (videoId.isEmpty) return;
@@ -902,6 +966,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _isLoading ||
         _hasError ||
         _videoUrlFromApi == null) {
+      return;
+    }
+    if (PipService.isInPipMode.value ||
+        PipService.isTransitioningFromPip ||
+        PipService.shouldSuppressOrientationDrivenFullscreen) {
       return;
     }
 
@@ -986,7 +1055,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              _isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline_rounded,
+              _isNoInternet
+                  ? Icons.wifi_off_rounded
+                  : Icons.error_outline_rounded,
               color: Colors.white70,
               size: 48,
             ),
@@ -1019,12 +1090,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFED1C2F),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text(
+                'Retry',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
@@ -1092,7 +1169,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         final contentWidth = isLandscape
             ? screenWidth
             : min(screenWidth, kMaxContentWidth);
-        final videoWidth = isLandscape ? screenWidth - padding.horizontal : contentWidth;
+        final videoWidth = isLandscape
+            ? screenWidth - padding.horizontal
+            : contentWidth;
         final videoHeight = isLandscape
             ? screenHeight - padding.vertical
             : contentWidth * (9 / 16);
@@ -1241,8 +1320,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                         label: _formatCount(_upvoteCount),
                                         isActive: _isUpvoted,
                                         onTap: () async {
-                                          final authRepository =
-                                              context.read<AuthRepository>();
+                                          final authRepository = context
+                                              .read<AuthRepository>();
                                           if (authRepository.currentUser ==
                                               null) {
                                             _showSignInRequiredDialog();
@@ -1297,8 +1376,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                         label: '',
                                         isActive: _isDownvoted,
                                         onTap: () async {
-                                          final authRepository =
-                                              context.read<AuthRepository>();
+                                          final authRepository = context
+                                              .read<AuthRepository>();
                                           if (authRepository.currentUser ==
                                               null) {
                                             _showSignInRequiredDialog();
@@ -1363,12 +1442,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         child: Row(
                           children: [
                             GestureDetector(
-                              onTap: () {
-                                if (_video.userUsername.isNotEmpty) {
-                                  _pauseVideo();
-                                  context.push('/users/${_video.userUsername}');
-                                }
-                              },
+                              onTap: _handleCreatorProfileTap,
                               child: HiffiAvatar(
                                 imageUrl: _video.profilePicture,
                                 size: 40,
@@ -1378,14 +1452,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             const SizedBox(width: 12),
                             Expanded(
                               child: GestureDetector(
-                                onTap: () {
-                                  if (_video.userUsername.isNotEmpty) {
-                                    _pauseVideo();
-                                    context.push(
-                                      '/users/${_video.userUsername}',
-                                    );
-                                  }
-                                },
+                                onTap: _handleCreatorProfileTap,
                                 child: Text(
                                   _video.userUsername.isNotEmpty
                                       ? _video.userUsername

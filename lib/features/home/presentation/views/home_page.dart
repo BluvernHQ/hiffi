@@ -23,6 +23,15 @@ import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../viewmodels/home_view_model.dart';
 
+bool _feedErrorLooksOffline(String? message) {
+  if (message == null || message.isEmpty) return false;
+  final m = message.toLowerCase();
+  return m.contains('socketexception') ||
+      m.contains('failed host lookup') ||
+      m.contains('network is unreachable') ||
+      m.contains('no internet');
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -481,166 +490,120 @@ class _HomePageState extends State<HomePage> {
                           else if (videoViewModel.errorMessage != null &&
                               videoViewModel.videos.isEmpty)
                             SliverFillRemaining(
-                              child: Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(24.0),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(24),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              (videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'SocketException',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Failed host lookup',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Network is unreachable',
-                                                      ))
-                                              ? Theme.of(context)
-                                                    .colorScheme
-                                                    .primaryContainer
-                                                    .withOpacity(0.3)
-                                              : Theme.of(context)
-                                                    .colorScheme
-                                                    .errorContainer
-                                                    .withOpacity(0.3),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Icon(
-                                          (videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'SocketException',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Failed host lookup',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Network is unreachable',
-                                                      ))
-                                              ? Icons.wifi_off_rounded
-                                              : Icons.error_outline_rounded,
-                                          size: 64,
-                                          color:
-                                              (videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'SocketException',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Failed host lookup',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Network is unreachable',
-                                                      ))
-                                              ? Theme.of(
-                                                  context,
-                                                ).colorScheme.primary
-                                              : Theme.of(
-                                                  context,
-                                                ).colorScheme.error,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 32),
-                                      Text(
-                                        (videoViewModel.errorMessage!.contains(
-                                                  'SocketException',
-                                                ) ||
-                                                videoViewModel.errorMessage!
-                                                    .contains(
-                                                      'Failed host lookup',
-                                                    ) ||
-                                                videoViewModel.errorMessage!
-                                                    .contains(
-                                                      'Network is unreachable',
-                                                    ))
-                                            ? 'No Internet Connection'
-                                            : 'Oops! Something went wrong',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .headlineSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: -0.5,
+                              child: Builder(
+                                builder: (context) {
+                                  final offline = _feedErrorLooksOffline(
+                                    videoViewModel.errorMessage,
+                                  );
+                                  return Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(24.0),
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(24),
+                                            decoration: BoxDecoration(
+                                              color: offline
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .primaryContainer
+                                                      .withOpacity(0.3)
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .errorContainer
+                                                      .withOpacity(0.3),
+                                              shape: BoxShape.circle,
                                             ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                        ),
-                                        child: Text(
-                                          (videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'SocketException',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Failed host lookup',
-                                                      ) ||
-                                                  videoViewModel.errorMessage!
-                                                      .contains(
-                                                        'Network is unreachable',
-                                                      ))
-                                              ? 'Please check your connection and try again to enjoy Hiffi.'
-                                              : 'We encountered an issue while loading your feed. Our team is on it!',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge
-                                              ?.copyWith(
-                                                color: Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurfaceVariant,
-                                                height: 1.5,
+                                            child: Icon(
+                                              offline
+                                                  ? Icons.wifi_off_rounded
+                                                  : Icons.error_outline_rounded,
+                                              size: 64,
+                                              color: offline
+                                                  ? Theme.of(
+                                                      context,
+                                                    ).colorScheme.primary
+                                                  : Theme.of(
+                                                      context,
+                                                    ).colorScheme.error,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 32),
+                                          Text(
+                                            offline
+                                                ? 'No Internet Connection'
+                                                : 'Oops! Something went wrong',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .headlineSmall
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.bold,
+                                                  letterSpacing: -0.5,
+                                                ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                            ),
+                                            child: Text(
+                                              offline
+                                                  ? 'Please check your connection and try again to enjoy Hiffi.'
+                                                  : 'We encountered an issue while loading your feed. Our team is on it!',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                    height: 1.5,
+                                                  ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 40),
+                                          ElevatedButton.icon(
+                                            onPressed: () {
+                                              videoViewModel.refresh();
+                                            },
+                                            icon: const Icon(
+                                              Icons.refresh_rounded,
+                                            ),
+                                            label: const Text(
+                                              'Try Again',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
                                               ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 40),
-                                      ElevatedButton.icon(
-                                        onPressed: () {
-                                          videoViewModel.refresh();
-                                        },
-                                        icon: const Icon(Icons.refresh_rounded),
-                                        label: const Text(
-                                          'Try Again',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Theme.of(
-                                            context,
-                                          ).colorScheme.primary,
-                                          foregroundColor: Theme.of(
-                                            context,
-                                          ).colorScheme.onPrimary,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 40,
-                                            vertical: 16,
-                                          ),
-                                          elevation: 0,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              16,
+                                            ),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                              foregroundColor: Theme.of(
+                                                context,
+                                              ).colorScheme.onPrimary,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 40,
+                                                vertical: 16,
+                                              ),
+                                              elevation: 0,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                              ),
                                             ),
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                             )
                           else if (videoViewModel.videos.isEmpty)

@@ -3,7 +3,6 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:hiffi/core/services/media/hiffi_audio_handler.dart';
 import 'package:hiffi/core/services/hls_proxy_service.dart';
-import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
@@ -227,15 +226,6 @@ class MediaSyncService {
 
   /// Called from AudioHandler when user taps Pause in notification while app is in foreground.
   void pauseFromNotification() {
-    // Don't pause while PiP is active or mid-transition – PipService will
-    // call us again once the PiP window state is settled.
-    if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
-      debugPrint(
-        'MediaSyncService: Skipping pause request – inside PiP window',
-      );
-      return;
-    }
-
     if (_currentVideoController != null && _currentVideoController!.isPlaying) {
       debugPrint(
         'MediaSyncService: Pause requested from notification (foreground)',

@@ -42,6 +42,9 @@ class HlsPlayerController extends ChangeNotifier {
   Duration? _lastKnownPosition;
   bool? _lastPipStatus;
 
+  /// Drives fullscreen icon in [HiffiVideoControls] (Chewie fullscreen flag stays false).
+  final ValueNotifier<bool> fullscreenUiForControls = ValueNotifier<bool>(false);
+
   HlsPlayerController({
     required this.video,
     required this.videoId,
@@ -242,6 +245,7 @@ class HlsPlayerController extends ChangeNotifier {
     if (_isDisposed || _isFullScreen) return;
     debugPrint('HlsPlayerController: Entering fullscreen');
     _isFullScreen = true;
+    fullscreenUiForControls.value = true;
     notifyListeners();
     FullscreenManager.enterFullscreen();
   }
@@ -250,6 +254,7 @@ class HlsPlayerController extends ChangeNotifier {
     if (_isDisposed || !_isFullScreen) return;
     debugPrint('HlsPlayerController: Exiting fullscreen');
     _isFullScreen = false;
+    fullscreenUiForControls.value = false;
     notifyListeners();
     FullscreenManager.exitFullscreen();
   }
@@ -257,7 +262,33 @@ class HlsPlayerController extends ChangeNotifier {
   void setFullScreen(bool value) {
     if (_isFullScreen == value || _isDisposed) return;
     _isFullScreen = value;
+    fullscreenUiForControls.value = value;
     notifyListeners();
+  }
+
+  /// PiP “open app”: inline player in portrait — not fullscreen, no landscape lock.
+  Future<void> expandFromPipToInlinePortrait() async {
+    PipService.suppressOrientationDrivenFullscreenTemporarily();
+    await PipService.expandFromPip();
+    if (_isDisposed) return;
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
+    if (_isFullScreen) {
+      _isFullScreen = false;
+      fullscreenUiForControls.value = false;
+      notifyListeners();
+    }
+    await FullscreenManager.lockToPortrait();
+  }
+
+  /// PiP fullscreen: leave PiP then immersive landscape (may rotate device).
+  Future<void> expandFromPipThenFullscreen() async {
+    await PipService.expandFromPip();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (_isDisposed) return;
+    enterFullScreen();
   }
 
   Future<void> _initialize() async {
@@ -343,7 +374,18 @@ class HlsPlayerController extends ChangeNotifier {
         allowMuting: true,
         allowPlaybackSpeedChanging: true,
         fullScreenByDefault: false,
-        customControls: const HiffiVideoControls(),
+        customControls: HiffiVideoControls(
+          fullscreenUiListenable: fullscreenUiForControls,
+          onToggleInAppFullscreen: () {
+            if (_isFullScreen) {
+              exitFullScreen();
+            } else {
+              enterFullScreen();
+            }
+          },
+          onPipExpandToApp: expandFromPipToInlinePortrait,
+          onPipEnterFullscreen: expandFromPipThenFullscreen,
+        ),
         deviceOrientationsOnEnterFullScreen: [
           DeviceOrientation.landscapeLeft,
           DeviceOrientation.landscapeRight,
@@ -481,13 +523,13 @@ class HlsPlayerController extends ChangeNotifier {
     } else if (controller.value.isPlaying) {
       _currentState = PlayerState.ready;
       if (_lastPipStatus != true) {
-        PipService.updatePlayerStatus(true);
+        PipService.setPlaybackWantsPip(true);
         _lastPipStatus = true;
       }
       notifyListeners();
     } else {
       if (_lastPipStatus != false) {
-        PipService.updatePlayerStatus(false);
+        PipService.setPlaybackWantsPip(false);
         _lastPipStatus = false;
       }
       notifyListeners();
@@ -587,7 +629,7 @@ class HlsPlayerController extends ChangeNotifier {
       } catch (_) {}
     }
     await _savePlaybackPosition();
-    PipService.updatePlayerStatus(false);
+    PipService.setPlaybackWantsPip(false);
     _lastPipStatus = false;
     _isInitialized = false;
 
@@ -630,6 +672,7 @@ class HlsPlayerController extends ChangeNotifier {
     if (_isDisposed) return;
     _isDisposed = true;
     debugPrint('HlsPlayerController: dispose() called for videoId $videoId');
+    fullscreenUiForControls.dispose();
     MediaSyncService().clearCurrentPlayer(this);
     _disposeControllers(isSwitchingProfile: false);
     super.dispose();

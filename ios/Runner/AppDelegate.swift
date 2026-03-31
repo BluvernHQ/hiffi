@@ -8,6 +8,9 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // Avoid a black flash between launch screen and first Flutter frame.
+    window?.backgroundColor = UIColor.white
+    return result
   }
 }
