@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/data/auth_user.dart';
@@ -34,10 +35,12 @@ class _AppSidebarState extends State<AppSidebar>
   bool _isExpanded = false;
   late AnimationController _animationController;
   late Animation<double> _animation;
+  late final Future<PackageInfo> _packageInfoFuture;
 
   @override
   void initState() {
     super.initState();
+    _packageInfoFuture = PackageInfo.fromPlatform();
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 350),
@@ -224,10 +227,16 @@ class _AppSidebarState extends State<AppSidebar>
                             ),
 
                             // Footer / Profile Section
-                            _buildProfileSection(
-                              context,
-                              user,
-                              currentUserModel,
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildProfileSection(
+                                  context,
+                                  user,
+                                  currentUserModel,
+                                ),
+                                _buildVersionFooter(context),
+                              ],
                             ),
                           ],
                         ),
@@ -375,6 +384,34 @@ class _AppSidebarState extends State<AppSidebar>
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildVersionFooter(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Center(
+        child: FutureBuilder<PackageInfo>(
+          future: _packageInfoFuture,
+          builder: (context, snapshot) {
+            final info = snapshot.data;
+            final versionText = info == null
+                ? ' '
+                : 'v${info.version}+${info.buildNumber}';
+
+            return Text(
+              versionText,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.7),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

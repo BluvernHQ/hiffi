@@ -123,8 +123,10 @@ class ImageUtils {
   /// - Relative path: "videos/{id}/original.mp4" → prepend [mediaBaseUrl].
   /// - Full URL without file: "https://.../videos/{id}" → append "/{profile}.mp4".
   /// - Full URL with file: "https://.../videos/{id}/original.mp4" → return as-is.
-  static String resolveVideoPlaybackUrl(String videoUrl,
-      {String profile = 'original'}) {
+  static String resolveVideoPlaybackUrl(
+    String videoUrl, {
+    String profile = 'original',
+  }) {
     final trimmed = videoUrl.trim();
     if (trimmed.isEmpty) return trimmed;
 

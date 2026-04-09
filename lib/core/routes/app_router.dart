@@ -21,6 +21,7 @@ import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
 import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
+
 class AppRouter {
   /// For [RouteAware] on [VideoPlayerPage] (PiP eligibility when another route covers the player).
   final RouteObserver<ModalRoute<void>> routeObserver =
@@ -30,15 +31,16 @@ class AppRouter {
     required AuthRepository authRepository,
     FirebaseAnalytics? analytics,
     UmamiService? umamiService,
-  })  : _authRepository = authRepository,
-        _analytics = analytics ?? FirebaseAnalytics.instance,
-        _umamiService = umamiService ??
-            UmamiService(
-              endpoint: 'https://analytics.superlabs.co',
-              website: 'b7a2884e-fdec-4b9f-9ff8-29c5a4e63454',
-              hostname: 'hiffi.com',
-            ),
-        _navigatorKey = GlobalKey<NavigatorState>() {
+  }) : _authRepository = authRepository,
+       _analytics = analytics ?? FirebaseAnalytics.instance,
+       _umamiService =
+           umamiService ??
+           UmamiService(
+             endpoint: 'https://analytics.superlabs.co',
+             website: 'b7a2884e-fdec-4b9f-9ff8-29c5a4e63454',
+             hostname: 'hiffi.com',
+           ),
+       _navigatorKey = GlobalKey<NavigatorState>() {
     _refreshListenable = RouterRefreshStream(
       _authRepository.authStateChanges(),
     );
