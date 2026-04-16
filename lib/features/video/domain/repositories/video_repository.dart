@@ -504,6 +504,7 @@ class VideoRepositoryImpl implements VideoRepository {
       limit: dataLimit,
       offset: dataOffset,
       videos: items,
+      returnedSlotCount: videosJson.length,
     );
   }
 
@@ -560,6 +561,24 @@ class VideoRepositoryImpl implements VideoRepository {
     final videosJson = data['videos'] as List<dynamic>? ?? [];
     final items = <WatchHistoryItem>[];
 
+    int? nextOffsetFromApi;
+    for (final key in [
+      'next_offset',
+      'nextOffset',
+      'next_skip',
+      'nextSkip',
+    ]) {
+      final v = data[key];
+      if (v is int) {
+        nextOffsetFromApi = v;
+        break;
+      }
+      if (v is num) {
+        nextOffsetFromApi = v.toInt();
+        break;
+      }
+    }
+
     for (final raw in videosJson) {
       try {
         final itemMap = raw as Map<String, dynamic>;
@@ -606,6 +625,8 @@ class VideoRepositoryImpl implements VideoRepository {
       limit: dataLimit,
       offset: dataOffset,
       videos: items,
+      returnedSlotCount: videosJson.length,
+      serverNextOffset: nextOffsetFromApi,
     );
   }
 

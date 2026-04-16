@@ -14,7 +14,6 @@ class WatchHistoryViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   int _offset = 0;
-  int _totalCount = 0;
   static const int _pageLimit = 20;
   bool _hasMore = true;
   bool _unauthorized = false;
@@ -47,27 +46,29 @@ class WatchHistoryViewModel extends ChangeNotifier {
         offset: _offset,
       );
 
-      _totalCount = result.count;
-
       if (refresh) {
         _items = result.videos;
       } else {
-        _items = [..._items, ...result.videos];
+        _mergeHistoryPage(result.videos);
       }
       _items.sort((a, b) => b.viewedAt.compareTo(a.viewedAt));
 
-      _offset += result.videos.length;
-      // Full page ⇒ likely more pages. Only stop on short page, empty, or when count is
-      // present and we've reached it (avoids breaking when API count is wrong or = page size).
-      if (result.videos.isEmpty) {
+      // Prefer server-provided next offset; otherwise advance by raw row count (not parsed length).
+      if (result.serverNextOffset != null) {
+        _offset = result.serverNextOffset!;
+      } else {
+        _offset += result.returnedSlotCount;
+      }
+
+      // Do not use `count` to stop: many APIs return page size or wrong totals and we would
+      // never load older history. Only stop on an empty or short page from the API.
+      final fullPage = result.returnedSlotCount >= _pageLimit;
+      if (result.returnedSlotCount == 0) {
         _hasMore = false;
-      } else if (result.videos.length < _pageLimit) {
+      } else if (!fullPage) {
         _hasMore = false;
       } else {
         _hasMore = true;
-        if (_totalCount > 0 && _offset >= _totalCount) {
-          _hasMore = false;
-        }
       }
 
       _errorMessage = null;
@@ -92,6 +93,18 @@ class WatchHistoryViewModel extends ChangeNotifier {
     if (_unauthorized) {
       _unauthorized = false;
       notifyListeners();
+    }
+  }
+
+  void _mergeHistoryPage(List<WatchHistoryItem> page) {
+    final seen = <String>{
+      for (final e in _items) '${e.video.videoId}|${e.viewedAt.toIso8601String()}',
+    };
+    for (final e in page) {
+      final k = '${e.video.videoId}|${e.viewedAt.toIso8601String()}';
+      if (seen.add(k)) {
+        _items.add(e);
+      }
     }
   }
 }

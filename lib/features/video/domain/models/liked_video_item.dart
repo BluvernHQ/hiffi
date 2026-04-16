@@ -18,10 +18,14 @@ class LikedVideosResult {
     required this.limit,
     required this.offset,
     required this.videos,
+    required this.returnedSlotCount,
   });
 
   final int count;
   final int limit;
   final int offset;
   final List<LikedVideoItem> videos;
+
+  /// Length of `data.videos` from the API. Use for next `offset` so pagination stays in sync.
+  final int returnedSlotCount;
 }

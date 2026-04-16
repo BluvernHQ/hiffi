@@ -18,10 +18,18 @@ class WatchHistoryResult {
     required this.limit,
     required this.offset,
     required this.videos,
+    required this.returnedSlotCount,
+    this.serverNextOffset,
   });
 
   final int count;
   final int limit;
   final int offset;
   final List<WatchHistoryItem> videos;
+
+  /// Length of `data.videos` from the API (before parse drops). Use for next `offset`.
+  final int returnedSlotCount;
+
+  /// When the API sends an explicit next cursor/offset (`next_offset`, etc.).
+  final int? serverNextOffset;
 }

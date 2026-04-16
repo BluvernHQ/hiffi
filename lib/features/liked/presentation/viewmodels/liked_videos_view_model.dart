@@ -14,7 +14,6 @@ class LikedVideosViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   int _offset = 0;
-  int _totalCount = 0;
   static const int _pageLimit = 20;
   bool _hasMore = true;
   bool _unauthorized = false;
@@ -47,8 +46,6 @@ class LikedVideosViewModel extends ChangeNotifier {
         offset: _offset,
       );
 
-      _totalCount = result.count;
-
       if (refresh) {
         _items = result.videos;
       } else {
@@ -56,12 +53,12 @@ class LikedVideosViewModel extends ChangeNotifier {
       }
       _items.sort((a, b) => b.upvotedAt.compareTo(a.upvotedAt));
 
-      _offset += result.videos.length;
-      if (result.videos.isEmpty || result.videos.length < _pageLimit) {
+      _offset += result.returnedSlotCount;
+      final fullPage = result.returnedSlotCount >= _pageLimit;
+      if (result.returnedSlotCount == 0 || !fullPage) {
         _hasMore = false;
       } else {
-        _hasMore =
-            _totalCount == 0 || _offset < _totalCount;
+        _hasMore = true;
       }
 
       _errorMessage = null;
