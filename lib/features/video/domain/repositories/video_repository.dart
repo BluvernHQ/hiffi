@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/services/api_client.dart';
 import '../models/comment_model.dart';
+import '../models/liked_video_item.dart';
 import '../models/video_model.dart';
+import '../models/watch_history_item.dart';
 
 /// Response model for video info including URL and user interaction status
 class VideoInfo {
@@ -41,6 +44,14 @@ abstract class VideoRepository {
     required int limit,
     required int offset,
     String? seed,
+  });
+  Future<LikedVideosResult> getLikedVideos({
+    required int limit,
+    required int offset,
+  });
+  Future<WatchHistoryResult> getWatchHistory({
+    required int limit,
+    required int offset,
   });
   Future<List<VideoModel>> getVideosByUsername({
     required String username,
@@ -390,6 +401,212 @@ class VideoRepositoryImpl implements VideoRepository {
     }
 
     throw Exception('Unexpected response format: ${json.keys}');
+  }
+
+  @override
+  Future<LikedVideosResult> getLikedVideos({
+    required int limit,
+    required int offset,
+  }) async {
+    final queryParams = <String, String>{
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    };
+    final queryString = queryParams.entries
+        .map(
+          (e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+        )
+        .join('&');
+
+    final endpoint = '${ApiConstants.videoListLiked}?$queryString';
+    print(
+      '❤️ Liked videos request: GET ${ApiConstants.baseUrl}$endpoint '
+      '(limit=$limit, offset=$offset)',
+    );
+    final response = await _apiClient.get(endpoint, requiresAuth: true);
+
+    if (response.statusCode == 401) {
+      throw ApiException(
+        'Session expired. Please sign in again.',
+        401,
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch liked videos: ${response.statusCode}');
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (json['success'] != true) {
+      final message =
+          json['error'] as String? ??
+          json['message'] as String? ??
+          'Failed to load liked videos';
+      throw Exception(message);
+    }
+
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw Exception('Unexpected response: missing data');
+    }
+
+    final totalCount = (data['count'] as num?)?.toInt() ?? 0;
+    final dataLimit = (data['limit'] as num?)?.toInt() ?? limit;
+    final dataOffset = (data['offset'] as num?)?.toInt() ?? offset;
+    final videosJson = data['videos'] as List<dynamic>? ?? [];
+    final items = <LikedVideoItem>[];
+
+    for (final raw in videosJson) {
+      try {
+        final itemMap = raw as Map<String, dynamic>;
+        final videoJson = itemMap['video'] as Map<String, dynamic>?;
+        if (videoJson == null) continue;
+
+        final profilePicture =
+            itemMap['profile_picture'] as String? ??
+            itemMap['profilePicture'] as String? ??
+            itemMap['avatar_url'] as String? ??
+            itemMap['avatarUrl'] as String?;
+        final status = itemMap['status'] as String?;
+        final userUsername =
+            itemMap['user_username'] as String? ??
+            itemMap['username'] as String?;
+
+        final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
+        if (profilePicture != null && profilePicture.isNotEmpty) {
+          videoJsonWithExtras['profile_picture'] = profilePicture;
+        }
+        if (status != null) {
+          videoJsonWithExtras['status'] = status;
+        }
+        if (userUsername != null) {
+          videoJsonWithExtras['user_username'] = userUsername;
+        }
+
+        final video = VideoModel.fromJson(videoJsonWithExtras);
+        final upvotedAtStr =
+            itemMap['upvoted_at'] as String? ??
+            itemMap['upvotedAt'] as String?;
+        final upvotedAt = upvotedAtStr != null
+            ? DateTime.parse(upvotedAtStr)
+            : video.updatedAt;
+
+        items.add(LikedVideoItem(video: video, upvotedAt: upvotedAt));
+      } catch (e) {
+        print('⚠️ Error parsing liked video: $e');
+      }
+    }
+
+    return LikedVideosResult(
+      count: totalCount,
+      limit: dataLimit,
+      offset: dataOffset,
+      videos: items,
+    );
+  }
+
+  @override
+  Future<WatchHistoryResult> getWatchHistory({
+    required int limit,
+    required int offset,
+  }) async {
+    final queryParams = <String, String>{
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+    };
+    final queryString = queryParams.entries
+        .map(
+          (e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+        )
+        .join('&');
+
+    final endpoint = '${ApiConstants.videoListHistory}?$queryString';
+    final response = await _apiClient.get(endpoint, requiresAuth: true);
+
+    if (response.statusCode == 401) {
+      throw ApiException(
+        'Session expired. Please sign in again.',
+        401,
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch watch history: ${response.statusCode}',
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (json['success'] != true) {
+      final message =
+          json['error'] as String? ??
+          json['message'] as String? ??
+          'Failed to load watch history';
+      throw Exception(message);
+    }
+
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw Exception('Unexpected response: missing data');
+    }
+
+    final totalCount = (data['count'] as num?)?.toInt() ?? 0;
+    final dataLimit = (data['limit'] as num?)?.toInt() ?? limit;
+    final dataOffset = (data['offset'] as num?)?.toInt() ?? offset;
+    final videosJson = data['videos'] as List<dynamic>? ?? [];
+    final items = <WatchHistoryItem>[];
+
+    for (final raw in videosJson) {
+      try {
+        final itemMap = raw as Map<String, dynamic>;
+        final videoJson = itemMap['video'] as Map<String, dynamic>?;
+        if (videoJson == null) continue;
+
+        final profilePicture =
+            itemMap['profile_picture'] as String? ??
+            itemMap['profilePicture'] as String? ??
+            itemMap['avatar_url'] as String? ??
+            itemMap['avatarUrl'] as String?;
+        final status = itemMap['status'] as String?;
+        final userUsername =
+            itemMap['user_username'] as String? ??
+            itemMap['username'] as String?;
+
+        final videoJsonWithExtras = Map<String, dynamic>.from(videoJson);
+        if (profilePicture != null && profilePicture.isNotEmpty) {
+          videoJsonWithExtras['profile_picture'] = profilePicture;
+        }
+        if (status != null) {
+          videoJsonWithExtras['status'] = status;
+        }
+        if (userUsername != null) {
+          videoJsonWithExtras['user_username'] = userUsername;
+        }
+
+        final video = VideoModel.fromJson(videoJsonWithExtras);
+        final viewedAtStr =
+            itemMap['viewed_at'] as String? ??
+            itemMap['viewedAt'] as String?;
+        final viewedAt = viewedAtStr != null
+            ? DateTime.parse(viewedAtStr)
+            : video.updatedAt;
+
+        items.add(WatchHistoryItem(video: video, viewedAt: viewedAt));
+      } catch (e) {
+        print('⚠️ Error parsing watch history item: $e');
+      }
+    }
+
+    return WatchHistoryResult(
+      count: totalCount,
+      limit: dataLimit,
+      offset: dataOffset,
+      videos: items,
+    );
   }
 
   @override

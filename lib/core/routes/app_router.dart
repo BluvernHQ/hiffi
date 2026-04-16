@@ -13,6 +13,8 @@ import '../../features/auth/presentation/viewmodels/auth_view_model.dart';
 import '../../features/auth/presentation/views/auth_page.dart';
 import '../../features/home/presentation/views/home_page.dart';
 import '../../features/following/presentation/views/following_page.dart';
+import '../../features/liked/presentation/views/liked_videos_page.dart';
+import '../../features/watch_history/presentation/views/watch_history_page.dart';
 
 import '../../features/upload/presentation/views/video_upload_page.dart';
 import '../../features/user/presentation/views/become_creator_page.dart';
@@ -89,6 +91,16 @@ class AppRouter {
           path: '/following',
           name: 'following',
           builder: (context, state) => const FollowingPage(),
+        ),
+        GoRoute(
+          path: '/liked',
+          name: 'liked_videos',
+          builder: (context, state) => const LikedVideosPage(),
+        ),
+        GoRoute(
+          path: '/watch-history',
+          name: 'watch_history',
+          builder: (context, state) => const WatchHistoryPage(),
         ),
 
         GoRoute(
@@ -187,6 +199,14 @@ class AppRouter {
         final onSearch = state.uri.path == '/search';
 
         if (!isLoggedIn) {
+          final onLiked = state.uri.path == '/liked';
+          if (onLiked) {
+            return '/login?returnTo=/liked';
+          }
+          final onWatchHistory = state.uri.path == '/watch-history';
+          if (onWatchHistory) {
+            return '/login?returnTo=/watch-history';
+          }
           // Allow access to home, video player, upload pages, and auth pages without authentication
           // Profile pages require authentication - redirect to home (login is optional)
           if (onProfile) {

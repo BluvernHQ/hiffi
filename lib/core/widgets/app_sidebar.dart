@@ -202,6 +202,49 @@ class _AppSidebarState extends State<AppSidebar>
                                   ),
                                   if (widget.isAuthenticated)
                                     _SidebarItem(
+                                      icon: Icons.history_rounded,
+                                      activeIcon: Icons.history_rounded,
+                                      label: 'History',
+                                      isActive: widget.currentRoute ==
+                                          '/watch-history',
+                                      onTap: () {
+                                        _toggleSidebar();
+                                        if (widget.currentRoute !=
+                                            '/watch-history') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/watch-history');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  if (widget.isAuthenticated)
+                                    _SidebarItem(
+                                      icon: Icons.thumb_up_alt_outlined,
+                                      activeIcon: Icons.thumb_up_alt_rounded,
+                                      label: 'Liked videos',
+                                      isActive:
+                                          widget.currentRoute == '/liked',
+                                      onTap: () {
+                                        _toggleSidebar();
+                                        if (widget.currentRoute != '/liked') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/liked');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  if (widget.isAuthenticated)
+                                    _SidebarItem(
                                       icon: Icons.favorite_outline_rounded,
                                       activeIcon: Icons.favorite_rounded,
                                       label: 'Following',

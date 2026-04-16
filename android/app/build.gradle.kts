@@ -11,6 +11,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+apply(plugin = "com.google.firebase.crashlytics")
+
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {

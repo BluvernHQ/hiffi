@@ -1,5 +1,5 @@
 class ApiConstants {
-  static const String baseUrl = 'https://api.hiffi.com';
+  static const String baseUrl = 'https://api.dev.hiffi.com';
 
   // Auth endpoints
   static const String authRegister = '/auth/register';
@@ -26,6 +26,8 @@ class ApiConstants {
   static const String videoList = '/videos/list';
   static const String videoListSelf = '/videos/list/self';
   static const String videoListFollowing = '/videos/list/following';
+  static const String videoListLiked = '/videos/list/liked';
+  static const String videoListHistory = '/videos/list/history';
   static String getVideo(String videoId) => '/videos/$videoId';
   static String deleteVideo(String videoId) => '/videos/$videoId';
   static String listVideosByUsername(String username) =>

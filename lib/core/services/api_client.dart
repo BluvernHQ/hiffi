@@ -96,8 +96,8 @@ class ApiClient {
     developer.log('GET $url', name: 'hiffi.api');
     print('🌐 API GET: $url');
 
+    // No Content-Type on GET: there is no body; Bearer (when required) matches other clients.
     final headers = <String, String>{
-      'Content-Type': 'application/json',
       'Accept': 'application/json',
       'User-Agent': 'Hiffi-Flutter-App/1.0',
     };

@@ -15,6 +15,8 @@ import '../../features/video/presentation/viewmodels/video_view_model.dart';
 import '../../features/search/data/search_repository.dart';
 import '../../features/search/presentation/viewmodels/search_view_model.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
+import '../../features/liked/presentation/viewmodels/liked_videos_view_model.dart';
+import '../../features/watch_history/presentation/viewmodels/watch_history_view_model.dart';
 import '../routes/app_router.dart';
 import '../services/api_client.dart';
 import '../services/network_connectivity_service.dart';
@@ -114,6 +116,16 @@ List<SingleChildWidget> buildAppProviders() {
     ChangeNotifierProvider<FollowingViewModel>(
       create: (context) =>
           FollowingViewModel(videoRepository: context.read<VideoRepository>()),
+    ),
+    ChangeNotifierProvider<LikedVideosViewModel>(
+      create: (context) => LikedVideosViewModel(
+        videoRepository: context.read<VideoRepository>(),
+      ),
+    ),
+    ChangeNotifierProvider<WatchHistoryViewModel>(
+      create: (context) => WatchHistoryViewModel(
+        videoRepository: context.read<VideoRepository>(),
+      ),
     ),
   ];
 }

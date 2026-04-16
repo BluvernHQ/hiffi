@@ -371,7 +371,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // when the user actually rotates to portrait.
   }
 
-  Future<void> _pauseVideo() async {
+  Future<void> _pauseVideo({bool updateUiState = true}) async {
     if (_videoUrlFromApi != null) {
       debugPrint(
         'VideoPlayerPage: _pauseVideo() called - pausing player and saving position',
@@ -379,7 +379,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       await HlsVideoPlayer.pausePlayer(_video.videoId);
     }
 
-    if (!_isNavigatingAway) {
+    // Avoid setState during teardown (e.g. dispose) and after unmount.
+    if (updateUiState && mounted && !_isNavigatingAway) {
       setState(() {
         _isNavigatingAway = true;
       });
@@ -649,7 +650,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     PipService.setVideoPlayerPageSurfaceActive(false);
     FullscreenManager.lockToPortrait();
     WidgetsBinding.instance.removeObserver(this);
-    _pauseVideo();
+    _pauseVideo(updateUiState: false);
     _commentsController.dispose();
     // Permanently dispose the HlsPlayerController now that the page is gone.
     // HlsVideoPlayer.dispose() intentionally keeps the controller alive in the

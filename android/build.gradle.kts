@@ -1,3 +1,13 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.google.firebase:firebase-crashlytics-gradle:3.0.6")
+    }
+}
+
 allprojects {
     repositories {
         google()

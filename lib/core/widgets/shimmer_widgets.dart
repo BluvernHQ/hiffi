@@ -200,6 +200,155 @@ class VideoCardShimmer extends StatelessWidget {
   }
 }
 
+/// Skeleton row matching [History] list tiles (thumb + title + meta).
+class _HistoryListRowPlaceholder extends StatelessWidget {
+  const _HistoryListRowPlaceholder({required this.maxWidth});
+
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbW = (maxWidth * 0.40).clamp(132.0, 220.0);
+    final thumbH = thumbW * 9 / 16;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: thumbW,
+            height: thumbH,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: maxWidth * 0.42,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Container(
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      width: 52,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shimmer placeholder for the History screen (list rows + optional section header).
+class HistoryListShimmer extends StatelessWidget {
+  const HistoryListShimmer({super.key, this.itemCount = 8});
+
+  final int itemCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        return Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            physics: const NeverScrollableScrollPhysics(),
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    height: 16,
+                    width: w * 0.22,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+              ...List.generate(
+                itemCount,
+                (_) => _HistoryListRowPlaceholder(maxWidth: w),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Compact shimmer for history pagination (single row silhouette).
+class HistoryPaginationShimmer extends StatelessWidget {
+  const HistoryPaginationShimmer({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: _HistoryListRowPlaceholder(maxWidth: constraints.maxWidth),
+        );
+      },
+    );
+  }
+}
+
 /// Shimmer for video list loading
 class VideoListShimmer extends StatelessWidget {
   final int itemCount;
