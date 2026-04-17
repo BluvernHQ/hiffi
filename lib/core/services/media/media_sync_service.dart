@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +26,8 @@ class MediaSyncService {
   bool _isBackgrounded = false;
   Duration? _lastVideoPosition;
   bool _isSyncing = false; // Prevents sync loops
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
+  StreamSubscription<void>? _becomingNoisySub;
 
   // Callbacks for UI-controlled navigation
   VoidCallback? _onNextRequested;
@@ -53,6 +57,12 @@ class MediaSyncService {
     // Configure audio session for background playback
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
+    _interruptionSub ??= session.interruptionEventStream.listen(
+      _handleAudioInterruption,
+    );
+    _becomingNoisySub ??= session.becomingNoisyEventStream.listen((_) {
+      _handleBecomingNoisy();
+    });
 
     // Initialize audio service with proper configuration
     // Note: androidNotificationOngoing requires androidStopForegroundOnPause to be true
@@ -363,6 +373,26 @@ class MediaSyncService {
   /// Gets whether the service is currently in background mode
   bool get isBackgrounded => _isBackgrounded;
 
+  void _handleAudioInterruption(AudioInterruptionEvent event) {
+    final controller = _currentVideoController;
+    if (controller == null) return;
+    if (event.begin && controller.isPlaying) {
+      debugPrint(
+        'MediaSyncService: Audio interruption began (${event.type}) - pausing video',
+      );
+      controller.pause();
+    }
+  }
+
+  void _handleBecomingNoisy() {
+    final controller = _currentVideoController;
+    if (controller == null) return;
+    if (controller.isPlaying) {
+      debugPrint('MediaSyncService: Output became noisy - pausing video');
+      controller.pause();
+    }
+  }
+
   /// Clears the current video player.
   /// Call this when the video player is being disposed.
   void clearCurrentPlayer(HlsPlayerController controller) {
@@ -391,6 +421,10 @@ class MediaSyncService {
 
   void dispose() {
     debugPrint('MediaSyncService: dispose() called');
+    _interruptionSub?.cancel();
+    _interruptionSub = null;
+    _becomingNoisySub?.cancel();
+    _becomingNoisySub = null;
     _audioHandler?.stop();
     _currentVideoController = null;
     _currentVideo = null;

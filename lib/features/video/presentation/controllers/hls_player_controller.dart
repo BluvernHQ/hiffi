@@ -337,7 +337,9 @@ class HlsPlayerController extends ChangeNotifier {
       final videoController = VideoPlayerController.networkUrl(
         Uri.parse(profileUrl),
         videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: true,
+          // Do not mix with other apps: external playback should interrupt
+          // this video and trigger pause via audio session interruption events.
+          mixWithOthers: false,
           allowBackgroundPlayback: true,
         ),
       );
