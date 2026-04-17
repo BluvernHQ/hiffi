@@ -119,6 +119,36 @@ class VideoCommentsController extends ChangeNotifier {
     }
   }
 
+  /// When the API omits [CommentModel.commentByUsername] (or sends "Anonymous")
+  /// for the viewer's new comment, keep the name we already know from the client.
+  bool _patchCommentsMissingUsernameForViewer({
+    required String uid,
+    required String displayUsername,
+    String? profilePicture,
+  }) {
+    final resolved = displayUsername.trim();
+    if (resolved.isEmpty || resolved.toLowerCase() == 'anonymous') {
+      return false;
+    }
+    var changed = false;
+    _comments = _comments.map((c) {
+      if (c.commentedBy != uid) return c;
+      final name = c.commentByUsername?.trim() ?? '';
+      final missing = name.isEmpty;
+      final looksAnonymous = name.toLowerCase() == 'anonymous';
+      if (!missing && !looksAnonymous) return c;
+      changed = true;
+      return c.copyWith(
+        commentByUsername: resolved,
+        profilePicture:
+            (c.profilePicture == null || c.profilePicture!.isEmpty)
+            ? profilePicture
+            : c.profilePicture,
+      );
+    }).toList();
+    return changed;
+  }
+
   /// Enriches comments with profile pictures by fetching user data.
   /// This is done asynchronously and updates the UI incrementally.
   Future<void> _enrichCommentsWithProfilePictures() async {
@@ -211,6 +241,13 @@ class VideoCommentsController extends ChangeNotifier {
       await _repository.postComment(videoId, trimmedText);
       // Refresh to get the real ID and server state
       await fetchAllComments();
+      if (_patchCommentsMissingUsernameForViewer(
+        uid: uid,
+        displayUsername: username,
+        profilePicture: profilePicture,
+      )) {
+        notifyListeners();
+      }
     } catch (e) {
       // Rollback on error
       _comments.removeWhere((c) => c.commentId == tempId);

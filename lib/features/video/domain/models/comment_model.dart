@@ -34,8 +34,7 @@ class CommentModel {
         json['avatar_url'] as String? ??
         json['avatarUrl'] as String?;
 
-    // Debug logging to see what we're getting from API
-    final username = json['comment_by_username'] as String?;
+    final username = _readCommentUsername(json);
     if (username != null) {
       debugPrint(
         'CommentModel.fromJson: Username: $username, ProfilePicture: "$profilePic" (keys: ${json.keys.where((k) => k.toLowerCase().contains('profile') || k.toLowerCase().contains('avatar')).join(", ")})',
@@ -66,6 +65,28 @@ class CommentModel {
       if (commentByUsername != null) 'comment_by_username': commentByUsername,
       if (profilePicture != null) 'profile_picture': profilePicture,
     };
+  }
+
+  static String? _readCommentUsername(Map<String, dynamic> json) {
+    String? pick(String? s) {
+      if (s == null) return null;
+      final t = s.trim();
+      return t.isEmpty ? null : t;
+    }
+
+    final fromKeys = pick(json['comment_by_username'] as String?) ??
+        pick(json['username'] as String?) ??
+        pick(json['user_username'] as String?) ??
+        pick(json['userUsername'] as String?);
+    if (fromKeys != null) return fromKeys;
+
+    final user = json['user'];
+    if (user is Map<String, dynamic>) {
+      final u = pick(user['username'] as String?) ??
+          pick(user['user_username'] as String?);
+      if (u != null) return u;
+    }
+    return null;
   }
 
   CommentModel copyWith({

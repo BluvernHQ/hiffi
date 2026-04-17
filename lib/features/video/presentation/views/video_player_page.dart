@@ -3,9 +3,11 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
 import '../../../auth/data/auth_repository.dart';
@@ -23,6 +25,12 @@ import '../../../../core/services/media/media_sync_service.dart';
 import '../../../../core/routes/app_router.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
+
+/// Vertical space above and below the divider between suggested videos and comments.
+const double _kSuggestedToCommentsGap = 12;
+
+/// Horizontal strip height aligned to [_SuggestedVideoCard] (avoids empty space above divider).
+const double _kSuggestedStripHeight = 168;
 
 class VideoPlayerPage extends StatefulWidget {
   const VideoPlayerPage({
@@ -228,7 +236,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       final videoRepository = context.read<VideoRepository>();
       final videos = await videoRepository.getVideos(
         page: 1,
-        limit: 10,
+        limit: 24,
         seed: _suggestedSeed,
       );
       if (!mounted || _video.videoId != forVideoId) {
@@ -237,7 +245,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       setState(() {
         _suggestedVideos = videos
             .where((video) => video.videoId != forVideoId)
-            .take(6)
+            .take(12)
             .toList();
         _suggestedLoading = false;
         _suggestedError = false;
@@ -1518,12 +1526,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      _video.videoDescription,
+                                    Linkify(
+                                      text: _video.videoDescription,
                                       style: const TextStyle(
                                         color: Color(0xFF1A1A1A),
                                         fontSize: 14,
                                         height: 1.5,
+                                      ),
+                                      linkStyle: const TextStyle(
+                                        color: Color(0xFFED1C2F),
+                                        fontSize: 14,
+                                        height: 1.5,
+                                        decoration: TextDecoration.underline,
+                                        decorationColor: Color(0xFFED1C2F),
+                                      ),
+                                      options: const LinkifyOptions(
+                                        humanize: false,
+                                        removeWww: false,
+                                      ),
+                                      onOpen: (link) => _openDescriptionLink(
+                                        link.url,
                                       ),
                                       maxLines: _isDescriptionExpanded
                                           ? null
@@ -1606,74 +1628,60 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         color: const Color(0xFFF5F5F5),
                       ),
                     ),
-                    Builder(
-                      builder: (context) {
-                        final authRepository = context.read<AuthRepository>();
-                        if (authRepository.currentUser == null) {
-                          return SliverToBoxAdapter(
-                            child: Container(
-                              color: Colors.white,
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                children: [
-                                  const Icon(
-                                    Icons.comment_outlined,
-                                    size: 48,
-                                    color: Color(0xFF6B6B6B),
+                    SliverToBoxAdapter(
+                      child: ColoredBox(
+                        color: Colors.white,
+                        child: Builder(
+                          builder: (context) {
+                            final authRepository =
+                                context.read<AuthRepository>();
+                            final hasSuggestedBlock = _suggestedLoading ||
+                                _suggestedError ||
+                                _suggestedVideos.isNotEmpty;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _SuggestedVideosSection(
+                                  videos: _suggestedVideos,
+                                  isLoading: _suggestedLoading,
+                                  hasError: _suggestedError,
+                                  isNoInternet: _suggestedNoInternet,
+                                  onRetry: () =>
+                                      _loadSuggestedVideosForPlayer(),
+                                  onVideoSelected: (video) => _replaceVideo(
+                                    video,
+                                    pushCurrentToHistory: true,
                                   ),
-                                  const SizedBox(height: 16),
-                                  const Text(
-                                    'Sign in to view and post comments',
-                                    style: TextStyle(
-                                      color: Color(0xFF1A1A1A),
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                ),
+                                if (hasSuggestedBlock) ...[
+                                  const SizedBox(
+                                    height: _kSuggestedToCommentsGap,
                                   ),
-                                  const SizedBox(height: 20),
-                                  FilledButton(
-                                    onPressed: _showSignInRequiredDialog,
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: const Color(0xFFED1C2F),
-                                    ),
-                                    child: const Text('Sign In'),
+                                  const Divider(
+                                    height: 1,
+                                    thickness: 1,
+                                    indent: 16,
+                                    endIndent: 16,
+                                  ),
+                                  const SizedBox(
+                                    height: _kSuggestedToCommentsGap,
                                   ),
                                 ],
-                              ),
-                            ),
-                          );
-                        }
-                        return SliverToBoxAdapter(
-                          child: Column(
-                            children: [
-                              InlineCommentEntryBar(
-                                controller: _commentsController,
-                                onTap: _openCommentsSheet,
-                                onSignInRequired: _showSignInRequiredDialog,
-                              ),
-                              const Divider(
-                                height: 1,
-                                indent: 16,
-                                endIndent: 16,
-                              ),
-                              LatestCommentPreview(
-                                controller: _commentsController,
-                                onTap: _openCommentsSheet,
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                    SliverToBoxAdapter(
-                      child: _SuggestedVideosSection(
-                        videos: _suggestedVideos,
-                        isLoading: _suggestedLoading,
-                        hasError: _suggestedError,
-                        isNoInternet: _suggestedNoInternet,
-                        onRetry: () => _loadSuggestedVideosForPlayer(),
-                        onVideoSelected: (video) =>
-                            _replaceVideo(video, pushCurrentToHistory: true),
+                                if (authRepository.currentUser == null)
+                                  VideoPlayerCommentsSignedOutPanel(
+                                    onSignIn: _showSignInRequiredDialog,
+                                  )
+                                else
+                                  VideoPlayerCommentsPanel(
+                                    controller: _commentsController,
+                                    onOpenSheet: _openCommentsSheet,
+                                    onSignInRequired:
+                                        _showSignInRequiredDialog,
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
@@ -1690,6 +1698,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
     if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
     return count.toString();
+  }
+
+  Future<void> _openDescriptionLink(String rawUrl) async {
+    final normalized = rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
+        ? rawUrl
+        : 'https://$rawUrl';
+    final uri = Uri.tryParse(normalized);
+    if (uri == null) return;
+
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open this link')),
+      );
+    }
   }
 
   String _formatDate(DateTime date) {
@@ -1772,10 +1795,15 @@ class _SuggestedVideosSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(
-          child: CircularProgressIndicator(color: Color(0xFFED1C2F)),
+      return Container(
+        color: Colors.white,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SuggestedVideosStripShimmer(),
+          ],
         ),
       );
     }
@@ -1783,8 +1811,9 @@ class _SuggestedVideosSection extends StatelessWidget {
     if (hasError) {
       return Container(
         color: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline,
@@ -1820,9 +1849,10 @@ class _SuggestedVideosSection extends StatelessWidget {
     if (videos.isEmpty) return const SizedBox.shrink();
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
             'Suggested Videos',
@@ -1834,7 +1864,7 @@ class _SuggestedVideosSection extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 220,
+            height: _kSuggestedStripHeight,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: videos.length,

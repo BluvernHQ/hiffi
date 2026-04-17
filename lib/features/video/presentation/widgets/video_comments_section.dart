@@ -8,17 +8,34 @@ import 'package:hiffi/features/user/presentation/viewmodels/user_view_model.dart
 import 'package:hiffi/core/widgets/hiffi_image.dart';
 import 'package:go_router/go_router.dart';
 
+/// Username for a new comment/reply: [AuthRepository] can lag behind [UserViewModel].
+String resolvedCommentPosterUsername(
+  AuthRepository auth,
+  UserViewModel userVm,
+) {
+  final fromAuth = auth.currentUser?.username?.trim();
+  if (fromAuth != null && fromAuth.isNotEmpty) return fromAuth;
+  final profile = userVm.currentUser;
+  final fromProfile = profile?.username.trim();
+  if (fromProfile != null && fromProfile.isNotEmpty) return fromProfile;
+  return auth.currentUser?.username ?? 'Anonymous';
+}
+
 /// 1️⃣ Inline Comment Entry Bar (The zero-friction entry point)
 class InlineCommentEntryBar extends StatelessWidget {
   final VideoCommentsController controller;
   final VoidCallback onTap;
   final VoidCallback? onSignInRequired;
+  final Color backgroundColor;
+  final EdgeInsetsGeometry padding;
 
   const InlineCommentEntryBar({
     super.key,
     required this.controller,
     required this.onTap,
     this.onSignInRequired,
+    this.backgroundColor = Colors.white,
+    this.padding = const EdgeInsets.fromLTRB(16, 0, 16, 12),
   });
 
   @override
@@ -43,8 +60,8 @@ class InlineCommentEntryBar extends StatelessWidget {
         }
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        color: Colors.white,
+        padding: padding,
+        color: backgroundColor,
         child: Row(
           children: [
             HiffiAvatar(
@@ -105,11 +122,19 @@ class InlineCommentEntryBar extends StatelessWidget {
 class LatestCommentPreview extends StatelessWidget {
   final VideoCommentsController controller;
   final VoidCallback onTap;
+  final bool showHeaderRow;
+  final bool absorbTap;
+  final EdgeInsetsGeometry padding;
+  final Color backgroundColor;
 
   const LatestCommentPreview({
     super.key,
     required this.controller,
     required this.onTap,
+    this.showHeaderRow = true,
+    this.absorbTap = true,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    this.backgroundColor = Colors.white,
   });
 
   @override
@@ -120,14 +145,13 @@ class LatestCommentPreview extends StatelessWidget {
         final hasComment = controller.latestComment != null;
         final commentCount = controller.totalCommentsCount;
 
-        return GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            color: Colors.white,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+        final content = Container(
+          padding: padding,
+          color: backgroundColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showHeaderRow) ...[
                 Row(
                   children: [
                     Text(
@@ -146,83 +170,129 @@ class LatestCommentPreview extends StatelessWidget {
                     ),
                   ],
                 ),
-                if (hasComment && commentCount > 0) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      HiffiAvatar(
-                        imageUrl: controller.latestComment!.profilePicture,
-                        size: 32,
-                        fallbackText:
-                            controller.latestComment!.commentByUsername,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  controller.latestComment!.commentByUsername ??
-                                      'Anonymous',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                    color: Color(0xFF1A1A1A),
-                                  ),
+              ],
+              if (hasComment && commentCount > 0) ...[
+                if (showHeaderRow) const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    HiffiAvatar(
+                      imageUrl: controller.latestComment!.profilePicture,
+                      size: 32,
+                      fallbackText:
+                          controller.latestComment!.commentByUsername,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                controller.latestComment!.commentByUsername ??
+                                    'Anonymous',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  color: Color(0xFF1A1A1A),
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _formatTime(
-                                    controller.latestComment!.commentedAt,
-                                  ),
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF6B6B6B),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              controller.latestComment!.comment,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                height: 1.4,
-                                color: Color(0xFF1A1A1A),
                               ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _formatTime(
+                                  controller.latestComment!.commentedAt,
+                                ),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF6B6B6B),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            controller.latestComment!.comment,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              height: 1.4,
+                              color: Color(0xFF1A1A1A),
                             ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (commentCount > 1) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      'View all $commentCount comments',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFED1C2F),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ] else ...[
+                ),
+                if (commentCount > 1) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'View all $commentCount comments',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFED1C2F),
+                    ),
+                  ),
+                ],
+              ] else ...[
+                if (showHeaderRow) ...[
                   const SizedBox(height: 12),
                   const Text(
                     'Be the first to comment!',
                     style: TextStyle(fontSize: 14, color: Color(0xFF6B6B6B)),
                   ),
+                ] else ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.forum_outlined,
+                          size: 28,
+                          color: Colors.grey[600],
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'No comments yet',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                  color: Color(0xFF1A1A1A),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Be the first to share what you think.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  height: 1.35,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ],
-            ),
+            ],
           ),
         );
+
+        if (!absorbTap) {
+          return content;
+        }
+        return GestureDetector(onTap: onTap, child: content);
       },
     );
   }
@@ -233,6 +303,230 @@ class LatestCommentPreview extends StatelessWidget {
     if (diff.inHours > 0) return '${diff.inHours} hours ago';
     if (diff.inMinutes > 0) return '${diff.inMinutes} minutes ago';
     return 'Just now';
+  }
+}
+
+/// Grouped comments block for the video player scroll (discoverable section).
+class VideoPlayerCommentsPanel extends StatelessWidget {
+  const VideoPlayerCommentsPanel({
+    super.key,
+    required this.controller,
+    required this.onOpenSheet,
+    this.onSignInRequired,
+  });
+
+  final VideoCommentsController controller;
+  final VoidCallback onOpenSheet;
+  final VoidCallback? onSignInRequired;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomSafe = MediaQuery.paddingOf(context).bottom;
+
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final count = controller.totalCommentsCount;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 20 + bottomSafe),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF1A1A1A).withValues(alpha: 0.06),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        size: 22,
+                        color: const Color(0xFFED1C2F).withValues(alpha: 0.95),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Comments',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1A1A1A),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(
+                              0xFF1A1A1A,
+                            ).withValues(alpha: 0.08),
+                          ),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: Color(0xFF6B6B6B),
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: onOpenSheet,
+                          borderRadius: BorderRadius.circular(20),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 14,
+                              color: Color(0xFF6B6B6B),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    count == 0
+                        ? 'Start the conversation — add a comment below.'
+                        : 'Preview below. Tap to read the full thread.',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF6B6B6B),
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: onOpenSheet,
+                      child: LatestCommentPreview(
+                        controller: controller,
+                        onTap: onOpenSheet,
+                        showHeaderRow: false,
+                        absorbTap: false,
+                        padding: const EdgeInsets.all(12),
+                        backgroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF1A1A1A).withValues(alpha: 0.06),
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: InlineCommentEntryBar(
+                        controller: controller,
+                        onTap: onOpenSheet,
+                        onSignInRequired: onSignInRequired,
+                        backgroundColor: Colors.white,
+                        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Signed-out comments block matching [VideoPlayerCommentsPanel] chrome.
+class VideoPlayerCommentsSignedOutPanel extends StatelessWidget {
+  const VideoPlayerCommentsSignedOutPanel({
+    super.key,
+    required this.onSignIn,
+  });
+
+  final VoidCallback onSignIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomSafe = MediaQuery.paddingOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 20 + bottomSafe),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFF1A1A1A).withValues(alpha: 0.06),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.chat_bubble_outline_rounded,
+                    size: 22,
+                    color: const Color(0xFFED1C2F).withValues(alpha: 0.95),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Comments',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1A1A1A),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Sign in to read comments and join the discussion.',
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: onSignIn,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFED1C2F),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Sign in to comment'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -942,14 +1236,17 @@ class _CommentTileState extends State<CommentTile> {
   }
 
   void _postReply(String text) async {
-    final user = context.read<AuthRepository>().currentUser;
+    final auth = context.read<AuthRepository>();
+    final user = auth.currentUser;
+    final userVm = context.read<UserViewModel>();
     try {
       await widget.controller.postReply(
         commentId: widget.comment.commentId,
         text: text,
-        username: user?.username ?? 'Anonymous',
+        username: resolvedCommentPosterUsername(auth, userVm),
         uid: user?.uid ?? 'me',
-        profilePicture: user?.profilePicture,
+        profilePicture:
+            user?.profilePicture ?? userVm.currentUser?.profilePicture,
       );
       _replyController.clear();
       setState(() {
@@ -1207,26 +1504,34 @@ class _CommentComposerState extends State<CommentComposer> {
                     ),
                     onPressed: _canSend
                         ? () {
-                            final user = context
-                                .read<AuthRepository>()
-                                .currentUser;
+                            final auth = context.read<AuthRepository>();
+                            final user = auth.currentUser;
                             final text = _textController.text.trim();
                             if (text.isEmpty) return;
+
+                            final userVm = context.read<UserViewModel>();
+                            final posterName = resolvedCommentPosterUsername(
+                              auth,
+                              userVm,
+                            );
+                            final profilePic =
+                                user?.profilePicture ??
+                                userVm.currentUser?.profilePicture;
 
                             if (isReplying) {
                               widget.controller.postReply(
                                 commentId: replyTarget.commentId,
                                 text: text,
-                                username: user?.username ?? 'Anonymous',
+                                username: posterName,
                                 uid: user?.uid ?? 'me',
-                                profilePicture: user?.profilePicture,
+                                profilePicture: profilePic,
                               );
                             } else {
                               widget.controller.postComment(
                                 text: text,
-                                username: user?.username ?? 'Anonymous',
+                                username: posterName,
                                 uid: user?.uid ?? 'me',
-                                profilePicture: user?.profilePicture,
+                                profilePicture: profilePic,
                               );
                             }
                             _textController.clear();

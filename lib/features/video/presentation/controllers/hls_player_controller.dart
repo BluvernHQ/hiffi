@@ -41,6 +41,8 @@ class HlsPlayerController extends ChangeNotifier {
   double _userIntentVolume = 1.0;
   Duration? _lastKnownPosition;
   bool? _lastPipStatus;
+  /// Avoids [notifyListeners] on every video frame (fixes Android ImageReader buffer spam).
+  bool? _lastReportedIsPlaying;
 
   /// Drives fullscreen icon in [HiffiVideoControls] (Chewie fullscreen flag stays false).
   final ValueNotifier<bool> fullscreenUiForControls = ValueNotifier<bool>(false);
@@ -516,24 +518,43 @@ class HlsPlayerController extends ChangeNotifier {
     }
     if (controller.value.hasError) {
       _handleError(controller.value.errorDescription ?? 'Unknown error');
+      return;
     }
-    if (controller.value.isBuffering) {
-      _currentState = PlayerState.buffering;
-      notifyListeners();
-    } else if (controller.value.isPlaying) {
-      _currentState = PlayerState.ready;
+
+    final buffering = controller.value.isBuffering;
+    final playing = controller.value.isPlaying;
+    var shouldNotify = false;
+
+    if (playing) {
       if (_lastPipStatus != true) {
         PipService.setPlaybackWantsPip(true);
         _lastPipStatus = true;
+        shouldNotify = true;
       }
-      notifyListeners();
     } else {
       if (_lastPipStatus != false) {
         PipService.setPlaybackWantsPip(false);
         _lastPipStatus = false;
+        shouldNotify = true;
       }
+    }
+
+    final newState =
+        buffering ? PlayerState.buffering : PlayerState.ready;
+    if (newState != _currentState) {
+      _currentState = newState;
+      shouldNotify = true;
+    }
+
+    if (_lastReportedIsPlaying != playing) {
+      _lastReportedIsPlaying = playing;
+      shouldNotify = true;
+    }
+
+    if (shouldNotify) {
       notifyListeners();
     }
+
     _lastKnownPosition = controller.value.position;
 
     // Check if video has ended
@@ -632,6 +653,7 @@ class HlsPlayerController extends ChangeNotifier {
     PipService.setPlaybackWantsPip(false);
     _lastPipStatus = false;
     _isInitialized = false;
+    _lastReportedIsPlaying = null;
 
     final videoController = _videoPlayerController;
     final chewieController = _chewieController;
