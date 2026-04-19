@@ -21,6 +21,7 @@ import '../../features/user/presentation/views/become_creator_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
+import 'video_player_route_extra.dart';
 import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
 
@@ -127,7 +128,15 @@ class AppRouter {
           builder: (context, state) {
             final videoId = state.pathParameters['videoId'] ?? '';
             // Try to get video from extra first, then from cache
-            var video = state.extra as VideoModel?;
+            final extra = state.extra;
+            VideoModel? video;
+            Duration? initialResumePosition;
+            if (extra is VideoPlayerRouteExtra) {
+              video = extra.video;
+              initialResumePosition = extra.initialResumePosition;
+            } else {
+              video = extra as VideoModel?;
+            }
             bool returningFromAuth = false;
 
             if (video == null) {
@@ -148,6 +157,7 @@ class AppRouter {
               video: video,
               videoId: videoId,
               returningFromAuth: returningFromAuth,
+              initialResumePosition: initialResumePosition,
             );
           },
         ),

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:chewie/chewie.dart';
@@ -9,6 +11,7 @@ import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/utils/fullscreen_manager.dart';
 
 import 'package:hiffi/features/video/domain/models/video_model.dart';
+import 'package:hiffi/features/video/domain/repositories/video_repository.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
 import 'package:hiffi/features/video/presentation/widgets/hiffi_video_controls.dart';
 
@@ -19,7 +22,15 @@ class HlsPlayerController extends ChangeNotifier {
   final String baseVideoUrl;
   final bool autoPlay;
   final bool initialMuted;
+  final Duration? _initialResumePosition;
   final VoidCallback? _onVideoEnded;
+  final VideoRepository? _watchHoursRepository;
+
+  Timer? _watchHoursTimer;
+  /// One id per controller instance (this playback session).
+  late final String _watchHoursSessionId =
+      '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(0x7fffffff)}';
+  static const String _kWatchHoursPlayer = 'hiffi_flutter';
 
   VideoPlayerController? _videoPlayerController;
   ChewieController? _chewieController;
@@ -53,9 +64,13 @@ class HlsPlayerController extends ChangeNotifier {
     required this.baseVideoUrl,
     this.autoPlay = true,
     this.initialMuted = false,
+    Duration? initialResumePosition,
     VoidCallback? onVideoEnded,
+    VideoRepository? watchHoursRepository,
   }) : _userIntentMuted = initialMuted,
-       _onVideoEnded = onVideoEnded {
+       _initialResumePosition = initialResumePosition,
+       _onVideoEnded = onVideoEnded,
+       _watchHoursRepository = watchHoursRepository {
     _initProfiles();
     _initialize();
   }
@@ -354,7 +369,11 @@ class HlsPlayerController extends ChangeNotifier {
       await videoController.setVolume(_userIntentMuted ? 0.0 : _userIntentVolume);
 
       if (_lastKnownPosition == null) {
-        _lastKnownPosition = await _loadPlaybackPosition();
+        if (_initialResumePosition != null) {
+          _lastKnownPosition = _initialResumePosition;
+        } else {
+          _lastKnownPosition = await _loadPlaybackPosition();
+        }
       }
       if (_lastKnownPosition != null &&
           _lastKnownPosition!.inMilliseconds > 0 &&
@@ -557,6 +576,8 @@ class HlsPlayerController extends ChangeNotifier {
       notifyListeners();
     }
 
+    _syncWatchHoursTimer(playing);
+
     _lastKnownPosition = controller.value.position;
 
     // Check if video has ended
@@ -577,8 +598,53 @@ class HlsPlayerController extends ChangeNotifier {
     if (_chewieController == null || _isDisposed) return;
   }
 
+  void _cancelWatchHoursTimer() {
+    _watchHoursTimer?.cancel();
+    _watchHoursTimer = null;
+  }
+
+  void _syncWatchHoursTimer(bool isPlaying) {
+    if (_watchHoursRepository == null || _isDisposed) {
+      _cancelWatchHoursTimer();
+      return;
+    }
+    if (!isPlaying) {
+      _cancelWatchHoursTimer();
+      return;
+    }
+    if (_watchHoursTimer != null) return;
+    _watchHoursTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _sendWatchHoursSample(),
+    );
+  }
+
+  void _sendWatchHoursSample() {
+    final repo = _watchHoursRepository;
+    if (repo == null || _isDisposed) return;
+    final c = _safeVideoController();
+    if (c == null || !c.value.isInitialized || !c.value.isPlaying) return;
+    final v = c.value;
+    if (v.duration.inMilliseconds <= 0) return;
+
+    final posSec = v.position.inMicroseconds / 1e6;
+    final durSec = v.duration.inMicroseconds / 1e6;
+
+    unawaited(
+      repo.postWatchHoursSignal(
+        videoId: videoId,
+        positionSeconds: posSec,
+        durationSeconds: durSec,
+        playbackRate: v.playbackSpeed,
+        sessionId: _watchHoursSessionId,
+        player: _kWatchHoursPlayer,
+      ),
+    );
+  }
+
   void _handleError(String message) {
     if (_isDisposed) return;
+    _cancelWatchHoursTimer();
     debugPrint('HLS Player Error: $message');
     _hasError = true;
     _errorMessage = message;
@@ -645,6 +711,7 @@ class HlsPlayerController extends ChangeNotifier {
   }
 
   Future<void> _disposeControllers({bool isSwitchingProfile = false}) async {
+    _cancelWatchHoursTimer();
     final previousController = _safeVideoController();
     if (previousController != null) {
       try {

@@ -1,14 +1,18 @@
 import 'video_model.dart';
 
-/// One row from GET /videos/list/history: nested [video], optional creator avatar, watch time.
+/// One row from GET /videos/list/history: nested [video], watch metadata, resume point.
 class WatchHistoryItem {
   WatchHistoryItem({
     required this.video,
     required this.viewedAt,
+    this.positionSeconds,
   });
 
   final VideoModel video;
   final DateTime viewedAt;
+
+  /// Server-reported playback position (`position_seconds`), when present.
+  final double? positionSeconds;
 }
 
 /// Paginated watch history (`data.count`, `data.limit`, `data.offset`, `data.videos`).

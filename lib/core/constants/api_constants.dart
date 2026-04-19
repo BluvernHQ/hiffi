@@ -1,6 +1,6 @@
 class ApiConstants {
   // static const String baseUrl = 'https://api.dev.hiffi.com';
-static const String baseUrl = 'https://api.hiffi.com';
+  static const String baseUrl = 'https://api.hiffi.com';
   // Auth endpoints
   static const String authRegister = '/auth/register';
   static const String authLogin = '/auth/login';
@@ -57,4 +57,7 @@ static const String baseUrl = 'https://api.hiffi.com';
       '/search/users/${Uri.encodeComponent(query)}';
   static String searchVideos(String query) =>
       '/search/videos/${Uri.encodeComponent(query)}';
+
+  /// Watch-time / playback signals (Bearer auth).
+  static const String signalsWatchhours = '/signals/watchhours';
 }

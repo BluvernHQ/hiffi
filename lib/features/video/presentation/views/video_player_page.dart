@@ -38,6 +38,7 @@ class VideoPlayerPage extends StatefulWidget {
     required this.video,
     this.videoId,
     this.returningFromAuth = false,
+    this.initialResumePosition,
   });
 
   // Simple cache to store video temporarily when navigating away for authentication
@@ -64,6 +65,9 @@ class VideoPlayerPage extends StatefulWidget {
   final VideoModel video;
   final String? videoId;
   final bool returningFromAuth; // True if returning from auth pages
+
+  /// When non-null (e.g. watch history), seek here on first load instead of prefs alone.
+  final Duration? initialResumePosition;
 
   @override
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
@@ -139,9 +143,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       debugPrint('VideoPlayerPage: Returning from auth - video will be paused');
       // When returning from auth, we want to restore the position where it was paused
       // So we don't clear the position here - it will be loaded from SharedPreferences
-    } else {
-      // If NOT returning from auth (normal navigation), clear saved position
-      // This ensures videos start from beginning when navigating normally
+    } else if (widget.initialResumePosition == null) {
+      // Normal navigation: clear stale resume so we don't jump unexpectedly.
       HlsPlayerController.clearPlaybackPosition(_video.videoId);
       debugPrint(
         'VideoPlayerPage: Cleared saved position for normal navigation',
@@ -1123,6 +1126,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         videoId: _video.videoId,
         baseVideoUrl: _videoUrlFromApi!,
         autoPlay: !_isNavigatingAway && !_isReturningFromAuth,
+        initialResumePosition: widget.initialResumePosition,
+        watchHoursRepository: context.read<VideoRepository>(),
         onVideoEnded: _onVideoEnded,
       );
     }
@@ -1540,7 +1545,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                         decoration: TextDecoration.underline,
                                         decorationColor: Color(0xFFED1C2F),
                                       ),
-                                      options: const LinkifyOptions(
+                                      options: LinkifyOptions(
                                         humanize: false,
                                         removeWww: false,
                                       ),

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/routes/video_player_route_extra.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -307,9 +308,17 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
                               item.viewedAt.toLocal(),
                             ),
                             onTap: () {
+                              final pos = item.positionSeconds;
                               context.push(
                                 '/video/${item.video.videoId}',
-                                extra: item.video,
+                                extra: VideoPlayerRouteExtra(
+                                  video: item.video,
+                                  initialResumePosition: pos != null
+                                      ? Duration(
+                                          milliseconds: (pos * 1000).round(),
+                                        )
+                                      : null,
+                                ),
                               );
                             },
                           );

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:math';
 
 import '../../../../core/constants/api_constants.dart';
@@ -80,6 +81,17 @@ abstract class VideoRepository {
   Future<void> deleteVideo(String videoId);
   Future<void> deleteComment(String commentId);
   Future<void> deleteReply(String replyId);
+
+  /// POST `/signals/watchhours` — best-effort; failures are swallowed.
+  Future<void> postWatchHoursSignal({
+    required String videoId,
+    required double positionSeconds,
+    required double durationSeconds,
+    required double playbackRate,
+    String? deviceId,
+    String? sessionId,
+    String? player,
+  });
 }
 
 class VideoRepositoryImpl implements VideoRepository {
@@ -610,11 +622,34 @@ class VideoRepositoryImpl implements VideoRepository {
         final viewedAtStr =
             itemMap['viewed_at'] as String? ??
             itemMap['viewedAt'] as String?;
-        final viewedAt = viewedAtStr != null
-            ? DateTime.parse(viewedAtStr)
-            : video.updatedAt;
+        final lastSeenUnix = itemMap['last_seen_unix'];
+        final DateTime viewedAt;
+        if (viewedAtStr != null) {
+          viewedAt = DateTime.parse(viewedAtStr);
+        } else if (lastSeenUnix is int) {
+          viewedAt = DateTime.fromMillisecondsSinceEpoch(
+            lastSeenUnix * 1000,
+            isUtc: true,
+          );
+        } else if (lastSeenUnix is num) {
+          viewedAt = DateTime.fromMillisecondsSinceEpoch(
+            lastSeenUnix.toInt() * 1000,
+            isUtc: true,
+          );
+        } else {
+          viewedAt = video.updatedAt;
+        }
 
-        items.add(WatchHistoryItem(video: video, viewedAt: viewedAt));
+        final posRaw = itemMap['position_seconds'];
+        final double? positionSeconds = posRaw is num ? posRaw.toDouble() : null;
+
+        items.add(
+          WatchHistoryItem(
+            video: video,
+            viewedAt: viewedAt,
+            positionSeconds: positionSeconds,
+          ),
+        );
       } catch (e) {
         print('⚠️ Error parsing watch history item: $e');
       }
@@ -1057,6 +1092,57 @@ class VideoRepositoryImpl implements VideoRepository {
     if (responseBody != null && responseBody['success'] == false) {
       final error = responseBody['error'] as String? ?? 'Unknown error';
       throw Exception('Delete reply failed: $error');
+    }
+  }
+
+  @override
+  Future<void> postWatchHoursSignal({
+    required String videoId,
+    required double positionSeconds,
+    required double durationSeconds,
+    required double playbackRate,
+    String? deviceId,
+    String? sessionId,
+    String? player,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'video_id': videoId,
+        'position_seconds': positionSeconds,
+        'duration_seconds': durationSeconds,
+        'playback_rate': playbackRate,
+        'client_timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      };
+      if (deviceId != null && deviceId.isNotEmpty) {
+        body['device_id'] = deviceId;
+      }
+      if (sessionId != null && sessionId.isNotEmpty) {
+        body['session_id'] = sessionId;
+      }
+      if (player != null && player.isNotEmpty) {
+        body['player'] = player;
+      }
+
+      final response = await _apiClient.post(
+        ApiConstants.signalsWatchhours,
+        body,
+        requiresAuth: true,
+      );
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        developer.log(
+          'watchhours signal HTTP ${response.statusCode}',
+          name: 'hiffi.signals',
+        );
+      }
+    } on NoInternetException {
+      // Expected when offline; do not log as error.
+    } catch (e, st) {
+      developer.log(
+        'watchhours signal skipped: $e',
+        name: 'hiffi.signals',
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
+import 'package:hiffi/features/video/domain/repositories/video_repository.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -31,6 +32,8 @@ class HlsVideoPlayer extends StatefulWidget {
   final String baseVideoUrl; // The URL from GET /videos/{videoId}
   final bool autoPlay;
   final bool initialMuted;
+  final Duration? initialResumePosition;
+  final VideoRepository? watchHoursRepository;
   final Function(PlayerState)? onStateChanged;
   final VoidCallback? onVideoEnded;
 
@@ -41,6 +44,8 @@ class HlsVideoPlayer extends StatefulWidget {
     required this.baseVideoUrl,
     this.autoPlay = true,
     this.initialMuted = false,
+    this.initialResumePosition,
+    this.watchHoursRepository,
     this.onStateChanged,
     this.onVideoEnded,
   });
@@ -175,6 +180,8 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
         baseVideoUrl: widget.baseVideoUrl,
         autoPlay: widget.autoPlay,
         initialMuted: widget.initialMuted,
+        initialResumePosition: widget.initialResumePosition,
+        watchHoursRepository: widget.watchHoursRepository,
         onVideoEnded: widget.onVideoEnded,
       );
       HlsVideoPlayer.registerController(widget.videoId, _controller);
@@ -212,6 +219,8 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
           baseVideoUrl: widget.baseVideoUrl,
           autoPlay: widget.autoPlay,
           initialMuted: widget.initialMuted,
+          initialResumePosition: widget.initialResumePosition,
+          watchHoursRepository: widget.watchHoursRepository,
           onVideoEnded: widget.onVideoEnded,
         );
         HlsVideoPlayer.registerController(widget.videoId, _controller);

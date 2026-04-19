@@ -8,6 +8,11 @@ class ImageUtils {
   /// Base URL for video and thumbnail media (Workers).
   /// Use same host as profile for prod; override for dev if media is on a different Workers subdomain.
   static const String mediaBaseUrl = 'https://prod.hiffi.workers.dev';
+// static const String profileImageBaseUrl = 'https://dev.hiffi.workers.dev';
+
+//   /// Base URL for video and thumbnail media (Workers).
+//   /// Use same host as profile for prod; override for dev if media is on a different Workers subdomain.
+//   static const String mediaBaseUrl = 'https://dev.hiffi.workers.dev';
 
   // API key for profile image requests (should be stored securely in production)
   // TODO: Move this to environment variables or secure storage
