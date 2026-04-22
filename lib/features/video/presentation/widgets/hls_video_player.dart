@@ -173,6 +173,7 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
         'HlsVideoPlayer: Reusing existing controller for ${widget.videoId} '
         '(pos: ${existing.controller?.value.position})',
       );
+      MediaSyncService().setCurrentPlayer(_controller, widget.video);
     } else {
       _controller = HlsPlayerController(
         video: widget.video,
@@ -212,6 +213,7 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       final existing = HlsVideoPlayer._controllers[widget.videoId];
       if (existing != null && !existing.isDisposed) {
         _controller = existing;
+        MediaSyncService().setCurrentPlayer(_controller, widget.video);
       } else {
         _controller = HlsPlayerController(
           video: widget.video,

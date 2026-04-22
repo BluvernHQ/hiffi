@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:chewie/chewie.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -220,6 +221,7 @@ class HlsPlayerController extends ChangeNotifier {
       debugPrint('HlsPlayerController: Pausing playback');
       await controller.pause();
     }
+    await _setVideoAudioSessionActive(false);
   }
 
   Future<void> play() async {
@@ -229,6 +231,7 @@ class HlsPlayerController extends ChangeNotifier {
     }
     if (!controller.value.isPlaying) {
       debugPrint('HlsPlayerController: Resuming playback');
+      await _setVideoAudioSessionActive(true);
       await controller.play();
     }
   }
@@ -474,6 +477,7 @@ class HlsPlayerController extends ChangeNotifier {
           !_isDisposed &&
           _videoPlayerController == videoController) {
         try {
+          await _setVideoAudioSessionActive(true);
           await videoController.play();
         } catch (_) {
           // Ignore autoplay race failures during controller switches.
@@ -710,7 +714,22 @@ class HlsPlayerController extends ChangeNotifier {
     }
   }
 
+  /// Registers audio focus with [AudioSession] so [MediaSyncService] receives
+  /// ducking / transient-loss events and can pause the player.
+  Future<void> _setVideoAudioSessionActive(bool active) async {
+    if (_isDisposed) return;
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(active);
+    } catch (e) {
+      debugPrint(
+        'HlsPlayerController: Audio session setActive($active) failed: $e',
+      );
+    }
+  }
+
   Future<void> _disposeControllers({bool isSwitchingProfile = false}) async {
+    await _setVideoAudioSessionActive(false);
     _cancelWatchHoursTimer();
     final previousController = _safeVideoController();
     if (previousController != null) {

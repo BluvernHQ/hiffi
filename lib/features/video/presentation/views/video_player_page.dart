@@ -29,6 +29,9 @@ import '../controllers/hls_player_controller.dart';
 /// Vertical space above and below the divider between suggested videos and comments.
 const double _kSuggestedToCommentsGap = 12;
 
+/// Result of the sign-in prompt on the video page (guest like/follow/etc.).
+enum _SignInPromptResult { cancelled, signIn, signUp }
+
 /// Horizontal strip height aligned to [_SuggestedVideoCard] (avoids empty space above divider).
 const double _kSuggestedStripHeight = 168;
 
@@ -572,11 +575,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  void _showSignInRequiredDialog() {
-    _pauseVideo();
-    showDialog(
+  Future<void> _showSignInRequiredDialog() async {
+    await _pauseVideo();
+    if (!mounted) return;
+    final result = await showDialog<_SignInPromptResult>(
       context: context,
-      builder: (BuildContext context) {
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -591,9 +596,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           ),
           actions: [
             TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _resumeVideo();
+              onPressed: () {
+                Navigator.of(dialogContext).pop(_SignInPromptResult.cancelled);
               },
               child: const Text(
                 'Cancel',
@@ -604,15 +608,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               ),
             ),
             TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _pauseVideo();
-                VideoPlayerPage.cacheVideo(_video.videoId, _video);
-                final currentRoute = '/video/${_video.videoId}';
-                if (mounted)
-                  context.go(
-                    '/login?returnTo=${Uri.encodeComponent(currentRoute)}',
-                  );
+              onPressed: () {
+                Navigator.of(dialogContext).pop(_SignInPromptResult.signIn);
               },
               child: const Text(
                 'Sign In',
@@ -623,15 +620,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               ),
             ),
             ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _pauseVideo();
-                VideoPlayerPage.cacheVideo(_video.videoId, _video);
-                final currentRoute = '/video/${_video.videoId}';
-                if (mounted)
-                  context.go(
-                    '/signup?returnTo=${Uri.encodeComponent(currentRoute)}',
-                  );
+              onPressed: () {
+                Navigator.of(dialogContext).pop(_SignInPromptResult.signUp);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFED1C2F),
@@ -649,6 +639,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         );
       },
     );
+
+    if (!mounted) return;
+
+    switch (result) {
+      case _SignInPromptResult.signIn:
+        {
+          VideoPlayerPage.cacheVideo(_video.videoId, _video);
+          final currentRoute = '/video/${_video.videoId}';
+          if (!mounted) return;
+          context.go('/login?returnTo=${Uri.encodeComponent(currentRoute)}');
+        }
+      case _SignInPromptResult.signUp:
+        {
+          VideoPlayerPage.cacheVideo(_video.videoId, _video);
+          final currentRoute = '/video/${_video.videoId}';
+          if (!mounted) return;
+          context.go('/signup?returnTo=${Uri.encodeComponent(currentRoute)}');
+        }
+      case _SignInPromptResult.cancelled:
+      case null:
+        await _resumeVideo();
+    }
   }
 
   @override
@@ -702,6 +714,82 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     _pauseVideo();
     context.push('/users/${_video.userUsername}');
+  }
+
+  /// Save to Liked Videos (same API as legacy upvote).
+  Future<void> _toggleSaveToLiked() async {
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) {
+      _showSignInRequiredDialog();
+      return;
+    }
+    final wasUpvoted = _isUpvoted;
+    final previousUpvoteCount = _upvoteCount;
+    final wasDownvoted = _isDownvoted;
+    final previousDownvoteCount = _downvoteCount;
+    setState(() {
+      if (_isUpvoted) {
+        _isUpvoted = false;
+        _upvoteCount--;
+      } else {
+        if (_isDownvoted) {
+          _isDownvoted = false;
+          _downvoteCount--;
+        }
+        _isUpvoted = true;
+        _upvoteCount++;
+      }
+    });
+    try {
+      await context.read<VideoRepository>().upvoteVideo(_video.videoId);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isUpvoted = wasUpvoted;
+          _upvoteCount = previousUpvoteCount;
+          _isDownvoted = wasDownvoted;
+          _downvoteCount = previousDownvoteCount;
+        });
+      }
+    }
+  }
+
+  /// Taste / feedback (same API as legacy downvote) — kept out of the main chrome.
+  Future<void> _toggleNotForMeFeedback() async {
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) {
+      _showSignInRequiredDialog();
+      return;
+    }
+    final wasDownvoted = _isDownvoted;
+    final previousDownvoteCount = _downvoteCount;
+    final wasUpvoted = _isUpvoted;
+    final previousUpvoteCount = _upvoteCount;
+    setState(() {
+      if (_isDownvoted) {
+        _isDownvoted = false;
+        _downvoteCount--;
+      } else {
+        if (_isUpvoted) {
+          _isUpvoted = false;
+          _upvoteCount--;
+        }
+        _isDownvoted = true;
+        _downvoteCount++;
+      }
+    });
+    try {
+      await context.read<VideoRepository>().downvoteVideo(_video.videoId);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isDownvoted = wasDownvoted;
+          _downvoteCount = previousDownvoteCount;
+          _isUpvoted = wasUpvoted;
+          _upvoteCount = previousUpvoteCount;
+        });
+      }
+    }
   }
 
   Future<void> _showVideoOptionsBottomSheet() async {
@@ -907,6 +995,37 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                           ),
                         ),
                       ],
+                      const Divider(height: 28),
+                      Text(
+                        'Feedback',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[900],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Separate from saving to your library.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.visibility_off_outlined,
+                          color: Colors.grey[800],
+                        ),
+                        title: const Text('Not for me'),
+                        subtitle: const Text('Fewer recommendations like this'),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          Future.microtask(() {
+                            if (!mounted) return;
+                            _toggleNotForMeFeedback();
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -1275,173 +1394,108 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              _video.videoTitle,
-                              style: const TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                height: 1.3,
-                                letterSpacing: -0.3,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 8),
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  '${_formatCount(_video.videoViews)} views',
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B6B6B),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  width: 3,
-                                  height: 3,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF6B6B6B),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _formatDate(_video.createdAt),
-                                  style: const TextStyle(
-                                    color: Color(0xFF6B6B6B),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF5F5F5),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      _VideoActionButton(
-                                        icon: _isUpvoted
-                                            ? Icons.thumb_up
-                                            : Icons.thumb_up_outlined,
-                                        label: _formatCount(_upvoteCount),
-                                        isActive: _isUpvoted,
-                                        onTap: () async {
-                                          final authRepository = context
-                                              .read<AuthRepository>();
-                                          if (authRepository.currentUser ==
-                                              null) {
-                                            _showSignInRequiredDialog();
-                                            return;
-                                          }
-                                          final wasUpvoted = _isUpvoted;
-                                          final previousUpvoteCount =
-                                              _upvoteCount;
-                                          final wasDownvoted = _isDownvoted;
-                                          final previousDownvoteCount =
-                                              _downvoteCount;
-                                          setState(() {
-                                            if (_isUpvoted) {
-                                              _isUpvoted = false;
-                                              _upvoteCount--;
-                                            } else {
-                                              if (_isDownvoted) {
-                                                _isDownvoted = false;
-                                                _downvoteCount--;
-                                              }
-                                              _isUpvoted = true;
-                                              _upvoteCount++;
-                                            }
-                                          });
-                                          try {
-                                            await context
-                                                .read<VideoRepository>()
-                                                .upvoteVideo(_video.videoId);
-                                          } catch (e) {
-                                            if (mounted) {
-                                              setState(() {
-                                                _isUpvoted = wasUpvoted;
-                                                _upvoteCount =
-                                                    previousUpvoteCount;
-                                                _isDownvoted = wasDownvoted;
-                                                _downvoteCount =
-                                                    previousDownvoteCount;
-                                              });
-                                            }
-                                          }
-                                        },
+                                      Text(
+                                        _video.videoTitle,
+                                        style: const TextStyle(
+                                          color: Color(0xFF1A1A1A),
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.3,
+                                          letterSpacing: -0.3,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      Container(
-                                        width: 1,
-                                        height: 20,
-                                        color: Colors.grey[300],
-                                      ),
-                                      _VideoActionButton(
-                                        icon: _isDownvoted
-                                            ? Icons.thumb_down
-                                            : Icons.thumb_down_outlined,
-                                        label: '',
-                                        isActive: _isDownvoted,
-                                        onTap: () async {
-                                          final authRepository = context
-                                              .read<AuthRepository>();
-                                          if (authRepository.currentUser ==
-                                              null) {
-                                            _showSignInRequiredDialog();
-                                            return;
-                                          }
-                                          final wasDownvoted = _isDownvoted;
-                                          final previousDownvoteCount =
-                                              _downvoteCount;
-                                          final wasUpvoted = _isUpvoted;
-                                          final previousUpvoteCount =
-                                              _upvoteCount;
-                                          setState(() {
-                                            if (_isDownvoted) {
-                                              _isDownvoted = false;
-                                              _downvoteCount--;
-                                            } else {
-                                              if (_isUpvoted) {
-                                                _isUpvoted = false;
-                                                _upvoteCount--;
-                                              }
-                                              _isDownvoted = true;
-                                              _downvoteCount++;
-                                            }
-                                          });
-                                          try {
-                                            await context
-                                                .read<VideoRepository>()
-                                                .downvoteVideo(_video.videoId);
-                                          } catch (e) {
-                                            if (mounted) {
-                                              setState(() {
-                                                _isDownvoted = wasDownvoted;
-                                                _downvoteCount =
-                                                    previousDownvoteCount;
-                                                _isUpvoted = wasUpvoted;
-                                                _upvoteCount =
-                                                    previousUpvoteCount;
-                                              });
-                                            }
-                                          }
-                                        },
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '${_formatCount(_video.videoViews)} views',
+                                            style: const TextStyle(
+                                              color: Color(0xFF6B6B6B),
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            width: 3,
+                                            height: 3,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFF6B6B6B),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            _formatDate(_video.createdAt),
+                                            style: const TextStyle(
+                                              color: Color(0xFF6B6B6B),
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
                                 ),
-                                const SizedBox(width: 12),
-                                IconButton(
-                                  icon: const Icon(Icons.share),
-                                  color: const Color(0xFF1A1A1A),
-                                  onPressed: _shareVideo,
+                                const SizedBox(width: 8),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        onTap: _toggleSaveToLiked,
+                                        borderRadius: BorderRadius.circular(22),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 8,
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                _isUpvoted
+                                                    ? Icons.favorite
+                                                    : Icons.favorite_border,
+                                                size: 22,
+                                                color: _isUpvoted
+                                                    ? const Color(0xFFED1C2F)
+                                                    : const Color(0xFF6B6B6B),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                _formatCount(_upvoteCount),
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: _isUpvoted
+                                                      ? const Color(0xFFED1C2F)
+                                                      : const Color(0xFF6B6B6B),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.share_outlined),
+                                      color: const Color(0xFF6B6B6B),
+                                      tooltip: 'Share',
+                                      onPressed: _shareVideo,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
@@ -1549,9 +1603,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                         humanize: false,
                                         removeWww: false,
                                       ),
-                                      onOpen: (link) => _openDescriptionLink(
-                                        link.url,
-                                      ),
+                                      onOpen: (link) =>
+                                          _openDescriptionLink(link.url),
                                       maxLines: _isDescriptionExpanded
                                           ? null
                                           : 2,
@@ -1638,9 +1691,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         color: Colors.white,
                         child: Builder(
                           builder: (context) {
-                            final authRepository =
-                                context.read<AuthRepository>();
-                            final hasSuggestedBlock = _suggestedLoading ||
+                            final authRepository = context
+                                .read<AuthRepository>();
+                            final hasSuggestedBlock =
+                                _suggestedLoading ||
                                 _suggestedError ||
                                 _suggestedVideos.isNotEmpty;
                             return Column(
@@ -1680,8 +1734,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   VideoPlayerCommentsPanel(
                                     controller: _commentsController,
                                     onOpenSheet: _openCommentsSheet,
-                                    onSignInRequired:
-                                        _showSignInRequiredDialog,
+                                    onSignInRequired: _showSignInRequiredDialog,
                                   ),
                               ],
                             );
@@ -1706,7 +1759,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _openDescriptionLink(String rawUrl) async {
-    final normalized = rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
+    final normalized =
+        rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
         ? rawUrl
         : 'https://$rawUrl';
     final uri = Uri.tryParse(normalized);
@@ -1714,9 +1768,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open this link')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open this link')));
     }
   }
 
@@ -1726,57 +1780,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (diff.inHours > 0) return '${diff.inHours}h ago';
     if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
     return 'Just now';
-  }
-}
-
-class _VideoActionButton extends StatelessWidget {
-  const _VideoActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.isActive = false,
-  });
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool isActive;
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: isActive
-                    ? const Color(0xFFED1C2F)
-                    : const Color(0xFF1A1A1A),
-              ),
-              if (label.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: isActive
-                        ? const Color(0xFFED1C2F)
-                        : const Color(0xFF1A1A1A),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -1806,9 +1809,7 @@ class _SuggestedVideosSection extends StatelessWidget {
         child: const Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SuggestedVideosStripShimmer(),
-          ],
+          children: [SuggestedVideosStripShimmer()],
         ),
       );
     }
