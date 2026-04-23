@@ -50,6 +50,8 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   Timer? _initTimer;
   Timer? _pipOverlayHideTimer;
   bool _dragging = false;
+  bool _suppressTapAfterSeek = false;
+  bool _resumeAfterDragSeek = false;
 
   /// PiP: bottom bar visible after user taps the video; hidden by default.
   bool _pipOverlayVisible = false;
@@ -385,13 +387,15 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
 
     return GestureDetector(
       onTap: () {
+        if (_suppressTapAfterSeek || _dragging) {
+          _cancelAndRestartTimer();
+          return;
+        }
         if (_latestValue.isPlaying) {
-          if (_chewieController?.pauseOnBackgroundTap ?? false) {
-            _playPause();
-            _cancelAndRestartTimer();
-          } else {
-            _cancelAndRestartTimer();
-          }
+          // Never pause from background surface taps.
+          // Surface gestures (double-tap seek/scrub) can produce incidental taps;
+          // pausing should only happen from explicit controls.
+          _cancelAndRestartTimer();
         } else {
           _playPause();
           setState(() => notifier.hideStuff = true);
@@ -640,12 +644,21 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
       child: MaterialVideoProgressBar(
         controller,
         onDragStart: () {
+          _resumeAfterDragSeek = controller.value.isPlaying;
           setState(() => _dragging = true);
           _hideTimer?.cancel();
         },
         onDragUpdate: () => _hideTimer?.cancel(),
         onDragEnd: () {
           setState(() => _dragging = false);
+          _suppressTapAfterSeek = true;
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (mounted) _suppressTapAfterSeek = false;
+          });
+          if (_resumeAfterDragSeek && !controller.value.isPlaying) {
+            controller.play();
+          }
+          _resumeAfterDragSeek = false;
           _startHideTimer();
         },
         colors: chewieController.materialProgressColors ??

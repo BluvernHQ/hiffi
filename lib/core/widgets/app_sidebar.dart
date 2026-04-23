@@ -205,7 +205,8 @@ class _AppSidebarState extends State<AppSidebar>
                                       icon: Icons.history_rounded,
                                       activeIcon: Icons.history_rounded,
                                       label: 'History',
-                                      isActive: widget.currentRoute ==
+                                      isActive:
+                                          widget.currentRoute ==
                                           '/watch-history',
                                       onTap: () {
                                         _toggleSidebar();
@@ -227,8 +228,7 @@ class _AppSidebarState extends State<AppSidebar>
                                       icon: Icons.thumb_up_alt_outlined,
                                       activeIcon: Icons.thumb_up_alt_rounded,
                                       label: 'Liked videos',
-                                      isActive:
-                                          widget.currentRoute == '/liked',
+                                      isActive: widget.currentRoute == '/liked',
                                       onTap: () {
                                         _toggleSidebar();
                                         if (widget.currentRoute != '/liked') {
@@ -237,6 +237,28 @@ class _AppSidebarState extends State<AppSidebar>
                                             () {
                                               if (mounted) {
                                                 context.go('/liked');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  if (widget.isAuthenticated)
+                                    _SidebarItem(
+                                      icon: Icons.queue_music_outlined,
+                                      activeIcon: Icons.queue_music_rounded,
+                                      label: 'My playlists',
+                                      isActive:
+                                          widget.currentRoute == '/playlists',
+                                      onTap: () {
+                                        _toggleSidebar();
+                                        if (widget.currentRoute !=
+                                            '/playlists') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/playlists');
                                               }
                                             },
                                           );

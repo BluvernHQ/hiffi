@@ -60,4 +60,15 @@ class ApiConstants {
 
   /// Watch-time / playback signals (Bearer auth).
   static const String signalsWatchhours = '/signals/watchhours';
+
+  // Playlist endpoints
+  static const String playlistListSelf = '/playlists/list/self';
+  static const String playlistCreate = '/playlists/create';
+  static String playlistDetail(String playlistId) => '/playlists/$playlistId';
+  static String playlistAddItem(String playlistId) =>
+      '/playlists/$playlistId/items/add';
+  static String playlistRemoveItem(String playlistId, String videoId) =>
+      '/playlists/$playlistId/items/$videoId';
+  static String playlistReorderItems(String playlistId) =>
+      '/playlists/$playlistId/items/reorder';
 }

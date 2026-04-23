@@ -147,7 +147,6 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
 
   // Gesture control state
   Timer? _tapTimer;
-  static const Duration _doubleTapDelay = Duration(milliseconds: 300);
   static const Duration _skipDuration = Duration(seconds: 10);
 
   // Pull-up to fullscreen (YouTube-style)
@@ -257,16 +256,9 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
   void _handleTap(BuildContext context, BoxConstraints constraints) {
     // Cancel any pending double-tap timer
     _tapTimer?.cancel();
-
-    // Use a timer to distinguish single tap from double tap
-    // This allows double-tap to cancel the single-tap action
-    _tapTimer = Timer(_doubleTapDelay, () {
-      // Single tap detected - toggle play/pause
-      // Only execute if we haven't been disposed and widget is still mounted
-      if (!_isDisposed && mounted) {
-        _controller.togglePlayPause();
-      }
-    });
+    // Do not toggle playback from surface taps.
+    // The tap area exists for double-tap seek and gesture coordination only.
+    // Play/pause is controlled by the explicit center control button.
   }
 
   /// Handles double tap for skip forward/backward
@@ -283,8 +275,7 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
 
     // Skip backward on left side, forward on right side
     final skipDuration = isLeftSide ? -_skipDuration : _skipDuration;
-
-    _controller.seekBy(skipDuration);
+    unawaited(_controller.seekBy(skipDuration));
 
     // Show visual feedback (optional - could add a skip indicator overlay)
     debugPrint(
@@ -485,7 +476,6 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
                       ),
                     ),
                   ),
-
               ],
             ),
           );

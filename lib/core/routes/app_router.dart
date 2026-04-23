@@ -24,6 +24,8 @@ import '../../features/video/presentation/views/video_player_page.dart';
 import 'video_player_route_extra.dart';
 import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
+import '../../features/playlist/presentation/views/playlists_page.dart';
+import '../../features/playlist/presentation/views/playlist_detail_page.dart';
 
 class AppRouter {
   /// For [RouteAware] on [VideoPlayerPage] (PiP eligibility when another route covers the player).
@@ -166,6 +168,10 @@ class AppRouter {
           name: 'watch_video',
           builder: (context, state) {
             final videoId = state.pathParameters['videoId'] ?? '';
+            final playlistId = state.uri.queryParameters['playlist'];
+            final pindex = int.tryParse(
+              state.uri.queryParameters['pindex'] ?? '',
+            );
 
             if (videoId.isEmpty) {
               // Invalid deep link: send to home instead of crashing.
@@ -175,7 +181,24 @@ class AppRouter {
               return const SizedBox.shrink();
             }
 
-            return WatchScreen(videoId: videoId);
+            return WatchScreen(
+              videoId: videoId,
+              playlistId: playlistId,
+              playlistIndex: pindex,
+            );
+          },
+        ),
+        GoRoute(
+          path: '/playlists',
+          name: 'playlists',
+          builder: (context, state) => const PlaylistsPage(),
+        ),
+        GoRoute(
+          path: '/playlists/:playlistId',
+          name: 'playlist_detail',
+          builder: (context, state) {
+            final playlistId = state.pathParameters['playlistId'] ?? '';
+            return PlaylistDetailPage(playlistId: playlistId);
           },
         ),
         GoRoute(
@@ -207,8 +230,12 @@ class AppRouter {
         final onVideo = state.uri.path.startsWith('/video/');
         final onWatch = state.uri.path.startsWith('/watch/');
         final onSearch = state.uri.path == '/search';
+        final onPlaylists = state.uri.path.startsWith('/playlists');
 
         if (!isLoggedIn) {
+          if (onPlaylists) {
+            return '/login?returnTo=${Uri.encodeComponent(state.uri.toString())}';
+          }
           final onLiked = state.uri.path == '/liked';
           if (onLiked) {
             return '/login?returnTo=/liked';
@@ -230,7 +257,8 @@ class AppRouter {
               onFollowing ||
               onVideo ||
               onWatch ||
-              onSearch) {
+              onSearch ||
+              onPlaylists) {
             return null;
           }
           // For any other route, redirect to home

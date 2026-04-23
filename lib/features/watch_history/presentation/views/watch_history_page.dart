@@ -308,16 +308,10 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
                               item.viewedAt.toLocal(),
                             ),
                             onTap: () {
-                              final pos = item.positionSeconds;
                               context.push(
                                 '/video/${item.video.videoId}',
                                 extra: VideoPlayerRouteExtra(
                                   video: item.video,
-                                  initialResumePosition: pos != null
-                                      ? Duration(
-                                          milliseconds: (pos * 1000).round(),
-                                        )
-                                      : null,
                                 ),
                               );
                             },

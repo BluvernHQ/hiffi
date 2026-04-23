@@ -23,6 +23,10 @@ import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/services/media/media_sync_service.dart';
 import '../../../../core/routes/app_router.dart';
+import '../../../../core/services/playlist_session_storage.dart';
+import '../../../../core/services/analytics_service.dart';
+import '../../../playlist/domain/models/playlist_models.dart';
+import '../../../playlist/presentation/widgets/add_to_playlist_sheet.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
 
@@ -42,6 +46,7 @@ class VideoPlayerPage extends StatefulWidget {
     this.videoId,
     this.returningFromAuth = false,
     this.initialResumePosition,
+    this.playlistSession,
   });
 
   // Simple cache to store video temporarily when navigating away for authentication
@@ -71,6 +76,7 @@ class VideoPlayerPage extends StatefulWidget {
 
   /// When non-null (e.g. watch history), seek here on first load instead of prefs alone.
   final Duration? initialResumePosition;
+  final PlaylistSession? playlistSession;
 
   @override
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
@@ -114,9 +120,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _suggestedLoading = false;
   bool _suggestedError = false;
   bool _suggestedNoInternet = false;
+  bool _isAddToPlaylistSheetOpen = false;
 
   // Previous-video stack: when user taps Next we push current; Previous pops and navigates back
-  final List<VideoModel> _videoHistory = [];
+  final List<_VideoHistoryEntry> _videoHistory = [];
+  PlaylistSession? _playlistSession;
+  final Map<String, VideoModel> _playlistQueueVideoCache = {};
 
   // Track orientation for auto-fullscreen logic
   Orientation? _lastOrientation;
@@ -139,6 +148,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     FullscreenManager.resetOrientation();
 
     _video = widget.video;
+    _playlistSession = widget.playlistSession;
+    _playlistQueueVideoCache[_video.videoId] = _video;
+    _primePlaylistQueueMetadata();
 
     // Set flag if returning from auth - video should not autoplay
     _isReturningFromAuth = widget.returningFromAuth;
@@ -162,6 +174,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     _upvoteCount = _video.videoUpvotes;
     _downvoteCount = _video.videoDownvotes;
+    _syncPlaylistSessionForCurrentVideo();
 
     // Initialize vote status based on user's current vote
     if (_video.userVoteStatus != null) {
@@ -275,6 +288,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   void _playNextVideo() {
+    final playlist = _playlistSession;
+    if (playlist != null && playlist.isValid) {
+      final nextIndex = playlist.currentIndex + 1;
+      if (nextIndex < playlist.videoIds.length) {
+        final nextVideoId = playlist.videoIds[nextIndex];
+        _playPlaylistItem(nextVideoId, nextIndex);
+        return;
+      }
+    }
     if (_suggestedVideos.isEmpty) {
       debugPrint('VideoPlayerPage: No suggested videos available for autoplay');
       return;
@@ -293,25 +315,48 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       debugPrint(
         'VideoPlayerPage: Autoplay/Next - navigating to ${nextVideo.videoId}',
       );
-      _replaceVideo(nextVideo, pushCurrentToHistory: true);
+      final previousSession = _playlistSession;
+      _clearPlaylistSession();
+      _replaceVideo(
+        nextVideo,
+        pushCurrentToHistory: true,
+        historyPlaylistSessionOverride: previousSession,
+      );
     } else {
       debugPrint('VideoPlayerPage: Could not find a suitable next video');
     }
   }
 
   void _playPreviousVideo() {
+    final playlist = _playlistSession;
+    if (playlist != null && playlist.isValid) {
+      final prevIndex = playlist.currentIndex - 1;
+      if (prevIndex >= 0) {
+        final prevVideoId = playlist.videoIds[prevIndex];
+        _playPlaylistItem(prevVideoId, prevIndex);
+        return;
+      }
+    }
     if (_videoHistory.isEmpty) {
       debugPrint('VideoPlayerPage: No previous video in history');
       return;
     }
-    final previousVideo = _videoHistory.removeLast();
+    final previous = _videoHistory.removeLast();
     debugPrint(
-      'VideoPlayerPage: Previous - navigating back to ${previousVideo.videoId}',
+      'VideoPlayerPage: Previous - navigating back to ${previous.video.videoId}',
     );
-    _replaceVideo(previousVideo, pushCurrentToHistory: false);
+    _replaceVideo(
+      previous.video,
+      pushCurrentToHistory: false,
+      restorePlaylistSession: true,
+      playlistSessionOverride: previous.playlistSession,
+    );
   }
 
   void _onVideoEnded() {
+    if (_playlistSession?.autoplay == false) {
+      return;
+    }
     debugPrint('VideoPlayerPage: Video ended - triggering autoplay');
     _playNextVideo();
   }
@@ -430,20 +475,34 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (context.canPop()) {
       context.pop();
     } else {
-      context.go('/home');
+      // If this player is in an active playlist context, back should return
+      // to playlists instead of home.
+      if (_playlistSession != null) {
+        context.go('/playlists');
+      } else {
+        context.go('/home');
+      }
     }
   }
 
   Future<void> _replaceVideo(
     VideoModel newVideo, {
     bool pushCurrentToHistory = false,
+    bool restorePlaylistSession = false,
+    PlaylistSession? playlistSessionOverride,
+    PlaylistSession? historyPlaylistSessionOverride,
   }) async {
     debugPrint(
       'VideoPlayerPage: Replacing video ${_video.videoId} with ${newVideo.videoId}',
     );
 
     if (pushCurrentToHistory) {
-      _videoHistory.add(_video);
+      _videoHistory.add(
+        _VideoHistoryEntry(
+          video: _video,
+          playlistSession: historyPlaylistSessionOverride ?? _playlistSession,
+        ),
+      );
       debugPrint(
         'VideoPlayerPage: Pushed current to history (size ${_videoHistory.length})',
       );
@@ -461,6 +520,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     setState(() {
       _playerKey = ValueKey('player_${newVideo.videoId}');
       _video = newVideo;
+      _playlistQueueVideoCache[newVideo.videoId] = newVideo;
+      if (restorePlaylistSession) {
+        _playlistSession = playlistSessionOverride;
+      }
       _isLoading = true;
       _hasError = false;
       _isDescriptionExpanded = false;
@@ -484,10 +547,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       );
     });
 
+    if (restorePlaylistSession) {
+      if (_playlistSession != null) {
+        await PlaylistSessionStorage().save(_playlistSession!);
+      } else {
+        await PlaylistSessionStorage().clear();
+      }
+    }
+
     await _fetchAndInitializePlayer();
     await _loadUserAndFollowStatus();
     _commentsController.fetchLatestComment();
-    await _loadSuggestedVideosForPlayer(useNewSeed: true);
+    // Keep recommended rail stable while stepping through an active playlist.
+    // Refresh suggestions only when playlist context has ended/cleared.
+    if (_playlistSession == null) {
+      await _loadSuggestedVideosForPlayer(useNewSeed: true);
+    }
+    _primePlaylistQueueMetadata();
   }
 
   Future<void> _loadUserAndFollowStatus() async {
@@ -527,6 +603,94 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       setState(() {
         _isLoadingFollowStatus = false;
       });
+    }
+  }
+
+  Future<void> _syncPlaylistSessionForCurrentVideo() async {
+    final current = _playlistSession;
+    if (current == null) return;
+    final idx = current.videoIds.indexOf(_video.videoId);
+    if (idx < 0) return;
+    _playlistSession = current.copyWith(currentIndex: idx);
+    await PlaylistSessionStorage().save(_playlistSession!);
+    _primePlaylistQueueMetadata();
+  }
+
+  Future<void> _playPlaylistItem(String videoId, int index) async {
+    final session = _playlistSession;
+    if (session == null) return;
+    final nextSession = session.copyWith(currentIndex: index);
+    setState(() {
+      _playlistSession = nextSession;
+    });
+    await PlaylistSessionStorage().save(nextSession);
+    final cached = _playlistQueueVideoCache[videoId];
+    if (cached != null) {
+      await _replaceVideo(cached, pushCurrentToHistory: true);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
+    await _pauseVideo(updateUiState: false);
+    try {
+      final repo = context.read<VideoRepository>();
+      final info = await repo.getVideoInfo(videoId);
+      final loaded = info.video;
+      if (loaded != null) {
+        _playlistQueueVideoCache[videoId] = loaded;
+        await _replaceVideo(loaded, pushCurrentToHistory: true);
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+        });
+        await _resumeVideo();
+      }
+    } catch (e) {
+      debugPrint('VideoPlayerPage: Failed to open playlist item $videoId: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+      await _resumeVideo();
+    }
+  }
+
+  Future<void> _clearPlaylistSession() async {
+    if (_playlistSession == null) return;
+    if (mounted) {
+      setState(() {
+        _playlistSession = null;
+      });
+    } else {
+      _playlistSession = null;
+    }
+    await PlaylistSessionStorage().clear();
+  }
+
+  Future<void> _primePlaylistQueueMetadata() async {
+    final session = _playlistSession;
+    if (session == null || session.videoIds.isEmpty) return;
+    final repo = context.read<VideoRepository>();
+    var changed = false;
+    for (final id in session.videoIds) {
+      if (_playlistQueueVideoCache.containsKey(id)) continue;
+      try {
+        final info = await repo.getVideoInfo(id);
+        final video = info.video;
+        if (video != null) {
+          _playlistQueueVideoCache[id] = video;
+          changed = true;
+        }
+      } catch (_) {
+        // Best-effort preload; queue can still fall back to ID.
+      }
+    }
+    if (changed && mounted) {
+      setState(() {});
     }
   }
 
@@ -1043,11 +1207,49 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     final url = 'https://www.hiffi.com/watch/$videoId';
     final title = _video.videoTitle;
+    final renderObject = context.findRenderObject();
+    Rect shareOrigin;
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      shareOrigin = topLeft & renderObject.size;
+    } else {
+      final size = MediaQuery.sizeOf(context);
+      shareOrigin = Rect.fromCenter(
+        center: Offset(size.width / 2, size.height / 2),
+        width: 1,
+        height: 1,
+      );
+    }
 
     Share.share(
       url,
       subject: title.isNotEmpty ? title : 'Watch this video on Hiffi',
+      sharePositionOrigin: shareOrigin,
     );
+  }
+
+  Future<void> _openAddToPlaylistSheet() async {
+    if (_isAddToPlaylistSheetOpen) return;
+    _isAddToPlaylistSheetOpen = true;
+    // Fire-and-forget analytics so the sheet appears instantly.
+    context.read<AnalyticsService>().logEvent(
+      context,
+      'add_to_playlist_opened',
+      parameters: {'video_id': _video.videoId, 'source': 'watch'},
+    );
+    if (!mounted) return;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => AddToPlaylistSheet(
+          videoId: _video.videoId,
+          videoTitle: _video.videoTitle,
+        ),
+      );
+    } finally {
+      _isAddToPlaylistSheetOpen = false;
+    }
   }
 
   Future<void> _fetchAndInitializePlayer() async {
@@ -1489,6 +1691,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                       ),
                                     ),
                                     IconButton(
+                                      icon: const Icon(Icons.playlist_add),
+                                      color: const Color(0xFF6B6B6B),
+                                      tooltip: 'Add to playlist',
+                                      onPressed: _openAddToPlaylistSheet,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    IconButton(
                                       icon: const Icon(Icons.share_outlined),
                                       color: const Color(0xFF6B6B6B),
                                       tooltip: 'Share',
@@ -1700,6 +1909,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
+                                if (_playlistSession != null &&
+                                    _playlistSession!.videoIds.isNotEmpty)
+                                  _PlaylistQueueModule(
+                                    session: _playlistSession!,
+                                    currentVideoId: _video.videoId,
+                                    videoLookup: _playlistQueueVideoCache,
+                                    onTapItem: (videoId, index) {
+                                      _playPlaylistItem(videoId, index);
+                                    },
+                                  ),
                                 _SuggestedVideosSection(
                                   videos: _suggestedVideos,
                                   isLoading: _suggestedLoading,
@@ -1707,10 +1926,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   isNoInternet: _suggestedNoInternet,
                                   onRetry: () =>
                                       _loadSuggestedVideosForPlayer(),
-                                  onVideoSelected: (video) => _replaceVideo(
-                                    video,
-                                    pushCurrentToHistory: true,
-                                  ),
+                                  onVideoSelected: (video) async {
+                                    final previousSession = _playlistSession;
+                                    await _clearPlaylistSession();
+                                    await _replaceVideo(
+                                      video,
+                                      pushCurrentToHistory: true,
+                                      historyPlaylistSessionOverride:
+                                          previousSession,
+                                    );
+                                  },
                                 ),
                                 if (hasSuggestedBlock) ...[
                                   const SizedBox(
@@ -1889,6 +2114,183 @@ class _SuggestedVideosSection extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PlaylistQueueModule extends StatelessWidget {
+  const _PlaylistQueueModule({
+    required this.session,
+    required this.currentVideoId,
+    required this.videoLookup,
+    required this.onTapItem,
+  });
+
+  final PlaylistSession session;
+  final String currentVideoId;
+  final Map<String, VideoModel> videoLookup;
+  final void Function(String videoId, int index) onTapItem;
+
+  @override
+  Widget build(BuildContext context) {
+    final resolvedCurrentIndex = session.videoIds.indexOf(currentVideoId);
+    final activeIndex = resolvedCurrentIndex >= 0
+        ? resolvedCurrentIndex
+        : session.currentIndex.clamp(0, session.videoIds.length - 1);
+    final visibleQueue = session.videoIds.asMap().entries
+        .where((entry) => entry.key >= activeIndex)
+        .toList();
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: const Color(0xFFFFF8F9),
+          border: Border.all(color: const Color(0xFFF4C8CE)),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'ACTIVE PLAYLIST',
+                  style: TextStyle(
+                    color: Color(0xFFED1C2F),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFE6E6EB)),
+                  ),
+                  child: Text(
+                    '${activeIndex + 1}/${session.videoIds.length}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF6B6B6B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              session.title ?? 'Playlist',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            ...List.generate(visibleQueue.length, (visibleIndex) {
+              final index = visibleQueue[visibleIndex].key;
+              final id = visibleQueue[visibleIndex].value;
+              final isCurrent = id == currentVideoId;
+              final label = isCurrent ? 'Now playing' : 'Up next';
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: visibleIndex == visibleQueue.length - 1 ? 0 : 6,
+                ),
+                child: InkWell(
+                  onTap: () => onTapItem(id, index),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isCurrent ? const Color(0xFFFFEEF1) : const Color(0xFFF3F3F6),
+                      borderRadius: BorderRadius.circular(10),
+                      border: isCurrent
+                          ? Border.all(color: const Color(0xFFF2B2BC))
+                          : null,
+                    ),
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(7),
+                          child: SizedBox(
+                            width: 56,
+                            height: 32,
+                            child: _queueThumb(id),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _queueTitle(id),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isCurrent
+                                      ? const Color(0xFFB54558)
+                                      : const Color(0xFF6B6B6B),
+                                  fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _queueThumb(String id) {
+    final thumb = ImageUtils.getVideoThumbnailUrl(videoLookup[id]?.videoThumbnail);
+    if (thumb == null || thumb.isEmpty) {
+      return Container(
+        color: const Color(0xFFE8E8EB),
+        alignment: Alignment.center,
+        child: const Icon(Icons.music_video_rounded, color: Color(0xFF8A8A92)),
+      );
+    }
+    return Image.network(
+      thumb,
+      fit: BoxFit.cover,
+      headers: ImageUtils.getVideoThumbnailHeaders(),
+      errorBuilder: (_, __, ___) => Container(
+        color: const Color(0xFFE8E8EB),
+        alignment: Alignment.center,
+        child: const Icon(Icons.broken_image_outlined, color: Color(0xFF8A8A92)),
+      ),
+    );
+  }
+
+  String _queueTitle(String id) {
+    final title = videoLookup[id]?.videoTitle ?? '';
+    return title.trim().isNotEmpty ? title : id;
+  }
+}
+
+class _VideoHistoryEntry {
+  const _VideoHistoryEntry({required this.video, required this.playlistSession});
+
+  final VideoModel video;
+  final PlaylistSession? playlistSession;
 }
 
 class _SuggestedVideoCard extends StatelessWidget {

@@ -12,6 +12,8 @@ import '../../features/user/data/user_repository.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/video/domain/repositories/video_repository.dart';
 import '../../features/video/presentation/viewmodels/video_view_model.dart';
+import '../../features/playlist/data/playlist_repository.dart';
+import '../../features/playlist/presentation/viewmodels/playlist_view_model.dart';
 import '../../features/search/data/search_repository.dart';
 import '../../features/search/presentation/viewmodels/search_view_model.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
@@ -47,6 +49,10 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<VideoRepository>(
       create: (context) =>
           VideoRepositoryImpl(apiClient: context.read<ApiClient>()),
+    ),
+    Provider<PlaylistRepository>(
+      create: (context) =>
+          PlaylistRepositoryImpl(apiClient: context.read<ApiClient>()),
     ),
     Provider<SearchRepository>(
       create: (context) =>
@@ -104,6 +110,12 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) => VideoViewModel(
         videoRepository: context.read<VideoRepository>(),
         connectivityService: context.read<NetworkConnectivityService>(),
+      ),
+    ),
+    ChangeNotifierProvider<PlaylistViewModel>(
+      create: (context) => PlaylistViewModel(
+        playlistRepository: context.read<PlaylistRepository>(),
+        videoRepository: context.read<VideoRepository>(),
       ),
     ),
     ChangeNotifierProvider<SearchViewModel>(

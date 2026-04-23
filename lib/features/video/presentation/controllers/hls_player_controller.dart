@@ -28,6 +28,7 @@ class HlsPlayerController extends ChangeNotifier {
   final VideoRepository? _watchHoursRepository;
 
   Timer? _watchHoursTimer;
+
   /// One id per controller instance (this playback session).
   late final String _watchHoursSessionId =
       '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(0x7fffffff)}';
@@ -53,11 +54,17 @@ class HlsPlayerController extends ChangeNotifier {
   double _userIntentVolume = 1.0;
   Duration? _lastKnownPosition;
   bool? _lastPipStatus;
+
   /// Avoids [notifyListeners] on every video frame (fixes Android ImageReader buffer spam).
   bool? _lastReportedIsPlaying;
+  Future<void> _seekChain = Future.value();
+  int _pendingSeekRequests = 0;
+  bool _resumeAfterQueuedSeeks = false;
 
   /// Drives fullscreen icon in [HiffiVideoControls] (Chewie fullscreen flag stays false).
-  final ValueNotifier<bool> fullscreenUiForControls = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> fullscreenUiForControls = ValueNotifier<bool>(
+    false,
+  );
 
   HlsPlayerController({
     required this.video,
@@ -121,7 +128,8 @@ class HlsPlayerController extends ChangeNotifier {
 
   /// Switches the video quality profile
   Future<void> setProfile(String profile) async {
-    if (_currentProfile == profile || _isSwitchingProfile || _isDisposed) return;
+    if (_currentProfile == profile || _isSwitchingProfile || _isDisposed)
+      return;
 
     debugPrint('HlsPlayerController: Switching profile to $profile');
     _isSwitchingProfile = true;
@@ -214,7 +222,9 @@ class HlsPlayerController extends ChangeNotifier {
 
   Future<void> pause() async {
     final controller = _safeVideoController();
-    if (controller == null || !_isInitialized || !controller.value.isInitialized) {
+    if (controller == null ||
+        !_isInitialized ||
+        !controller.value.isInitialized) {
       return;
     }
     if (controller.value.isPlaying) {
@@ -226,7 +236,9 @@ class HlsPlayerController extends ChangeNotifier {
 
   Future<void> play() async {
     final controller = _safeVideoController();
-    if (controller == null || !_isInitialized || !controller.value.isInitialized) {
+    if (controller == null ||
+        !_isInitialized ||
+        !controller.value.isInitialized) {
       return;
     }
     if (!controller.value.isPlaying) {
@@ -238,7 +250,9 @@ class HlsPlayerController extends ChangeNotifier {
 
   Future<void> togglePlayPause() async {
     final controller = _safeVideoController();
-    if (controller == null || !_isInitialized || !controller.value.isInitialized) {
+    if (controller == null ||
+        !_isInitialized ||
+        !controller.value.isInitialized) {
       return;
     }
     if (controller.value.isPlaying) {
@@ -250,15 +264,69 @@ class HlsPlayerController extends ChangeNotifier {
 
   Future<void> seekBy(Duration duration) async {
     final controller = _safeVideoController();
-    if (controller == null || !_isInitialized || !controller.value.isInitialized) {
+    if (controller == null ||
+        !_isInitialized ||
+        !controller.value.isInitialized) {
       return;
     }
-    final currentPosition = controller.value.position;
-    final videoDuration = controller.value.duration;
-    final newPositionMs = (currentPosition + duration).inMilliseconds;
-    final clampedPositionMs = newPositionMs.clamp(0, videoDuration.inMilliseconds);
-    final clampedPosition = Duration(milliseconds: clampedPositionMs);
-    await controller.seekTo(clampedPosition);
+
+    // Preserve playback intent across rapid seek bursts (double-tap spam).
+    // During an in-flight seek, video_player can transiently report isPlaying=false.
+    _pendingSeekRequests += 1;
+    _resumeAfterQueuedSeeks =
+        _resumeAfterQueuedSeeks || controller.value.isPlaying;
+
+    _seekChain = _seekChain.then((_) async {
+      try {
+        final activeController = _safeVideoController();
+        if (activeController == null ||
+            !_isInitialized ||
+            !activeController.value.isInitialized) {
+          return;
+        }
+
+        final currentPosition = activeController.value.position;
+        final videoDuration = activeController.value.duration;
+        final newPositionMs = (currentPosition + duration).inMilliseconds;
+        final clampedPositionMs = newPositionMs.clamp(
+          0,
+          videoDuration.inMilliseconds,
+        );
+        final clampedPosition = Duration(milliseconds: clampedPositionMs);
+        await activeController.seekTo(clampedPosition);
+      } finally {
+        if (_pendingSeekRequests > 0) {
+          _pendingSeekRequests -= 1;
+        }
+      }
+
+      if (_pendingSeekRequests != 0) {
+        return;
+      }
+
+      final shouldResume = _resumeAfterQueuedSeeks;
+      _resumeAfterQueuedSeeks = false;
+      if (!shouldResume || _isDisposed) {
+        return;
+      }
+
+      // One resume after the whole burst: fewer play()/audio-session calls and
+      // less notification churn than resuming after every seek in the chain.
+      await Future<void>.delayed(const Duration(milliseconds: 72));
+      if (_isDisposed) {
+        return;
+      }
+      final c = _safeVideoController();
+      if (c == null || !c.value.isInitialized) {
+        return;
+      }
+      await _setVideoAudioSessionActive(true);
+      if (!c.value.isPlaying) {
+        await c.play();
+      }
+    });
+
+    await _seekChain;
   }
 
   void enterFullScreen() {
@@ -351,7 +419,7 @@ class HlsPlayerController extends ChangeNotifier {
         baseVideoUrl,
         profile: _currentProfile,
       );
-      
+
       final videoController = VideoPlayerController.networkUrl(
         Uri.parse(profileUrl),
         videoPlayerOptions: VideoPlayerOptions(
@@ -369,7 +437,9 @@ class HlsPlayerController extends ChangeNotifier {
         return;
       }
 
-      await videoController.setVolume(_userIntentMuted ? 0.0 : _userIntentVolume);
+      await videoController.setVolume(
+        _userIntentMuted ? 0.0 : _userIntentVolume,
+      );
 
       if (_lastKnownPosition == null) {
         if (_initialResumePosition != null) {
@@ -416,9 +486,7 @@ class HlsPlayerController extends ChangeNotifier {
           DeviceOrientation.landscapeLeft,
           DeviceOrientation.landscapeRight,
         ],
-        deviceOrientationsAfterFullScreen: [
-          DeviceOrientation.portraitUp,
-        ],
+        deviceOrientationsAfterFullScreen: [DeviceOrientation.portraitUp],
         systemOverlaysOnEnterFullScreen: [],
         systemOverlaysAfterFullScreen: SystemUiOverlay.values,
         additionalOptions: (context) => <OptionItem>[
@@ -450,9 +518,17 @@ class HlsPlayerController extends ChangeNotifier {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, color: Colors.white, size: 48),
+                  const Icon(
+                    Icons.error_outline,
+                    color: Colors.white,
+                    size: 48,
+                  ),
                   const SizedBox(height: 16),
-                  Text(errorMessage, style: const TextStyle(color: Colors.white), textAlign: TextAlign.center),
+                  Text(
+                    errorMessage,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: retry,
@@ -518,9 +594,23 @@ class HlsPlayerController extends ChangeNotifier {
                   Navigator.pop(context);
                   setProfile(profile);
                 },
-                leading: Icon(isSelected ? Icons.check : null, color: const Color(0xFFED1C2F)),
-                title: Text(_getProfileLabel(profile), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                trailing: isSelected ? const Text('Selected', style: TextStyle(color: Color(0xFFED1C2F))) : null,
+                leading: Icon(
+                  isSelected ? Icons.check : null,
+                  color: const Color(0xFFED1C2F),
+                ),
+                title: Text(
+                  _getProfileLabel(profile),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                trailing: isSelected
+                    ? const Text(
+                        'Selected',
+                        style: TextStyle(color: Color(0xFFED1C2F)),
+                      )
+                    : null,
               );
             }).toList(),
           ),
@@ -564,8 +654,7 @@ class HlsPlayerController extends ChangeNotifier {
       }
     }
 
-    final newState =
-        buffering ? PlayerState.buffering : PlayerState.ready;
+    final newState = buffering ? PlayerState.buffering : PlayerState.ready;
     if (newState != _currentState) {
       _currentState = newState;
       shouldNotify = true;
@@ -687,7 +776,10 @@ class HlsPlayerController extends ChangeNotifier {
       _lastKnownPosition = controller.value.position;
       try {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setInt('video_position_$videoId', _lastKnownPosition!.inMilliseconds);
+        await prefs.setInt(
+          'video_position_$videoId',
+          _lastKnownPosition!.inMilliseconds,
+        );
       } catch (e) {
         debugPrint('Failed to save playback position: $e');
       }
@@ -755,7 +847,9 @@ class HlsPlayerController extends ChangeNotifier {
     if (chewieController != null) {
       chewieController.removeListener(_handleChewieStateChange);
       if (chewieController.isFullScreen) {
-        debugPrint('HlsPlayerController: Exiting fullscreen and waiting for route to close');
+        debugPrint(
+          'HlsPlayerController: Exiting fullscreen and waiting for route to close',
+        );
         chewieController.exitFullScreen();
         // 💡 CRITICAL: Fullscreen transitions on some Android devices can be slow.
         // If we dispose the controller before the route has popped, Chewie will crash.
@@ -764,7 +858,9 @@ class HlsPlayerController extends ChangeNotifier {
       try {
         chewieController.dispose();
       } catch (e) {
-        debugPrint('HlsPlayerController: Ignored error during Chewie disposal: $e');
+        debugPrint(
+          'HlsPlayerController: Ignored error during Chewie disposal: $e',
+        );
       }
     }
 
@@ -772,7 +868,9 @@ class HlsPlayerController extends ChangeNotifier {
       try {
         await videoController.dispose();
       } catch (e) {
-        debugPrint('HlsPlayerController: Ignored error during VideoPlayer disposal: $e');
+        debugPrint(
+          'HlsPlayerController: Ignored error during VideoPlayer disposal: $e',
+        );
       }
     }
   }

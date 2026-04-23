@@ -4,7 +4,6 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:hiffi/core/services/media/hiffi_audio_handler.dart';
-import 'package:hiffi/core/services/hls_proxy_service.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
@@ -28,6 +27,7 @@ class MediaSyncService {
   bool _isSyncing = false; // Prevents sync loops
   StreamSubscription<AudioInterruptionEvent>? _interruptionSub;
   StreamSubscription<void>? _becomingNoisySub;
+  Timer? _notificationSyncDebounce;
 
   // Callbacks for UI-controlled navigation
   VoidCallback? _onNextRequested;
@@ -48,7 +48,7 @@ class MediaSyncService {
     _hasPreviousVideo = hasPreviousVideo;
 
     // Update notification controls visibility
-    _syncVideoToNotification();
+    _syncVideoToNotificationNow();
   }
 
   Future<void> initialize() async {
@@ -80,46 +80,12 @@ class MediaSyncService {
       ),
     );
 
-    // 💡 SYNC FIX: Listen to notification control events
-    _audioHandler!.playbackState.listen(_handleNotificationStateChange);
+    // Do not mirror PlaybackState stream back into foreground video controls.
+    // Notification actions already route through HiffiAudioHandler callbacks
+    // (play/pause/seek/fastForward/rewind), and stream mirroring can feed back
+    // transient seek states as unintended pause events.
 
     debugPrint('MediaSyncService: Initialized successfully');
-  }
-
-  /// Handles state changes from the notification controls.
-  /// This ensures that tapping pause in the notification pauses the video.
-  void _handleNotificationStateChange(PlaybackState state) {
-    if (_isSyncing || _currentVideoController == null) return;
-
-    // We only care about syncing FROM notification TO app when in foreground or PiP
-    if (!_isBackgrounded) {
-      _isSyncing = true;
-      try {
-        // Sync Play/Pause
-        if (state.playing != _currentVideoController!.isPlaying) {
-          debugPrint(
-            'MediaSyncService: Syncing Play/Pause from Notification -> Video: ${state.playing}',
-          );
-          if (state.playing) {
-            _currentVideoController!.play();
-          } else {
-            _currentVideoController!.pause();
-          }
-        }
-
-        // Sync Position (if changed significantly from notification seek)
-        final notificationPos = state.position;
-        final videoPos = _currentVideoController!.position;
-        if ((notificationPos - videoPos).inSeconds.abs() > 2) {
-          debugPrint(
-            'MediaSyncService: Syncing Seek from Notification -> Video: ${notificationPos.inSeconds}s',
-          );
-          _currentVideoController!.controller?.seekTo(notificationPos);
-        }
-      } finally {
-        _isSyncing = false;
-      }
-    }
   }
 
   /// Sets the current video player and video model.
@@ -141,12 +107,22 @@ class MediaSyncService {
     // 💡 SMOOTHNESS FIX: Sync the notification immediately while in foreground
     _updateForegroundMetadata();
 
-    // 💡 SYNC FIX: Trigger immediate playback state sync
-    _syncVideoToNotification();
+    // Immediate sync so transport controls match right away.
+    _syncVideoToNotificationNow();
   }
 
-  /// Syncs video player state TO the notification controls.
+  /// Coalesces rapid [ChangeNotifier] updates (e.g. during seek) into fewer
+  /// notification updates for smoother playback on Android.
   void _syncVideoToNotification() {
+    _notificationSyncDebounce?.cancel();
+    _notificationSyncDebounce = Timer(const Duration(milliseconds: 110), () {
+      _notificationSyncDebounce = null;
+      _syncVideoToNotificationNow();
+    });
+  }
+
+  /// Syncs video player state TO the notification controls (immediate).
+  void _syncVideoToNotificationNow() {
     if (_isSyncing || _audioHandler == null || _currentVideoController == null)
       return;
 
@@ -303,9 +279,11 @@ class MediaSyncService {
       return;
 
     final playbackUrl = _currentVideoController!.currentPlaybackUrl;
-    final artworkUrl = HlsProxyService().getProxiedUrl(
-      ImageUtils.getVideoThumbnailUrl(_currentVideo!.videoThumbnail) ?? '',
-    );
+    // Use absolute thumbnail URL for media notifications.
+    // Proxy URLs can become relative (`/thumbnails/...`) for artUri and resolve
+    // against localhost, causing 404s in image fetchers.
+    final artworkUrl =
+        ImageUtils.getVideoThumbnailUrl(_currentVideo!.videoThumbnail) ?? '';
 
     // Update the notification metadata without starting just_audio playback
     _audioHandler!.mediaItem.add(
@@ -400,6 +378,8 @@ class MediaSyncService {
       debugPrint(
         'MediaSyncService: Clearing current player for video ${_currentVideo?.videoId}',
       );
+      _notificationSyncDebounce?.cancel();
+      _notificationSyncDebounce = null;
       _currentVideoController?.removeListener(_syncVideoToNotification);
       _currentVideoController = null;
       _currentVideo = null;
@@ -421,6 +401,8 @@ class MediaSyncService {
 
   void dispose() {
     debugPrint('MediaSyncService: dispose() called');
+    _notificationSyncDebounce?.cancel();
+    _notificationSyncDebounce = null;
     _interruptionSub?.cancel();
     _interruptionSub = null;
     _becomingNoisySub?.cancel();
