@@ -34,8 +34,11 @@ class ApiConstants {
       '/videos/list/$username';
 
   // Social endpoints
-  static String upvoteVideo(String videoId) => '/social/videos/upvote/$videoId';
-  static String downvoteVideo(String videoId) =>
+  static String upvoteVideo(String videoId) => '/videos/upvote/$videoId';
+  static String downvoteVideo(String videoId) => '/videos/downvote/$videoId';
+  static String upvoteVideoLegacy(String videoId) =>
+      '/social/videos/upvote/$videoId';
+  static String downvoteVideoLegacy(String videoId) =>
       '/social/videos/downvote/$videoId';
   static String postComment(String videoId) =>
       '/social/videos/comment/$videoId';

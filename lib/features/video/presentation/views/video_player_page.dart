@@ -27,6 +27,7 @@ import '../../../../core/services/playlist_session_storage.dart';
 import '../../../../core/services/analytics_service.dart';
 import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../playlist/presentation/widgets/add_to_playlist_sheet.dart';
+import '../../../liked/presentation/viewmodels/liked_videos_view_model.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
 
@@ -91,6 +92,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _isDescriptionExpanded = false;
   bool _isUpvoted = false;
   bool _isDownvoted = false;
+  bool _isLikeActionInFlight = false;
   int _upvoteCount = 0;
   int _downvoteCount = 0;
   String? _videoUrlFromApi;
@@ -211,6 +213,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     super.activate();
     // Route is visible again (e.g. popped a screen that was on top of the player).
     PipService.setVideoPlayerPageSurfaceActive(true);
+    _refreshVoteStateIfAuthenticated();
   }
 
   @override
@@ -382,6 +385,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   void didPopNext() {
     // Covered route was popped; video page is visible again.
     PipService.setVideoPlayerPageSurfaceActive(true);
+    _refreshVoteStateIfAuthenticated();
   }
 
   @override
@@ -884,9 +888,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _toggleSaveToLiked() async {
     final authRepository = context.read<AuthRepository>();
     if (authRepository.currentUser == null) {
-      _showSignInRequiredDialog();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in required')),
+      );
       return;
     }
+    if (_isLikeActionInFlight) {
+      return;
+    }
+    _isLikeActionInFlight = true;
     final wasUpvoted = _isUpvoted;
     final previousUpvoteCount = _upvoteCount;
     final wasDownvoted = _isDownvoted;
@@ -905,8 +915,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
     });
     try {
-      await context.read<VideoRepository>().upvoteVideo(_video.videoId);
-    } catch (_) {
+      if (wasUpvoted) {
+        // Product contract: unliking uses downvote endpoint.
+        await context.read<VideoRepository>().downvoteVideo(_video.videoId);
+      } else {
+        await context.read<VideoRepository>().upvoteVideo(_video.videoId);
+      }
+      if (!mounted) return;
+      _video = _video.copyWith(
+        userVoteStatus: _isUpvoted
+            ? 'upvoted'
+            : (_isDownvoted ? 'downvoted' : null),
+      );
+      _playlistQueueVideoCache[_video.videoId] = _video;
+      // Keep liked library immediately consistent with detail action.
+      context.read<LikedVideosViewModel>().applyLikeState(
+        videoId: _video.videoId,
+        isLiked: _isUpvoted,
+        likedAt: DateTime.now(),
+        likedVideo: _video,
+      );
+      await _refreshVoteStateIfAuthenticated();
+    } catch (e) {
       if (mounted) {
         setState(() {
           _isUpvoted = wasUpvoted;
@@ -914,7 +944,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _isDownvoted = wasDownvoted;
           _downvoteCount = previousDownvoteCount;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to update like: $e')),
+        );
       }
+    } finally {
+      _isLikeActionInFlight = false;
     }
   }
 
@@ -1291,6 +1326,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _isNoInternet = isNoInternet;
         });
       }
+    }
+  }
+
+  Future<void> _refreshVoteStateIfAuthenticated() async {
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) return;
+    try {
+      final info = await context.read<VideoRepository>().getVideoInfo(_video.videoId);
+      if (!mounted) return;
+      setState(() {
+        _isUpvoted = info.upvoted;
+        _isDownvoted = info.downvoted;
+        if (info.video != null) {
+          _video = info.video!;
+          _upvoteCount = _video.videoUpvotes;
+          _downvoteCount = _video.videoDownvotes;
+          _playlistQueueVideoCache[_video.videoId] = _video;
+        }
+      });
+    } catch (_) {
+      // Best effort refresh; optimistic state remains.
     }
   }
 
@@ -1728,16 +1784,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                             ),
                             const SizedBox(width: 12),
                             Expanded(
-                              child: GestureDetector(
-                                onTap: _handleCreatorProfileTap,
-                                child: Text(
-                                  _video.userUsername.isNotEmpty
-                                      ? _video.userUsername
-                                      : 'Unknown User',
-                                  style: const TextStyle(
-                                    color: Color(0xFF1A1A1A),
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: GestureDetector(
+                                  onTap: _handleCreatorProfileTap,
+                                  child: Text(
+                                    _video.userUsername.isNotEmpty
+                                        ? _video.userUsername
+                                        : 'Unknown User',
+                                    style: const TextStyle(
+                                      color: Color(0xFF1A1A1A),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -2135,9 +2194,7 @@ class _PlaylistQueueModule extends StatelessWidget {
     final activeIndex = resolvedCurrentIndex >= 0
         ? resolvedCurrentIndex
         : session.currentIndex.clamp(0, session.videoIds.length - 1);
-    final visibleQueue = session.videoIds.asMap().entries
-        .where((entry) => entry.key >= activeIndex)
-        .toList();
+    final queueEntries = session.videoIds.asMap().entries.toList();
 
     return Container(
       color: Colors.white,
@@ -2188,14 +2245,18 @@ class _PlaylistQueueModule extends StatelessWidget {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
-            ...List.generate(visibleQueue.length, (visibleIndex) {
-              final index = visibleQueue[visibleIndex].key;
-              final id = visibleQueue[visibleIndex].value;
+            ...List.generate(queueEntries.length, (rowIndex) {
+              final index = queueEntries[rowIndex].key;
+              final id = queueEntries[rowIndex].value;
               final isCurrent = id == currentVideoId;
-              final label = isCurrent ? 'Now playing' : 'Up next';
+              final label = isCurrent
+                  ? 'Now playing'
+                  : index < activeIndex
+                  ? ''
+                  : 'Up next';
               return Padding(
                 padding: EdgeInsets.only(
-                  bottom: visibleIndex == visibleQueue.length - 1 ? 0 : 6,
+                  bottom: rowIndex == queueEntries.length - 1 ? 0 : 6,
                 ),
                 child: InkWell(
                   onTap: () => onTapItem(id, index),

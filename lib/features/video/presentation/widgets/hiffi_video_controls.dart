@@ -644,7 +644,7 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
       child: MaterialVideoProgressBar(
         controller,
         onDragStart: () {
-          _resumeAfterDragSeek = controller.value.isPlaying;
+          _resumeAfterDragSeek = controller.value.isPlaying || _latestValue.isPlaying;
           setState(() => _dragging = true);
           _hideTimer?.cancel();
         },
@@ -656,7 +656,14 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
             if (mounted) _suppressTapAfterSeek = false;
           });
           if (_resumeAfterDragSeek && !controller.value.isPlaying) {
+            // Seek can transiently pause on some devices/builds; preserve play intent.
             controller.play();
+            Future.delayed(const Duration(milliseconds: 120), () {
+              if (!mounted) return;
+              if (_resumeAfterDragSeek && !controller.value.isPlaying) {
+                controller.play();
+              }
+            });
           }
           _resumeAfterDragSeek = false;
           _startHideTimer();

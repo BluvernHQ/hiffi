@@ -6,11 +6,13 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../../../../core/widgets/main_scaffold.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
@@ -41,10 +43,14 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      await context.read<AnalyticsService>().logEvent(
-        context,
-        'playlist_list_viewed',
-      );
+      try {
+        await context.read<AnalyticsService>().logEvent(
+          context,
+          'playlist_list_viewed',
+        );
+      } catch (_) {
+        // Analytics should never block primary page load.
+      }
       if (!mounted) return;
       try {
         await context.read<PlaylistViewModel>().loadPlaylists();
@@ -182,7 +188,11 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         const SizedBox(height: 12),
                         const _PlaylistCardShimmer(),
                       ] else if (vm.listError != null && vm.playlists.isEmpty)
-                        _ErrorCard(message: vm.listError!)
+                        _ErrorCard(
+                          message: vm.listError!,
+                          isInformational: isOfflineErrorMessage(vm.listError!),
+                          onRetry: vm.loadPlaylists,
+                        )
                       else if (vm.playlists.isEmpty)
                         const _EmptyPlaylistsCard()
                       else
@@ -705,12 +715,25 @@ class _EmptyPlaylistsCard extends StatelessWidget {
 }
 
 class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
+  const _ErrorCard({
+    required this.message,
+    this.isInformational = false,
+    this.onRetry,
+  });
 
   final String message;
+  final bool isInformational;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
+    if (isInformational) {
+      return OfflineInfoState(
+        message: 'Connect to the internet to view and manage your playlists.',
+        actionLabel: onRetry == null ? null : 'Try Again',
+        onAction: onRetry,
+      );
+    }
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -723,13 +746,17 @@ class _ErrorCard extends StatelessWidget {
         children: [
           Icon(Icons.wifi_off_rounded, size: 40, color: Colors.grey.shade600),
           const SizedBox(height: 12),
-          const Text(
-            'Couldn’t load playlists',
+          Text(
+            isInformational
+                ? 'You are offline right now'
+                : 'Couldn’t load playlists',
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
           ),
           const SizedBox(height: 8),
           Text(
-            message,
+            isInformational
+                ? 'Connect to the internet to view and manage your playlists.'
+                : message,
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
           ),

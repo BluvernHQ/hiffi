@@ -8,7 +8,9 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../domain/models/playlist_models.dart';
@@ -27,6 +29,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
   bool _loading = true;
   String? _error;
   final Set<String> _optimisticallyRemovedItems = <String>{};
+  final Set<String> _hintAnimatingItems = <String>{};
 
   @override
   void initState() {
@@ -152,10 +155,53 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 10)),
         if (visibleItems.isEmpty)
-          const SliverFillRemaining(
+          SliverFillRemaining(
             hasScrollBody: false,
             child: Center(
-              child: Text('This playlist is empty. Add from watch page.'),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE5E5E5)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.playlist_add_rounded,
+                      size: 46,
+                      color: Colors.grey.shade500,
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'This playlist is empty',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF111111),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Add videos from any watch page to start building this playlist.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.45,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: () => context.go('/home'),
+                      icon: const Icon(Icons.explore_rounded),
+                      label: const Text('Discover videos'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           )
         else
@@ -164,9 +210,11 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
             itemBuilder: (context, index) {
               final item = visibleItems[index];
               final video = vm.cachedVideo(item.videoId);
-              final removing = vm.isRemovingItem(detail.playlistId, item.videoId);
-              final title = video?.videoTitle ?? item.videoTitle ?? item.videoId;
               final itemKey = _itemRemovalKey(detail.playlistId, item.videoId);
+              final removing =
+                  vm.isRemovingItem(detail.playlistId, item.videoId) ||
+                  _hintAnimatingItems.contains(itemKey);
+              final title = video?.videoTitle ?? item.videoTitle ?? item.videoId;
               return Padding(
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
                 child: Dismissible(
@@ -180,17 +228,11 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                     videoTitle: title,
                   ),
                   onDismissed: (_) async {
-                    setState(() {
-                      _optimisticallyRemovedItems.add(itemKey);
-                    });
-                    try {
-                      await vm.removeItem(detail.playlistId, item.videoId);
-                    } catch (_) {
-                      if (!mounted) return;
-                      setState(() {
-                        _optimisticallyRemovedItems.remove(itemKey);
-                      });
-                    }
+                    await _removePlaylistItem(
+                      vm: vm,
+                      playlistId: detail.playlistId,
+                      videoId: item.videoId,
+                    );
                   },
                   child: _PlaylistItemRow(
                     index: index,
@@ -198,8 +240,17 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                     title: title,
                     thumbnail: _thumb(video),
                     removing: removing,
+                    slideOutToLeft: _hintAnimatingItems.contains(itemKey),
                     onPlay: () => _playFrom(detail, index),
                     onOpen: () => _playFrom(detail, index),
+                    onSwipeHintTap: removing
+                        ? null
+                        : () => _removeFromHintTap(
+                            vm: vm,
+                            detail: detail,
+                            item: item,
+                            videoTitle: title,
+                          ),
                   ),
                 ),
               );
@@ -293,6 +344,56 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
 
   String _itemRemovalKey(String playlistId, String videoId) =>
       '$playlistId:$videoId';
+
+  Future<void> _removePlaylistItem({
+    required PlaylistViewModel vm,
+    required String playlistId,
+    required String videoId,
+  }) async {
+    final itemKey = _itemRemovalKey(playlistId, videoId);
+    setState(() {
+      _optimisticallyRemovedItems.add(itemKey);
+    });
+    try {
+      await vm.removeItem(playlistId, videoId);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _optimisticallyRemovedItems.remove(itemKey);
+      });
+    }
+  }
+
+  Future<void> _removeFromHintTap({
+    required PlaylistViewModel vm,
+    required PlaylistDetail detail,
+    required PlaylistItem item,
+    required String videoTitle,
+  }) async {
+    final confirmed = await _confirmRemoveItemSheet(
+      context,
+      videoTitle: videoTitle,
+    );
+    if (!confirmed || !mounted) return;
+
+    final itemKey = _itemRemovalKey(detail.playlistId, item.videoId);
+    setState(() {
+      _hintAnimatingItems.add(itemKey);
+    });
+
+    // Play a short left-slide animation to teach swipe-to-remove behavior.
+    await Future.delayed(const Duration(milliseconds: 220));
+    if (!mounted) return;
+    await _removePlaylistItem(
+      vm: vm,
+      playlistId: detail.playlistId,
+      videoId: item.videoId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _hintAnimatingItems.remove(itemKey);
+    });
+  }
 
   Future<bool> _confirmRemoveItemSheet(
     BuildContext context, {
@@ -829,8 +930,10 @@ class _PlaylistItemRow extends StatelessWidget {
     required this.title,
     required this.thumbnail,
     required this.removing,
+    required this.slideOutToLeft,
     required this.onPlay,
     required this.onOpen,
+    required this.onSwipeHintTap,
   });
 
   final int index;
@@ -838,66 +941,83 @@ class _PlaylistItemRow extends StatelessWidget {
   final String title;
   final Widget thumbnail;
   final bool removing;
+  final bool slideOutToLeft;
   final VoidCallback onPlay;
   final VoidCallback onOpen;
+  final VoidCallback? onSwipeHintTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFF6F6F8),
+    return ClipRRect(
       borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
-          child: Row(
-            children: [
-              _IndexBadge(value: index + 1),
-              const SizedBox(width: 10),
-              thumbnail,
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+      child: Stack(
+        children: [
+          const Positioned.fill(child: _SwipeRemoveBackground()),
+          AnimatedSlide(
+            offset: slideOutToLeft ? const Offset(-1.15, 0) : Offset.zero,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInOut,
+            child: Material(
+              color: const Color(0xFFF6F6F8),
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                onTap: onOpen,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
+                  child: Row(
+                    children: [
+                      _IndexBadge(value: index + 1),
+                      const SizedBox(width: 10),
+                      thumbnail,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              index == 0
+                                  ? 'Start of playlist'
+                                  : 'Track ${index + 1} of $total',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.black54),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      index == 0 ? 'Start of playlist' : 'Track ${index + 1} of $total',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.black54),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: removing ? null : onPlay,
+                        icon: removing
+                            ? const _ShimmerDot()
+                            : const Icon(Icons.play_arrow_rounded, size: 18),
+                        label: const Text('Play'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFED1C2F),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _SwipeHintGlyph(onTap: onSwipeHintTap),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: removing ? null : onPlay,
-                icon: removing
-                    ? const _ShimmerDot()
-                    : const Icon(Icons.play_arrow_rounded, size: 18),
-                label: const Text('Play'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFED1C2F),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                ),
-              ),
-              const SizedBox(width: 6),
-              const _SwipeHintGlyph(),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -935,22 +1055,28 @@ class _SwipeRemoveBackground extends StatelessWidget {
 
 /// Non-text affordance that suggests swipe-left removal.
 class _SwipeHintGlyph extends StatelessWidget {
-  const _SwipeHintGlyph();
+  const _SwipeHintGlyph({this.onTap});
+
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 26,
-      height: 34,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      alignment: Alignment.center,
-      child: const Icon(
-        Icons.chevron_left_rounded,
-        size: 20,
-        color: Colors.black38,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: 26,
+        height: 34,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
+        child: const Icon(
+          Icons.chevron_left_rounded,
+          size: 20,
+          color: Colors.black38,
+        ),
       ),
     );
   }
@@ -1125,13 +1251,27 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOffline = isOfflineErrorMessage(message);
+    if (isOffline) {
+      return OfflineInfoState(
+        message:
+            'Connect to the internet to open and manage this playlist.',
+        actionLabel: 'Back to playlists',
+        onAction: onBack,
+      );
+    }
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(message, textAlign: TextAlign.center),
+            Text(
+              isOffline
+                  ? 'You are offline right now.\nConnect to the internet to open this playlist.'
+                  : message,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 12),
             OutlinedButton(onPressed: onBack, child: const Text('Back to playlists')),
           ],

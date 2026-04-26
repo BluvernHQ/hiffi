@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
@@ -24,7 +23,48 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
   bool _initialLoading = true;
   final _title = TextEditingController();
   final _description = TextEditingController();
-  String? _recentAdded;
+  final Set<String> _addedInSession = <String>{};
+  final Set<String> _existingMembership = <String>{};
+
+  void _resetCreateForm() {
+    _title.clear();
+    _description.clear();
+  }
+
+  void _openCreateMode() {
+    _resetCreateForm();
+    setState(() => _creatingMode = true);
+  }
+
+  void _closeCreateMode() {
+    _resetCreateForm();
+    setState(() => _creatingMode = false);
+  }
+
+  Future<void> _hydrateExistingMembership(PlaylistViewModel vm) async {
+    final found = <String>{};
+    for (final playlist in vm.playlists) {
+      try {
+        var detail = vm.detail(playlist.playlistId);
+        detail ??= await vm.loadPlaylistDetail(playlist.playlistId, silent: true);
+        if (detail == null) continue;
+        final containsVideo = detail.items.any(
+          (item) => item.videoId == widget.videoId,
+        );
+        if (containsVideo) {
+          found.add(playlist.playlistId);
+        }
+      } catch (_) {
+        // Best-effort hydration; do not block sheet rendering.
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _existingMembership
+        ..clear()
+        ..addAll(found);
+    });
+  }
 
   @override
   void initState() {
@@ -40,6 +80,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
       final vm = context.read<PlaylistViewModel>();
       try {
         await vm.loadPlaylists();
+        await _hydrateExistingMembership(vm);
         if (!mounted) return;
         setState(() {
           _filtered = vm.playlists;
@@ -59,7 +100,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
     final vm = context.watch<PlaylistViewModel>();
     final media = MediaQuery.of(context);
     final keyboardInset = media.viewInsets.bottom;
-    final availableHeight = media.size.height - media.padding.top - keyboardInset;
+    final availableHeight = media.size.height - media.padding.top;
     final maxHeight = availableHeight * (_creatingMode ? 0.9 : 0.64);
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
@@ -173,7 +214,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
           child: SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: () => setState(() => _creatingMode = true),
+              onPressed: _openCreateMode,
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFED1C2F),
                 foregroundColor: Colors.white,
@@ -185,7 +226,10 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
               icon: const Icon(Icons.add, size: 20),
               label: Text(
                 'New playlist',
-                style: TextStyle(fontSize: ctaSize, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  fontSize: ctaSize,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -207,64 +251,67 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
           ),
         ),
         const SizedBox(height: 8),
-        Flexible(
-          fit: FlexFit.loose,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(context).height * 0.34,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: _initialLoading || (vm.isLoadingList && _filtered.isEmpty)
-                  ? const _PlaylistPickerShimmer()
-                  : _filtered.isEmpty
-                ? Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFAFAFB),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE3E3E7)),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(18, 26, 18, 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.queue_music_rounded,
-                          size: 44,
-                          color: Color(0xFF8C8C92),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'No playlists yet',
-                          style: TextStyle(
-                            fontSize: emptyTitleSize,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF29292E),
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Create one with the button above - this video will\nbe added automatically.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: emptyBodySize,
-                            height: 1.35,
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _initialLoading || (vm.isLoadingList && _filtered.isEmpty)
+                ? const _PlaylistPickerShimmer()
+                : _filtered.isEmpty
+                ? SingleChildScrollView(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFAFAFB),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE3E3E7)),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(18, 26, 18, 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.queue_music_rounded,
+                            size: 44,
                             color: Color(0xFF8C8C92),
                           ),
-                        ),
-                      ],
+                          SizedBox(height: 10),
+                          Text(
+                            'No playlists yet',
+                            style: TextStyle(
+                              fontSize: emptyTitleSize,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF29292E),
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'Create one with the button above - this video will\nbe added automatically.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: emptyBodySize,
+                              height: 1.35,
+                              color: Color(0xFF8C8C92),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 8),
                     itemCount: _filtered.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
                       final item = _filtered[index];
                       final adding = vm.isAddingToPlaylist(item.playlistId);
-                      final added = _recentAdded == item.playlistId;
+                      final removing = vm.isRemovingItem(
+                        item.playlistId,
+                        widget.videoId,
+                      );
+                      final added =
+                          _addedInSession.contains(item.playlistId) ||
+                          _existingMembership.contains(item.playlistId);
                       return Material(
                         color: const Color(0xFFFAFAFB),
                         borderRadius: BorderRadius.circular(12),
@@ -280,13 +327,15 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                             '${item.itemCount ?? 0} video${(item.itemCount ?? 0) == 1 ? '' : 's'}',
                             style: const TextStyle(fontSize: 14),
                           ),
-                          trailing: adding
+                          trailing: adding || removing
                               ? const SizedBox(
                                   width: 18,
                                   height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
-                              : added
+                                : added
                               ? const Icon(
                                   Icons.check_circle,
                                   color: Colors.green,
@@ -297,8 +346,9 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                      color: const Color(0xFFED1C2F)
-                                          .withValues(alpha: 0.35),
+                                      color: const Color(
+                                        0xFFED1C2F,
+                                      ).withValues(alpha: 0.35),
                                     ),
                                   ),
                                   child: const Icon(
@@ -307,30 +357,72 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                                     size: 18,
                                   ),
                                 ),
-                          onTap: adding
+                          onTap: adding || removing
                               ? null
                               : () async {
-                                  await vm.addToPlaylist(
-                                    item.playlistId,
-                                    widget.videoId,
-                                  );
-                                  if (!mounted) return;
-                                  await context.read<AnalyticsService>().logEvent(
-                                    context,
-                                    'playlist_item_added',
-                                    parameters: {
-                                      'playlist_id': item.playlistId,
-                                      'video_id': widget.videoId,
-                                      'source': 'watch',
-                                    },
-                                  );
-                                  setState(() => _recentAdded = item.playlistId);
+                                  if (added) {
+                                    setState(() {
+                                      _addedInSession.remove(item.playlistId);
+                                      _existingMembership.remove(item.playlistId);
+                                    });
+                                    try {
+                                      await vm.removeItem(
+                                        item.playlistId,
+                                        widget.videoId,
+                                      );
+                                      if (!mounted) return;
+                                      await context
+                                          .read<AnalyticsService>()
+                                          .logEvent(
+                                            context,
+                                            'playlist_item_removed',
+                                            parameters: {
+                                              'playlist_id': item.playlistId,
+                                              'video_id': widget.videoId,
+                                              'source': 'watch',
+                                            },
+                                          );
+                                    } catch (_) {
+                                      if (!mounted) return;
+                                      // Rollback optimistic removal on failure.
+                                      setState(() {
+                                        _existingMembership.add(item.playlistId);
+                                      });
+                                    }
+                                  } else {
+                                    setState(
+                                      () => _addedInSession.add(item.playlistId),
+                                    );
+                                    try {
+                                      await vm.addToPlaylist(
+                                        item.playlistId,
+                                        widget.videoId,
+                                      );
+                                      if (!mounted) return;
+                                      await context
+                                          .read<AnalyticsService>()
+                                          .logEvent(
+                                            context,
+                                            'playlist_item_added',
+                                            parameters: {
+                                              'playlist_id': item.playlistId,
+                                              'video_id': widget.videoId,
+                                              'source': 'watch',
+                                            },
+                                          );
+                                    } catch (_) {
+                                      if (!mounted) return;
+                                      // Rollback optimistic add on failure.
+                                      setState(() {
+                                        _addedInSession.remove(item.playlistId);
+                                      });
+                                    }
+                                  }
                                 },
                         ),
                       );
                     },
                   ),
-            ),
           ),
         ),
         Container(
@@ -340,13 +432,6 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Row(
             children: [
-              TextButton(
-                onPressed: () => context.push('/playlists'),
-                child: const Text(
-                  'Manage playlists',
-                  style: TextStyle(color: Color(0xFF66666E), fontSize: 16),
-                ),
-              ),
               const Spacer(),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
@@ -392,7 +477,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
           child: Row(
             children: [
               IconButton(
-                onPressed: () => setState(() => _creatingMode = false),
+                onPressed: _closeCreateMode,
                 icon: const Icon(
                   Icons.arrow_back_rounded,
                   size: 20,
@@ -405,7 +490,10 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
               ),
               const Spacer(),
               InkWell(
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () {
+                  _resetCreateForm();
+                  Navigator.of(context).pop();
+                },
                 borderRadius: BorderRadius.circular(999),
                 child: Container(
                   width: 36,
@@ -532,19 +620,30 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                               videoId: widget.videoId,
                             );
                             if (!mounted) return;
-                            await context.read<AnalyticsService>().logEvent(
-                              context,
-                              'playlist_created',
-                              parameters: {
-                                'playlist_id': detail.playlistId,
-                                'video_id': widget.videoId,
-                                'source': 'watch',
-                              },
-                            );
+                            try {
+                              await context.read<AnalyticsService>().logEvent(
+                                context,
+                                'playlist_created',
+                                parameters: {
+                                  'playlist_id': detail.playlistId,
+                                  'video_id': widget.videoId,
+                                  'source': 'watch',
+                                },
+                              );
+                            } catch (_) {
+                              // Analytics must not interrupt the add-to-playlist flow.
+                            }
+
                             if (!mounted) return;
-                            Navigator.of(context).popUntil(
-                              (route) => route is! PopupRoute,
-                            );
+                            await vm.loadPlaylists();
+                            if (!mounted) return;
+                            final refreshed = vm.filterPlaylists(_query);
+                            setState(() {
+                              _addedInSession.add(detail.playlistId);
+                              _filtered = refreshed;
+                              _creatingMode = false;
+                            });
+                            _resetCreateForm();
                           }
                         : null,
                     style: FilledButton.styleFrom(
@@ -588,7 +687,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
             children: [
               const Spacer(),
               OutlinedButton(
-                onPressed: () => setState(() => _creatingMode = false),
+                onPressed: _closeCreateMode,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF5D5D65),
                   side: const BorderSide(color: Color(0xFFE3E3E7)),

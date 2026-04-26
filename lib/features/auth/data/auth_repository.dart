@@ -47,6 +47,7 @@ class BackendAuthRepository implements AuthRepository {
   final StreamController<AuthUser?> _authStateController =
       StreamController<AuthUser?>.broadcast();
   AuthUser? _currentUser;
+  bool _authEstablishedDuringInit = false;
 
   @override
   Stream<AuthUser?> authStateChanges() => _authStateController.stream;
@@ -55,8 +56,18 @@ class BackendAuthRepository implements AuthRepository {
   AuthUser? get currentUser => _currentUser;
 
   Future<void> _initializeAuthState() async {
+    // Snapshot the user state to avoid clobbering a successful sign-in that
+    // may finish while this async initialization is still in flight.
+    final userAtStart = _currentUser;
+
     // Check if token exists and is valid by trying to get current user
     final token = await TokenStorageService.getToken();
+
+    if (_authEstablishedDuringInit || userAtStart != _currentUser) {
+      // A login/logout already happened while we were reading storage.
+      return;
+    }
+
     if (token != null && token.isNotEmpty) {
       // Token exists, but we don't validate it here
       // The app will validate it when making API calls
@@ -131,6 +142,7 @@ class BackendAuthRepository implements AuthRepository {
           }
 
           // Emit auth state change
+          _authEstablishedDuringInit = true;
           _authStateController.add(_currentUser);
         } else {
           final message = responseBody['message'] as String? ?? 'Login failed.';
@@ -276,6 +288,7 @@ class BackendAuthRepository implements AuthRepository {
           }
 
           // Emit auth state change
+          _authEstablishedDuringInit = true;
           _authStateController.add(_currentUser);
         } else {
           final message = body['error'] as String? ?? 'Verification failed.';
@@ -384,6 +397,7 @@ class BackendAuthRepository implements AuthRepository {
 
     // Clear current user
     _currentUser = null;
+    _authEstablishedDuringInit = true;
 
     // Emit auth state change
     _authStateController.add(null);

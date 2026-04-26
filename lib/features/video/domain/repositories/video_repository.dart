@@ -469,6 +469,7 @@ class VideoRepositoryImpl implements VideoRepository {
     final dataOffset = (data['offset'] as num?)?.toInt() ?? offset;
     final videosJson = data['videos'] as List<dynamic>? ?? [];
     final items = <LikedVideoItem>[];
+    final seenVideoIds = <String>{};
 
     for (final raw in videosJson) {
       try {
@@ -497,7 +498,15 @@ class VideoRepositoryImpl implements VideoRepository {
           videoJsonWithExtras['user_username'] = userUsername;
         }
 
+        // Liked list contract: each row is effectively upvoted for this user.
+        videoJsonWithExtras['upvoted'] = true;
+        videoJsonWithExtras['downvoted'] = false;
+        videoJsonWithExtras['user_vote_status'] = 'upvoted';
         final video = VideoModel.fromJson(videoJsonWithExtras);
+        if (seenVideoIds.contains(video.videoId)) {
+          continue;
+        }
+        seenVideoIds.add(video.videoId);
         final upvotedAtStr =
             itemMap['upvoted_at'] as String? ??
             itemMap['upvotedAt'] as String?;
@@ -811,10 +820,19 @@ class VideoRepositoryImpl implements VideoRepository {
             }
           }
 
+          final bool upvoted =
+              data['upvoted'] as bool? ??
+              videoJson?['upvoted'] as bool? ??
+              false;
+          final bool downvoted =
+              data['downvoted'] as bool? ??
+              videoJson?['downvoted'] as bool? ??
+              false;
+
           return VideoInfo(
             videoUrl: videoUrlFromApi,
-            upvoted: data['upvoted'] as bool? ?? false,
-            downvoted: data['downvoted'] as bool? ?? false,
+            upvoted: upvoted,
+            downvoted: downvoted,
             following: data['following'] as bool? ?? false,
             profilePicture:
                 data['profile_picture'] as String? ??
@@ -867,11 +885,20 @@ class VideoRepositoryImpl implements VideoRepository {
 
   @override
   Future<void> upvoteVideo(String videoId) async {
-    final response = await _apiClient.post(
+    var response = await _apiClient.post(
       ApiConstants.upvoteVideo(videoId),
       {},
       requiresAuth: true,
     );
+
+    // Some backend environments still expose legacy /social endpoints.
+    if (response.statusCode == 404) {
+      response = await _apiClient.post(
+        ApiConstants.upvoteVideoLegacy(videoId),
+        {},
+        requiresAuth: true,
+      );
+    }
 
     if (response.statusCode != 200) {
       throw Exception('Failed to upvote video: ${response.statusCode}');
@@ -888,11 +915,20 @@ class VideoRepositoryImpl implements VideoRepository {
 
   @override
   Future<void> downvoteVideo(String videoId) async {
-    final response = await _apiClient.post(
+    var response = await _apiClient.post(
       ApiConstants.downvoteVideo(videoId),
       {},
       requiresAuth: true,
     );
+
+    // Some backend environments still expose legacy /social endpoints.
+    if (response.statusCode == 404) {
+      response = await _apiClient.post(
+        ApiConstants.downvoteVideoLegacy(videoId),
+        {},
+        requiresAuth: true,
+      );
+    }
 
     if (response.statusCode != 200) {
       throw Exception('Failed to downvote video: ${response.statusCode}');

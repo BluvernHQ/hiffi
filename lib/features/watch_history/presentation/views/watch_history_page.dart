@@ -5,11 +5,13 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/routes/video_player_route_extra.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/main_scaffold.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/presentation/viewmodels/auth_view_model.dart';
@@ -173,44 +175,51 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
                   )
                 else if (vm.errorMessage != null && vm.items.isEmpty)
                   SliverFillRemaining(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.error_outline_rounded,
-                              size: 64,
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              'Something went wrong',
-                              style: Theme.of(context).textTheme.titleLarge,
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              vm.errorMessage!,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
+                    child: isOfflineErrorMessage(vm.errorMessage)
+                        ? OfflineInfoState(
+                            message:
+                                'Connect to the internet to view your watch history.',
+                            actionLabel: 'Try Again',
+                            onAction: () => vm.refresh(),
+                          )
+                        : Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.error_outline_rounded,
+                                    size: 64,
+                                    color: Theme.of(context).colorScheme.error,
                                   ),
-                              textAlign: TextAlign.center,
+                                  const SizedBox(height: 24),
+                                  Text(
+                                    'Something went wrong',
+                                    style: Theme.of(context).textTheme.titleLarge,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    vm.errorMessage!,
+                                    style: Theme.of(context).textTheme.bodyMedium
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 24),
+                                  FilledButton.icon(
+                                    onPressed: () => vm.refresh(),
+                                    icon: const Icon(Icons.refresh_rounded),
+                                    label: const Text('Try again'),
+                                  ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(height: 24),
-                            FilledButton.icon(
-                              onPressed: () => vm.refresh(),
-                              icon: const Icon(Icons.refresh_rounded),
-                              label: const Text('Try again'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                          ),
                   )
                 else if (vm.items.isEmpty)
                   SliverFillRemaining(

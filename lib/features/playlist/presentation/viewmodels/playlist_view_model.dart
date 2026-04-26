@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/services/network_connectivity_service.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/domain/repositories/video_repository.dart';
 import '../../data/playlist_repository.dart';
@@ -11,11 +12,14 @@ class PlaylistViewModel extends ChangeNotifier {
   PlaylistViewModel({
     required PlaylistRepository playlistRepository,
     required VideoRepository videoRepository,
+    NetworkConnectivityService? connectivityService,
   }) : _playlistRepository = playlistRepository,
-       _videoRepository = videoRepository;
+       _videoRepository = videoRepository,
+       _connectivityService = connectivityService;
 
   final PlaylistRepository _playlistRepository;
   final VideoRepository _videoRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   List<PlaylistSummary> _playlists = [];
   final Map<String, PlaylistDetail> _details = {};
@@ -47,6 +51,15 @@ class PlaylistViewModel extends ChangeNotifier {
     _listError = null;
     notifyListeners();
     try {
+      final connectivity = _connectivityService;
+      if (connectivity != null) {
+        await connectivity.ensureInitialized();
+        if (!connectivity.isConnected) {
+          _listError =
+              'No internet connection. Connect and pull to refresh playlists.';
+          return;
+        }
+      }
       _playlists = await _playlistRepository.getSelfPlaylists();
       for (final playlist in _playlists) {
         unawaited(loadPlaylistDetail(playlist.playlistId, silent: true));
@@ -65,6 +78,15 @@ class PlaylistViewModel extends ChangeNotifier {
   }) async {
     if (!silent) notifyListeners();
     try {
+      final connectivity = _connectivityService;
+      if (connectivity != null) {
+        await connectivity.ensureInitialized();
+        if (!connectivity.isConnected) {
+          throw Exception(
+            'No internet connection. Connect and try opening this playlist again.',
+          );
+        }
+      }
       final detail = await _playlistRepository.getPlaylist(playlistId);
       _details[playlistId] = detail;
       _upsertSummary(

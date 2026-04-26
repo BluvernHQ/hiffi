@@ -19,6 +19,15 @@ import 'core/utils/http_overrides.dart';
 import 'firebase_options.dart';
 import 'package:clarity_flutter/clarity_flutter.dart';
 
+bool _isExpectedUmamiOfflineError(Object error) {
+  final msg = error.toString().toLowerCase();
+  return msg.contains('analytics.superlabs.co') &&
+      (msg.contains('failed host lookup') ||
+          msg.contains('socketexception') ||
+          msg.contains('no address associated with hostname') ||
+          msg.contains('network is unreachable'));
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -36,11 +45,23 @@ Future<void> main() async {
 
   final originalOnError = FlutterError.onError;
   FlutterError.onError = (errorDetails) {
+    if (_isExpectedUmamiOfflineError(errorDetails.exception)) {
+      if (kDebugMode) {
+        debugPrint('Skipping expected Umami offline exception.');
+      }
+      return;
+    }
     FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
     originalOnError?.call(errorDetails);
   };
 
   PlatformDispatcher.instance.onError = (error, stack) {
+    if (_isExpectedUmamiOfflineError(error)) {
+      if (kDebugMode) {
+        debugPrint('Skipping expected Umami offline exception.');
+      }
+      return true;
+    }
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };

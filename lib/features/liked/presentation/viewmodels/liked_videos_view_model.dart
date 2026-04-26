@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../video/domain/models/liked_video_item.dart';
+import '../../../video/domain/models/video_model.dart';
 import '../../../video/domain/repositories/video_repository.dart';
 import '../../../../core/exceptions/api_exception.dart';
 
@@ -46,10 +47,19 @@ class LikedVideosViewModel extends ChangeNotifier {
         offset: _offset,
       );
 
+      final incomingById = <String, LikedVideoItem>{};
+      for (final row in result.videos) {
+        incomingById[row.video.videoId] = row;
+      }
+
       if (refresh) {
-        _items = result.videos;
+        _items = incomingById.values.toList();
       } else {
-        _items = [..._items, ...result.videos];
+        final mergedById = <String, LikedVideoItem>{
+          for (final row in _items) row.video.videoId: row,
+          ...incomingById,
+        };
+        _items = mergedById.values.toList();
       }
       _items.sort((a, b) => b.upvotedAt.compareTo(a.upvotedAt));
 
@@ -78,6 +88,39 @@ class LikedVideosViewModel extends ChangeNotifier {
   }
 
   Future<void> refresh() => loadVideos(refresh: true);
+
+  void applyLikeState({
+    required String videoId,
+    required bool isLiked,
+    DateTime? likedAt,
+    VideoModel? likedVideo,
+  }) {
+    final index = _items.indexWhere((row) => row.video.videoId == videoId);
+    if (isLiked) {
+      if (index == -1) {
+        if (likedVideo == null) return;
+        _items.add(
+          LikedVideoItem(
+            video: likedVideo.copyWith(userVoteStatus: 'upvoted'),
+            upvotedAt: likedAt ?? DateTime.now(),
+          ),
+        );
+      } else {
+        final existing = _items[index];
+        final updatedVideo = existing.video.copyWith(userVoteStatus: 'upvoted');
+        _items[index] = LikedVideoItem(
+          video: updatedVideo,
+          upvotedAt: likedAt ?? existing.upvotedAt,
+        );
+      }
+      _items.sort((a, b) => b.upvotedAt.compareTo(a.upvotedAt));
+    } else if (index != -1) {
+      _items.removeAt(index);
+    } else {
+      return;
+    }
+    notifyListeners();
+  }
 
   void clearUnauthorizedFlag() {
     if (_unauthorized) {

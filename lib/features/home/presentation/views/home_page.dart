@@ -10,7 +10,9 @@ import 'package:in_app_update/in_app_update.dart';
 
 import '../../../auth/data/auth_repository.dart';
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
@@ -22,15 +24,6 @@ import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../viewmodels/home_view_model.dart';
-
-bool _feedErrorLooksOffline(String? message) {
-  if (message == null || message.isEmpty) return false;
-  final m = message.toLowerCase();
-  return m.contains('socketexception') ||
-      m.contains('failed host lookup') ||
-      m.contains('network is unreachable') ||
-      m.contains('no internet');
-}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -492,9 +485,17 @@ class _HomePageState extends State<HomePage> {
                             SliverFillRemaining(
                               child: Builder(
                                 builder: (context) {
-                                  final offline = _feedErrorLooksOffline(
+                                  final offline = isOfflineErrorMessage(
                                     videoViewModel.errorMessage,
                                   );
+                                  if (offline) {
+                                    return OfflineInfoState(
+                                      message:
+                                          'Connect to the internet and try again to load your feed.',
+                                      actionLabel: 'Try Again',
+                                      onAction: () => videoViewModel.refresh(),
+                                    );
+                                  }
                                   return Center(
                                     child: Padding(
                                       padding: const EdgeInsets.all(24.0),
@@ -533,7 +534,7 @@ class _HomePageState extends State<HomePage> {
                                           const SizedBox(height: 32),
                                           Text(
                                             offline
-                                                ? 'No Internet Connection'
+                                                ? 'You are offline right now'
                                                 : 'Oops! Something went wrong',
                                             style: Theme.of(context)
                                                 .textTheme

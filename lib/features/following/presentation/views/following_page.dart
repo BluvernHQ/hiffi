@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -73,135 +75,95 @@ class _FollowingPageState extends State<FollowingPage> {
                 else if (followingViewModel.errorMessage != null &&
                     followingViewModel.videos.isEmpty)
                   SliverFillRemaining(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(24),
-                              decoration: BoxDecoration(
-                                color:
-                                    (followingViewModel.errorMessage!.contains(
-                                          'SocketException',
-                                        ) ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Failed host lookup') ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Network is unreachable'))
-                                    ? Theme.of(context)
-                                          .colorScheme
-                                          .primaryContainer
-                                          .withOpacity(0.3)
-                                    : Theme.of(context)
+                    child: isOfflineErrorMessage(followingViewModel.errorMessage)
+                        ? OfflineInfoState(
+                            message:
+                                'Connect to the internet to load videos from creators you follow.',
+                            actionLabel: 'Try Again',
+                            onAction: () => followingViewModel.refresh(),
+                          )
+                        : Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24.0),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(24),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
                                           .colorScheme
                                           .errorContainer
                                           .withOpacity(0.3),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                (followingViewModel.errorMessage!.contains(
-                                          'SocketException',
-                                        ) ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Failed host lookup') ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Network is unreachable'))
-                                    ? Icons.wifi_off_rounded
-                                    : Icons.error_outline_rounded,
-                                size: 64,
-                                color:
-                                    (followingViewModel.errorMessage!.contains(
-                                          'SocketException',
-                                        ) ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Failed host lookup') ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Network is unreachable'))
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.error,
-                              ),
-                            ),
-                            const SizedBox(height: 32),
-                            Text(
-                              (followingViewModel.errorMessage!.contains(
-                                        'SocketException',
-                                      ) ||
-                                      followingViewModel.errorMessage!.contains(
-                                        'Failed host lookup',
-                                      ) ||
-                                      followingViewModel.errorMessage!.contains(
-                                        'Network is unreachable',
-                                      ))
-                                  ? 'No Internet Connection'
-                                  : 'Oops! Something went wrong',
-                              style: Theme.of(context).textTheme.headlineSmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: -0.5,
-                                  ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 12),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                              ),
-                              child: Text(
-                                (followingViewModel.errorMessage!.contains(
-                                          'SocketException',
-                                        ) ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Failed host lookup') ||
-                                        followingViewModel.errorMessage!
-                                            .contains('Network is unreachable'))
-                                    ? 'Please check your connection and try again to see your following feed.'
-                                    : 'We encountered an error while loading your following feed.',
-                                style: Theme.of(context).textTheme.bodyLarge
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                      height: 1.5,
+                                      shape: BoxShape.circle,
                                     ),
-                                textAlign: TextAlign.center,
+                                    child: Icon(
+                                      Icons.error_outline_rounded,
+                                      size: 64,
+                                      color: Theme.of(context).colorScheme.error,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 32),
+                                  Text(
+                                    'Oops! Something went wrong',
+                                    style: Theme.of(context).textTheme.headlineSmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: -0.5,
+                                        ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Text(
+                                      'We encountered an error while loading your following feed.',
+                                      style: Theme.of(context).textTheme.bodyLarge
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                            height: 1.5,
+                                          ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 40),
+                                  ElevatedButton.icon(
+                                    onPressed: () {
+                                      followingViewModel.refresh();
+                                    },
+                                    icon: const Icon(Icons.refresh_rounded),
+                                    label: const Text(
+                                      'Try Again',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      foregroundColor: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimary,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 40,
+                                        vertical: 16,
+                                      ),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 40),
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                followingViewModel.refresh();
-                              },
-                              icon: const Icon(Icons.refresh_rounded),
-                              label: const Text(
-                                'Try Again',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.primary,
-                                foregroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.onPrimary,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 40,
-                                  vertical: 16,
-                                ),
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                          ),
                   )
                 else if (followingViewModel.videos.isEmpty)
                   SliverFillRemaining(

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../user/domain/models/user_model.dart';
@@ -75,10 +77,15 @@ class _SearchResultsPageState extends State<SearchResultsPage>
 
   Widget _buildErrorState(SearchViewModel viewModel) {
     final error = viewModel.error ?? '';
-    final isNoInternet =
-        error.contains('SocketException') ||
-        error.contains('Failed host lookup') ||
-        error.contains('Network is unreachable');
+    final isNoInternet = isOfflineErrorMessage(error);
+    if (isNoInternet) {
+      return OfflineInfoState(
+        message:
+            'Connect to the internet and try again to search on Hiffi.',
+        actionLabel: 'Try Again',
+        onAction: () => viewModel.search(widget.query),
+      );
+    }
 
     return Center(
       child: Padding(
@@ -111,7 +118,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
             const SizedBox(height: 32),
             Text(
               isNoInternet
-                  ? 'No Internet Connection'
+                  ? 'You are offline right now'
                   : 'Oops! Something went wrong',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,

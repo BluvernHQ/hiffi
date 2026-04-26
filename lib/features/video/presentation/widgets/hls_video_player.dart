@@ -272,10 +272,18 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     final tapX = details.localPosition.dx;
     final videoWidth = constraints.maxWidth;
     final isLeftSide = tapX < videoWidth / 2;
+    final wasPlaying = _controller.isPlaying;
 
     // Skip backward on left side, forward on right side
     final skipDuration = isLeftSide ? -_skipDuration : _skipDuration;
-    unawaited(_controller.seekBy(skipDuration));
+    unawaited(() async {
+      await _controller.seekBy(skipDuration);
+      // Some devices transiently pause after rapid seek bursts.
+      // If the user was playing before the gesture, keep playback alive.
+      if (wasPlaying && !_controller.isPlaying) {
+        await _controller.play();
+      }
+    }());
 
     // Show visual feedback (optional - could add a skip indicator overlay)
     debugPrint(

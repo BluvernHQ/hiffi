@@ -116,6 +116,7 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) => PlaylistViewModel(
         playlistRepository: context.read<PlaylistRepository>(),
         videoRepository: context.read<VideoRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       ),
     ),
     ChangeNotifierProvider<SearchViewModel>(
