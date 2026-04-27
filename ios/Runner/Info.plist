@@ -58,8 +58,7 @@
 		<key>UIBackgroundModes</key>
 		<array>
 			<string>audio</string>
+			<string>picture-in-picture</string>
 		</array>
-		<key>AVPictureInPictureController.isPictureInPictureSupported</key>
-		<true/>
 	</dict>
 </plist>

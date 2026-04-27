@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:chewie/chewie.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
@@ -68,11 +67,11 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   void initState() {
     super.initState();
     notifier = Provider.of<PlayerNotifier>(context, listen: false);
-    PipService.isInPipMode.addListener(_onPipModeChanged);
+    PipService.pipChromeListenable.addListener(_onPipModeChanged);
   }
 
   void _onPipModeChanged() {
-    if (!PipService.isInPipMode.value) {
+    if (!PipService.showPipChrome) {
       _pipOverlayHideTimer?.cancel();
       if (_pipOverlayVisible && mounted) {
         setState(() => _pipOverlayVisible = false);
@@ -82,7 +81,7 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
 
   @override
   void dispose() {
-    PipService.isInPipMode.removeListener(_onPipModeChanged);
+    PipService.pipChromeListenable.removeListener(_onPipModeChanged);
     _pipOverlayHideTimer?.cancel();
     _dispose();
     super.dispose();
@@ -170,7 +169,7 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   void _schedulePipOverlayHide() {
     _pipOverlayHideTimer?.cancel();
     _pipOverlayHideTimer = Timer(_pipOverlayAutoHide, () {
-      if (!mounted || !PipService.isInPipMode.value) return;
+      if (!mounted || !PipService.showPipChrome) return;
       setState(() => _pipOverlayVisible = false);
     });
   }
@@ -301,10 +300,13 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
           );
     }
 
-    return ValueListenableBuilder<bool>(
-      valueListenable: PipService.isInPipMode,
-      builder: (context, inPip, _) {
-        if (inPip) {
+    return AnimatedBuilder(
+      animation: PipService.pipChromeListenable,
+      builder: (context, _) {
+        final inPipChrome = PipService.showPipChrome;
+        if (inPipChrome) {
+          final showSwapLoader = PipService.pipUiHeldUntilReconnect.value &&
+              !_latestValue.isPlaying;
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -314,6 +316,18 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
                   onTap: _onPipScrimTap,
                 ),
               ),
+              if (showSwapLoader)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black54,
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFFED1C2F),
+                        strokeWidth: 3,
+                      ),
+                    ),
+                  ),
+                ),
               if (_pipOverlayVisible)
                 Positioned(
                   left: 0,

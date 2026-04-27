@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -141,6 +142,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   RouteObserver<ModalRoute<void>>? _routeObserver;
   bool _routeAwareSubscribed = false;
 
+  /// iOS: after [inactive], probe once for [paused]/[hidden] to start PiP earlier than
+  /// relying on native notifications alone (closer to Hotstar-style timing).
+  Timer? _iosInactivePipProbe;
+
   @override
   void initState() {
     super.initState();
@@ -221,13 +226,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // Do not clear PiP surface here: on Home/Recents, [isInPipMode] is still false until
     // native PiP starts, so we'd tell Android isPlayerActive=false and break the mini player.
     // In-app "another route on top" is handled by [didPushNext] / [didPopNext].
-    // Only pause when navigating away from the page, NOT when entering PiP.
-    // In PiP the player should keep running – we just lose the full-screen UI.
-    if (!PipService.isInPipMode.value && !PipService.isTransitioningFromPip) {
+    // Only pause for in-app route coverage while the app is still foregrounded.
+    // On iOS, background transitions also trigger deactivate(), and pausing here
+    // breaks background playback.
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    final isForegroundRouteTransition = lifecycleState == AppLifecycleState.resumed;
+    if (!PipService.isInPipMode.value &&
+        !PipService.pipUiHeldUntilReconnect.value &&
+        !PipService.isTransitioningFromPip &&
+        isForegroundRouteTransition) {
       debugPrint('VideoPlayerPage: deactivate() – pausing (not PiP)');
       _pauseVideo();
     } else {
-      debugPrint('VideoPlayerPage: deactivate() – PiP active, NOT pausing');
+      debugPrint(
+        'VideoPlayerPage: deactivate() – background/PiP transition, NOT pausing',
+      );
     }
     super.deactivate();
   }
@@ -388,20 +401,69 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _refreshVoteStateIfAuthenticated();
   }
 
+  /// Await native `enterPiP` before [MediaSyncService.switchToBackground] so the
+  /// platform channel is not starved behind other work while iOS is suspending.
+  Future<void> _iosEnterPipBeforeMarkingBackground() async {
+    await PipService.enterPiP();
+    if (!mounted) return;
+    debugPrint('VideoPlayerPage: lifecycle paused – going to background');
+    MediaSyncService().switchToBackground();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    if (state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        if (mounted &&
+            !_isLoading &&
+            !_hasError &&
+            _videoUrlFromApi != null &&
+            !PipService.isInPipMode.value &&
+            !PipService.pipUiHeldUntilReconnect.value &&
+            !PipService.isTransitioningFromPip &&
+            PipService.iosPipNudgeEligible) {
+          unawaited(PipService.primeIosBackgroundPiP());
+        }
+        _iosInactivePipProbe?.cancel();
+        _iosInactivePipProbe = Timer(const Duration(milliseconds: 12), () {
+          if (!mounted) return;
+          final phase = WidgetsBinding.instance.lifecycleState;
+          if (phase != AppLifecycleState.paused &&
+              phase != AppLifecycleState.hidden) {
+            return;
+          }
+          if (!PipService.isTransitioningFromPip &&
+              !PipService.pipUiHeldUntilReconnect.value &&
+              PipService.iosPipNudgeEligible) {
+            unawaited(PipService.enterPiP());
+          }
+        });
+      }
+    } else if (state == AppLifecycleState.paused) {
       // When entering PiP the lifecycle fires "paused" too.
       // We must NOT pause the player or start a background engine here.
-      if (PipService.isInPipMode.value || PipService.isTransitioningFromPip) {
+      if (PipService.isInPipMode.value ||
+          PipService.pipUiHeldUntilReconnect.value ||
+          PipService.isTransitioningFromPip) {
         debugPrint('VideoPlayerPage: lifecycle paused – inside PiP, ignoring');
+        // We skip [switchToBackground] here, but iOS still needs a fresh
+        // MPRemoteCommandCenter / Now Playing update so prev–play–next appear
+        // on the lock screen like other media apps.
+        MediaSyncService().syncNowPlayingFromVideoIfPossible();
         return;
       }
-      debugPrint('VideoPlayerPage: lifecycle paused – going to background');
-      MediaSyncService().switchToBackground();
+      if (defaultTargetPlatform == TargetPlatform.iOS &&
+          PipService.iosPipNudgeEligible) {
+        unawaited(_iosEnterPipBeforeMarkingBackground());
+      } else {
+        debugPrint('VideoPlayerPage: lifecycle paused – going to background');
+        MediaSyncService().switchToBackground();
+      }
     } else if (state == AppLifecycleState.resumed) {
+      _iosInactivePipProbe?.cancel();
+      _iosInactivePipProbe = null;
       debugPrint('VideoPlayerPage: lifecycle resumed – back to foreground');
       MediaSyncService().switchToForeground();
     }
@@ -500,6 +562,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       'VideoPlayerPage: Replacing video ${_video.videoId} with ${newVideo.videoId}',
     );
 
+    // Replacing the player tears down the native AVPlayerLayer; iOS then emits a
+    // spurious PiP "stopped" — suppress so we do not pause the new clip in background.
+    if (PipService.isInPipMode.value) {
+      PipService.suppressNextPipStoppedForControllerReplacement();
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS &&
+        (MediaSyncService().isBackgrounded ||
+            WidgetsBinding.instance.lifecycleState ==
+                AppLifecycleState.paused)) {
+      PipService.markIosPipReattachAfterPlayerSwap();
+    }
+
     if (pushCurrentToHistory) {
       _videoHistory.add(
         _VideoHistoryEntry(
@@ -514,7 +588,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     // Permanently release the old video's controller before switching.
     // This is a deliberate video change, not a PiP rebuild, so we dispose now.
-    HlsVideoPlayer.disposeForVideo(_video.videoId);
+    HlsVideoPlayer.disposeForVideo(
+      _video.videoId,
+      isSwitchingToAnotherVideo: true,
+    );
 
     await HlsPlayerController.clearPlaybackPosition(newVideo.videoId);
 
@@ -834,6 +911,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   @override
   void dispose() {
     debugPrint('VideoPlayerPage: dispose() called - cleaning up resources');
+    _iosInactivePipProbe?.cancel();
+    _iosInactivePipProbe = null;
     if (_routeAwareSubscribed) {
       _routeObserver?.unsubscribe(this);
       _routeAwareSubscribed = false;
@@ -850,6 +929,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (!_isLoading && !_hasError) {
       HlsVideoPlayer.disposeForVideo(_video.videoId);
     }
+    MediaSyncService().endMediaSessionIfNoPlayerAttached();
+    MediaSyncService().registerNavigationCallbacks(
+      onNext: null,
+      onPrevious: null,
+      hasPreviousVideo: null,
+    );
     super.dispose();
   }
 
@@ -1358,6 +1443,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       return;
     }
     if (PipService.isInPipMode.value ||
+        PipService.pipUiHeldUntilReconnect.value ||
         PipService.isTransitioningFromPip ||
         PipService.shouldSuppressOrientationDrivenFullscreen) {
       return;

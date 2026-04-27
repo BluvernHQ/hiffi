@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
@@ -128,10 +127,20 @@ class HlsVideoPlayer extends StatefulWidget {
   /// Truly disposes and removes the controller for a given videoId.
   /// Call this when permanently leaving the video (page dispose / video change).
   /// Do NOT call this during PiP transitions – the controller must stay alive.
-  static void disposeForVideo(String videoId) {
+  ///
+  /// Set [isSwitchingToAnotherVideo] when [VideoPlayerPage] replaces the current
+  /// clip in-place so PiP and media remote session stay coherent.
+  static void disposeForVideo(
+    String videoId, {
+    bool isSwitchingToAnotherVideo = false,
+  }) {
     final controller = _controllers[videoId];
     if (controller != null) {
-      controller.dispose();
+      if (isSwitchingToAnotherVideo) {
+        controller.disposeForVideoSwitch();
+      } else {
+        controller.dispose();
+      }
       _controllers.remove(videoId);
       debugPrint(
         'HlsVideoPlayer: Permanently disposed controller for $videoId',
@@ -205,7 +214,10 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       _controller.removeListener(_onControllerStateChanged);
       // Permanently dispose the old video's controller since we are
       // intentionally switching to a different video.
-      HlsVideoPlayer.disposeForVideo(oldWidget.videoId);
+      HlsVideoPlayer.disposeForVideo(
+        oldWidget.videoId,
+        isSwitchingToAnotherVideo: true,
+      );
 
       // Reuse if a controller already exists for the new videoId (unlikely
       // but safe), otherwise create fresh.
@@ -397,8 +409,6 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       );
     }
 
-    final chewieController = _controller.chewieController;
-    final isInitialized = _controller.isInitialized && chewieController != null;
     final showSwitchingOverlay = _controller.isSwitchingProfile;
     final containerKey = ValueKey(
       'container_${widget.videoId}_${_controller.currentProfile}',
@@ -407,88 +417,118 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
       'chewie_${widget.videoId}_${_controller.currentProfile}',
     );
 
-    return Container(
-      key: containerKey,
-      color: Colors.black,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SizedBox(
-            width: constraints.maxWidth,
-            height: constraints.maxHeight,
-            child: Stack(
-              children: [
-                // 1. Loading overlay while the stream is initializing.
-                Positioned.fill(
-                  child: AnimatedOpacity(
-                    opacity: isInitialized ? 0.0 : 1.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      color: Colors.black,
-                      child: const Center(
-                        child: CircularProgressIndicator(
-                          color: Color(0xFFED1C2F),
-                          strokeWidth: 3,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 2. The Video Player
-                // In PiP, do not wrap Chewie in this GestureDetector — it wins the gesture
-                // arena over [HiffiVideoControls] corner InkWells so expand/fullscreen never fire.
-                if (isInitialized)
-                  Positioned.fill(
-                    child: RepaintBoundary(
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        PipService.pipChromeListenable,
+        _controller,
+      ]),
+      builder: (context, _) {
+        final chewieControllerInner = _controller.chewieController;
+        final isInitializedInner =
+            _controller.isInitialized && chewieControllerInner != null;
+        final holdPipUiInner = PipService.pipUiHeldUntilReconnect.value;
+        final showSwapConnectingInner = holdPipUiInner &&
+            (!_controller.isInitialized || !_controller.isPlaying);
+        return Container(
+          key: containerKey,
+          color: Colors.black,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SizedBox(
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                child: Stack(
+                  children: [
+                    // 1. Loading overlay while the stream is initializing.
+                    Positioned.fill(
                       child: AnimatedOpacity(
-                        opacity: isInitialized ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 400),
-                        child: ValueListenableBuilder<bool>(
-                          valueListenable: PipService.isInPipMode,
-                          builder: (context, inPip, _) {
-                            final chewie = Chewie(
-                              key: playerKey,
-                              controller: chewieController,
-                            );
-                            if (inPip) {
-                              return chewie;
-                            }
-                            return GestureDetector(
-                              onTap: () => _handleTap(context, constraints),
-                              onDoubleTapDown: (details) =>
-                                  _handleDoubleTap(details, constraints),
-                              onVerticalDragStart: _handleVerticalDragStart,
-                              onVerticalDragUpdate: _handleVerticalDragUpdate,
-                              onVerticalDragEnd: _handleVerticalDragEnd,
-                              behavior: HitTestBehavior.translucent,
-                              child: chewie,
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // 3. Keep current frame visible and show loader while switching profile.
-                if (showSwitchingOverlay)
-                  Positioned.fill(
-                    child: AbsorbPointer(
-                      child: Container(
-                        color: Colors.black.withOpacity(0.45),
-                        child: const Center(
-                          child: CircularProgressIndicator(
-                            color: Color(0xFFED1C2F),
-                            strokeWidth: 3,
+                        opacity: isInitializedInner ? 0.0 : 1.0,
+                        duration: const Duration(milliseconds: 300),
+                        child: Container(
+                          color: Colors.black,
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              color: Color(0xFFED1C2F),
+                              strokeWidth: 3,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
+
+                    // 2. The Video Player
+                    // In PiP, do not wrap Chewie in this GestureDetector — it wins the gesture
+                    // arena over [HiffiVideoControls] corner InkWells so expand/fullscreen never fire.
+                    if (isInitializedInner)
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: AnimatedOpacity(
+                            opacity: isInitializedInner ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 400),
+                            child: Builder(
+                              builder: (context) {
+                                final showPipChrome = PipService.showPipChrome;
+                                final chewie = Chewie(
+                                  key: playerKey,
+                                  controller: chewieControllerInner,
+                                );
+                                if (showPipChrome) {
+                                  return chewie;
+                                }
+                                return GestureDetector(
+                                  onTap: () => _handleTap(context, constraints),
+                                  onDoubleTapDown: (details) =>
+                                      _handleDoubleTap(details, constraints),
+                                  onVerticalDragStart: _handleVerticalDragStart,
+                                  onVerticalDragUpdate: _handleVerticalDragUpdate,
+                                  onVerticalDragEnd: _handleVerticalDragEnd,
+                                  behavior: HitTestBehavior.translucent,
+                                  child: chewie,
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // 2b. Mini-player / PiP swap: keep a spinner until the next clip plays.
+                    if (showSwapConnectingInner)
+                      Positioned.fill(
+                        child: AbsorbPointer(
+                          child: Container(
+                            color: Colors.black54,
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFFED1C2F),
+                                strokeWidth: 3,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // 3. Keep current frame visible and show loader while switching profile.
+                    if (showSwitchingOverlay)
+                      Positioned.fill(
+                        child: AbsorbPointer(
+                          child: Container(
+                            color: Colors.black.withOpacity(0.45),
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFFED1C2F),
+                                strokeWidth: 3,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

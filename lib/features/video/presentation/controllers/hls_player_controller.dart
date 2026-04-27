@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audio_session/audio_session.dart';
@@ -128,8 +130,9 @@ class HlsPlayerController extends ChangeNotifier {
 
   /// Switches the video quality profile
   Future<void> setProfile(String profile) async {
-    if (_currentProfile == profile || _isSwitchingProfile || _isDisposed)
+    if (_currentProfile == profile || _isSwitchingProfile || _isDisposed) {
       return;
+    }
 
     debugPrint('HlsPlayerController: Switching profile to $profile');
     _isSwitchingProfile = true;
@@ -167,7 +170,10 @@ class HlsPlayerController extends ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 80));
 
       // 4. Dispose old controller graph and build a fresh one.
-      await _disposeControllers(isSwitchingProfile: true);
+      await _disposeControllers(
+        isSwitchingProfile: true,
+        skipClearPipWants: true,
+      );
       await Future.delayed(const Duration(milliseconds: 250));
 
       _currentProfile = profile;
@@ -422,6 +428,11 @@ class HlsPlayerController extends ChangeNotifier {
 
       final videoController = VideoPlayerController.networkUrl(
         Uri.parse(profileUrl),
+        // iOS PiP requires a real AVPlayerLayer (UiKitView). Texture mode only
+        // embeds a hidden helper layer and breaks AVPictureInPictureController.
+        viewType: !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+            ? VideoViewType.platformView
+            : VideoViewType.textureView,
         videoPlayerOptions: VideoPlayerOptions(
           // Do not mix with other apps: external playback should interrupt
           // this video and trigger pause via audio session interruption events.
@@ -636,8 +647,34 @@ class HlsPlayerController extends ChangeNotifier {
       return;
     }
 
-    final buffering = controller.value.isBuffering;
-    final playing = controller.value.isPlaying;
+    final v = controller.value;
+    _lastKnownPosition = v.position;
+    final duration = v.duration;
+    final playing = v.isPlaying;
+
+    // End detection BEFORE PiP / playback-wants updates: at EOF we briefly become
+    // !playing; calling setPlaybackWantsPip(false) first was clearing native PiP
+    // eligibility and skipping autoplay in background / PiP on iOS.
+    final bool atEnd = v.isCompleted ||
+        (duration.inMilliseconds > 0 &&
+            playing == false &&
+            _lastKnownPosition!.inMilliseconds >= duration.inMilliseconds - 100);
+
+    if (atEnd) {
+      if (!_hasEnded) {
+        _hasEnded = true;
+        final ended = _onVideoEnded;
+        if (ended != null) {
+          scheduleMicrotask(ended);
+        }
+      }
+    } else if (_hasEnded &&
+        duration.inMilliseconds > 0 &&
+        _lastKnownPosition!.inMilliseconds < duration.inMilliseconds - 1000) {
+      _hasEnded = false;
+    }
+
+    final buffering = v.isBuffering;
     var shouldNotify = false;
 
     if (playing) {
@@ -646,9 +683,16 @@ class HlsPlayerController extends ChangeNotifier {
         _lastPipStatus = true;
         shouldNotify = true;
       }
-    } else {
+    } else if (!atEnd) {
       if (_lastPipStatus != false) {
-        PipService.setPlaybackWantsPip(false);
+        // iOS PiP inline swap: [pipUiHeldUntilReconnect] stays true while the next
+        // clip loads. Calling [setPlaybackWantsPip](false) during buffering would
+        // push [updatePlayerStatus](false) to native, bump [pipCancelToken], and
+        // drop the PiP controller before [tryConsumeIosPipReattachAfterSwap] runs —
+        // autoplay in the mini player never recovers.
+        if (!PipService.pipUiHeldUntilReconnect.value) {
+          PipService.setPlaybackWantsPip(false);
+        }
         _lastPipStatus = false;
         shouldNotify = true;
       }
@@ -671,19 +715,11 @@ class HlsPlayerController extends ChangeNotifier {
 
     _syncWatchHoursTimer(playing);
 
-    _lastKnownPosition = controller.value.position;
-
-    // Check if video has ended
-    final duration = controller.value.duration;
-    if (duration.inMilliseconds > 0 &&
-        _lastKnownPosition!.inMilliseconds >= duration.inMilliseconds - 100) {
-      if (!_hasEnded) {
-        _hasEnded = true;
-        _onVideoEnded?.call();
+    if (playing) {
+      PipService.clearPipUiHoldWhenPlaybackResumes();
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        PipService.tryConsumeIosPipReattachAfterSwap();
       }
-    } else if (_hasEnded &&
-        _lastKnownPosition!.inMilliseconds < duration.inMilliseconds - 1000) {
-      _hasEnded = false;
     }
   }
 
@@ -808,10 +844,22 @@ class HlsPlayerController extends ChangeNotifier {
 
   /// Registers audio focus with [AudioSession] so [MediaSyncService] receives
   /// ducking / transient-loss events and can pause the player.
+  ///
+  /// On Android, [VideoPlayerController.play] uses ExoPlayer, which requests
+  /// audio focus on its own. Calling [AudioSession.setActive](true) here first
+  /// installs a second focus holder; when ExoPlayer plays, the session loses
+  /// focus with `AUDIOFOCUS_LOSS` (-1), which [audio_session] surfaces as an
+  /// interruption and [MediaSyncService] pauses — e.g. notification Play never
+  /// sticks. iOS still uses the session for routing / interruption forwarding.
   Future<void> _setVideoAudioSessionActive(bool active) async {
     if (_isDisposed) return;
     try {
       final session = await AudioSession.instance;
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.android &&
+          active) {
+        return;
+      }
       await session.setActive(active);
     } catch (e) {
       debugPrint(
@@ -820,7 +868,10 @@ class HlsPlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _disposeControllers({bool isSwitchingProfile = false}) async {
+  Future<void> _disposeControllers({
+    bool isSwitchingProfile = false,
+    bool skipClearPipWants = false,
+  }) async {
     await _setVideoAudioSessionActive(false);
     _cancelWatchHoursTimer();
     final previousController = _safeVideoController();
@@ -830,8 +881,13 @@ class HlsPlayerController extends ChangeNotifier {
       } catch (_) {}
     }
     await _savePlaybackPosition();
-    PipService.setPlaybackWantsPip(false);
-    _lastPipStatus = false;
+    // In-page next/previous/autoplay: do not tell iOS/Android PiP "playback inactive"
+    // while the old layer is torn down — that was killing PiP before the new player
+    // attached and broke remote skip until the session restarted.
+    if (!skipClearPipWants) {
+      PipService.setPlaybackWantsPip(false);
+      _lastPipStatus = false;
+    }
     _isInitialized = false;
     _lastReportedIsPlaying = null;
 
@@ -877,13 +933,45 @@ class HlsPlayerController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _prepareDispose(
+      keepMediaSessionAlive: false,
+      skipClearPipWants: false,
+    );
+    super.dispose();
+  }
+
+  /// Used when [VideoPlayerPage] replaces the video in-place (next / previous /
+  /// autoplay). Avoids clearing PiP eligibility and tearing down [AudioService]
+  /// while the next player attaches.
+  void disposeForVideoSwitch() {
+    _prepareDispose(
+      keepMediaSessionAlive: true,
+      skipClearPipWants: true,
+    );
+    super.dispose();
+  }
+
+  void _prepareDispose({
+    required bool keepMediaSessionAlive,
+    required bool skipClearPipWants,
+  }) {
     if (_isDisposed) return;
     _isDisposed = true;
-    debugPrint('HlsPlayerController: dispose() called for videoId $videoId');
+    debugPrint(
+      'HlsPlayerController: dispose(${skipClearPipWants ? 'video switch' : 'full'}) '
+      'for videoId $videoId',
+    );
     fullscreenUiForControls.dispose();
-    MediaSyncService().clearCurrentPlayer(this);
-    _disposeControllers(isSwitchingProfile: false);
-    super.dispose();
+    MediaSyncService().clearCurrentPlayer(
+      this,
+      keepMediaSessionAlive: keepMediaSessionAlive,
+    );
+    unawaited(
+      _disposeControllers(
+        isSwitchingProfile: false,
+        skipClearPipWants: skipClearPipWants,
+      ),
+    );
   }
 }
 

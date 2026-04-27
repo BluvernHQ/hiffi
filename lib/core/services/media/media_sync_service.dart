@@ -18,6 +18,18 @@ class MediaSyncService {
   factory MediaSyncService() => _instance;
   MediaSyncService._internal();
 
+  /// Enables prev/next/seek on iOS [MPRemoteCommandCenter] (same bits as controls).
+  static const Set<MediaAction> _videoLockScreenSystemActions = {
+    MediaAction.seek,
+    MediaAction.seekForward,
+    MediaAction.seekBackward,
+    MediaAction.play,
+    MediaAction.pause,
+    MediaAction.stop,
+    MediaAction.skipToNext,
+    MediaAction.skipToPrevious,
+  };
+
   HiffiAudioHandler? _audioHandler;
   HlsPlayerController? _currentVideoController;
   VideoModel? _currentVideo;
@@ -145,16 +157,7 @@ class MediaSyncService {
             MediaControl.fastForward,
             MediaControl.skipToNext,
           ],
-          systemActions: const {
-            MediaAction.seek,
-            MediaAction.seekForward,
-            MediaAction.seekBackward,
-            MediaAction.play,
-            MediaAction.pause,
-            MediaAction.stop,
-            MediaAction.skipToNext,
-            MediaAction.skipToPrevious,
-          },
+          systemActions: _videoLockScreenSystemActions,
           androidCompactActionIndices: const [
             0,
             2,
@@ -249,7 +252,9 @@ class MediaSyncService {
   /// Called from AudioHandler when user skips to next in notification.
   void skipToNextFromNotification() {
     debugPrint('MediaSyncService: Skip to next requested from notification');
-    _onNextRequested?.call();
+    // Run after the current frame so platform/lock-screen callbacks are not
+    // interleaved with synchronous dispose/setState from video replacement.
+    Future<void>.microtask(() => _onNextRequested?.call());
   }
 
   /// Called from AudioHandler when user skips to previous in notification.
@@ -257,17 +262,17 @@ class MediaSyncService {
     debugPrint(
       'MediaSyncService: Skip to previous requested from notification',
     );
-    _onPreviousRequested?.call();
+    Future<void>.microtask(() => _onPreviousRequested?.call());
   }
 
   /// Request to play the next recommended video (e.g. from in-player controls).
   void requestNextVideo() {
-    _onNextRequested?.call();
+    Future<void>.microtask(() => _onNextRequested?.call());
   }
 
   /// Request to play the previous video (e.g. from in-player controls).
   void requestPreviousVideo() {
-    _onPreviousRequested?.call();
+    Future<void>.microtask(() => _onPreviousRequested?.call());
   }
 
   /// Updates the MediaSession metadata while the video is in foreground.
@@ -312,6 +317,7 @@ class MediaSyncService {
           MediaControl.fastForward,
           MediaControl.skipToNext,
         ],
+        systemActions: _videoLockScreenSystemActions,
         androidCompactActionIndices: const [0, 2, 4],
         processingState: AudioProcessingState.ready,
       ),
@@ -331,6 +337,9 @@ class MediaSyncService {
 
     debugPrint('MediaSyncService: Marking as backgrounded (unified player)');
     _isBackgrounded = true;
+    // Push transport controls + playing state so iOS activates MPRemoteCommandCenter
+    // and shows prev / next on the lock screen (easy to miss when only debounced sync ran).
+    syncNowPlayingFromVideoIfPossible();
   }
 
   /// Marks that the app came back to foreground.
@@ -350,6 +359,16 @@ class MediaSyncService {
 
   /// Gets whether the service is currently in background mode
   bool get isBackgrounded => _isBackgrounded;
+
+  /// Refreshes lock screen / Control Center / CarPlay transport from the video
+  /// player (prev, play/pause, next, seek). Call when iOS lifecycle paths skip
+  /// [switchToBackground] but the session should still match Spotify-style controls
+  /// (e.g. PiP mini player).
+  void syncNowPlayingFromVideoIfPossible() {
+    _notificationSyncDebounce?.cancel();
+    _notificationSyncDebounce = null;
+    _syncVideoToNotificationNow();
+  }
 
   void _handleAudioInterruption(AudioInterruptionEvent event) {
     final controller = _currentVideoController;
@@ -372,8 +391,14 @@ class MediaSyncService {
   }
 
   /// Clears the current video player.
-  /// Call this when the video player is being disposed.
-  void clearCurrentPlayer(HlsPlayerController controller) {
+  ///
+  /// When [keepMediaSessionAlive] is true (in-page next/previous/autoplay), do not
+  /// call [HiffiAudioHandler.stop] — that was tearing down Now Playing / remote
+  /// commands and breaking skip + PiP while the next [setCurrentPlayer] attaches.
+  void clearCurrentPlayer(
+    HlsPlayerController controller, {
+    bool keepMediaSessionAlive = false,
+  }) {
     if (_currentVideoController == controller) {
       debugPrint(
         'MediaSyncService: Clearing current player for video ${_currentVideo?.videoId}',
@@ -384,7 +409,16 @@ class MediaSyncService {
       _currentVideoController = null;
       _currentVideo = null;
 
-      // Stop notification handler if we no longer have a player
+      if (!keepMediaSessionAlive) {
+        _audioHandler?.stop();
+      }
+    }
+  }
+
+  /// Call when leaving the video page for good (no replacement player).
+  void endMediaSessionIfNoPlayerAttached() {
+    if (_currentVideoController == null) {
+      debugPrint('MediaSyncService: endMediaSessionIfNoPlayerAttached → stop');
       _audioHandler?.stop();
     }
   }
