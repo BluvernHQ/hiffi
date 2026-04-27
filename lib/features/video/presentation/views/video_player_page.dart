@@ -40,6 +40,9 @@ enum _SignInPromptResult { cancelled, signIn, signUp }
 
 /// Horizontal strip height aligned to [_SuggestedVideoCard] (avoids empty space above divider).
 const double _kSuggestedStripHeight = 168;
+const int _kActivePlaylistVisibleItemsDefault = 3;
+const double _kActivePlaylistRowHeightBase = 56;
+const double _kActivePlaylistRowGapBase = 6;
 
 class VideoPlayerPage extends StatefulWidget {
   const VideoPlayerPage({
@@ -2276,11 +2279,29 @@ class _PlaylistQueueModule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final shortestSide = mediaQuery.size.shortestSide;
+    final textScale = MediaQuery.textScalerOf(
+      context,
+    ).scale(1).clamp(1.0, 1.15).toDouble();
+    final visibleItemsCap = shortestSide < 360
+        ? 2
+        : _kActivePlaylistVisibleItemsDefault;
+    final rowHeight = (_kActivePlaylistRowHeightBase * textScale).clamp(
+      56.0,
+      66.0,
+    );
+    final rowGap = shortestSide < 360 ? 4.0 : _kActivePlaylistRowGapBase;
+
     final resolvedCurrentIndex = session.videoIds.indexOf(currentVideoId);
     final activeIndex = resolvedCurrentIndex >= 0
         ? resolvedCurrentIndex
         : session.currentIndex.clamp(0, session.videoIds.length - 1);
     final queueEntries = session.videoIds.asMap().entries.toList();
+    final visibleRows = queueEntries.length < visibleItemsCap
+        ? queueEntries.length
+        : visibleItemsCap;
+    final queueHeight = (visibleRows * rowHeight) + ((visibleRows - 1) * rowGap);
 
     return Container(
       color: Colors.white,
@@ -2331,75 +2352,90 @@ class _PlaylistQueueModule extends StatelessWidget {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
-            ...List.generate(queueEntries.length, (rowIndex) {
-              final index = queueEntries[rowIndex].key;
-              final id = queueEntries[rowIndex].value;
-              final isCurrent = id == currentVideoId;
-              final label = isCurrent
-                  ? 'Now playing'
-                  : index < activeIndex
-                  ? ''
-                  : 'Up next';
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: rowIndex == queueEntries.length - 1 ? 0 : 6,
-                ),
-                child: InkWell(
-                  onTap: () => onTapItem(id, index),
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: isCurrent ? const Color(0xFFFFEEF1) : const Color(0xFFF3F3F6),
+            SizedBox(
+              height: queueHeight,
+              child: ListView.separated(
+                padding: EdgeInsets.zero,
+                primary: false,
+                itemCount: queueEntries.length,
+                physics: queueEntries.length > visibleItemsCap
+                    ? const BouncingScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, rowIndex) {
+                  final index = queueEntries[rowIndex].key;
+                  final id = queueEntries[rowIndex].value;
+                  final isCurrent = id == currentVideoId;
+                  final isImmediateNext = index == activeIndex + 1;
+                  final label = isCurrent
+                      ? 'Now playing'
+                      : isImmediateNext
+                      ? 'Up next'
+                      : '';
+                  return SizedBox(
+                    height: rowHeight,
+                    child: InkWell(
+                      onTap: () => onTapItem(id, index),
                       borderRadius: BorderRadius.circular(10),
-                      border: isCurrent
-                          ? Border.all(color: const Color(0xFFF2B2BC))
-                          : null,
-                    ),
-                    child: Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(7),
-                          child: SizedBox(
-                            width: 56,
-                            height: 32,
-                            child: _queueThumb(id),
-                          ),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: isCurrent
+                              ? const Color(0xFFFFEEF1)
+                              : const Color(0xFFF3F3F6),
+                          borderRadius: BorderRadius.circular(10),
+                          border: isCurrent
+                              ? Border.all(color: const Color(0xFFF2B2BC))
+                              : null,
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _queueTitle(id),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(7),
+                              child: SizedBox(
+                                width: 56,
+                                height: 32,
+                                child: _queueThumb(id),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: isCurrent
-                                      ? const Color(0xFFB54558)
-                                      : const Color(0xFF6B6B6B),
-                                  fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w500,
-                                ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _queueTitle(id),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    label,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: isCurrent
+                                          ? const Color(0xFFB54558)
+                                          : const Color(0xFF6B6B6B),
+                                      fontWeight: isCurrent
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-              );
-            }),
+                  );
+                },
+                separatorBuilder: (_, __) => SizedBox(height: rowGap),
+              ),
+            ),
           ],
         ),
       ),
