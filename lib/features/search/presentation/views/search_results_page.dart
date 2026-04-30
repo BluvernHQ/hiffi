@@ -24,11 +24,17 @@ class SearchResultsPage extends StatefulWidget {
 class _SearchResultsPageState extends State<SearchResultsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late final ScrollController _allScrollController;
+  late final ScrollController _videosScrollController;
+  late final ScrollController _usersScrollController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _allScrollController = ScrollController()..addListener(_onAllScroll);
+    _videosScrollController = ScrollController()..addListener(_onVideosScroll);
+    _usersScrollController = ScrollController()..addListener(_onUsersScroll);
 
     // Perform search on init
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -39,7 +45,37 @@ class _SearchResultsPageState extends State<SearchResultsPage>
   @override
   void dispose() {
     _tabController.dispose();
+    _allScrollController.removeListener(_onAllScroll);
+    _videosScrollController.removeListener(_onVideosScroll);
+    _usersScrollController.removeListener(_onUsersScroll);
+    _allScrollController.dispose();
+    _videosScrollController.dispose();
+    _usersScrollController.dispose();
     super.dispose();
+  }
+
+  bool _isNearBottom(ScrollController controller, {double threshold = 320}) {
+    if (!controller.hasClients) return false;
+    final max = controller.position.maxScrollExtent;
+    final current = controller.position.pixels;
+    return max - current <= threshold;
+  }
+
+  void _onAllScroll() {
+    if (!_isNearBottom(_allScrollController)) return;
+    final vm = context.read<SearchViewModel>();
+    vm.loadMoreVideos();
+    vm.loadMoreUsers();
+  }
+
+  void _onVideosScroll() {
+    if (!_isNearBottom(_videosScrollController)) return;
+    context.read<SearchViewModel>().loadMoreVideos();
+  }
+
+  void _onUsersScroll() {
+    if (!_isNearBottom(_usersScrollController)) return;
+    context.read<SearchViewModel>().loadMoreUsers();
   }
 
   @override
@@ -80,8 +116,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     final isNoInternet = isOfflineErrorMessage(error);
     if (isNoInternet) {
       return OfflineInfoState(
-        message:
-            'Connect to the internet and try again to search on Hiffi.',
+        message: 'Connect to the internet and try again to search on Hiffi.',
         actionLabel: 'Try Again',
         onAction: () => viewModel.search(widget.query),
       );
@@ -206,6 +241,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     return RefreshIndicator(
       onRefresh: () => viewModel.search(widget.query),
       child: CustomScrollView(
+        controller: _allScrollController,
         slivers: [
           // Videos section
           if (viewModel.videoResults.isNotEmpty) ...[
@@ -259,6 +295,11 @@ class _SearchResultsPageState extends State<SearchResultsPage>
               ),
             ),
           ],
+          SliverToBoxAdapter(
+            child: _buildBottomLoader(
+              show: viewModel.isLoadingMoreUsers || viewModel.isLoadingMoreVideos,
+            ),
+          ),
         ],
       ),
     );
@@ -292,6 +333,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     return RefreshIndicator(
       onRefresh: () => viewModel.searchVideos(widget.query),
       child: CustomScrollView(
+        controller: _videosScrollController,
         slivers: [
           SliverPadding(
             padding: EdgeInsets.fromLTRB(12.w, 16.h, 12.w, 16.h),
@@ -307,6 +349,9 @@ class _SearchResultsPageState extends State<SearchResultsPage>
                 return _GridVideoCard(video: video);
               }, childCount: viewModel.videoResults.length),
             ),
+          ),
+          SliverToBoxAdapter(
+            child: _buildBottomLoader(show: viewModel.isLoadingMoreVideos),
           ),
         ],
       ),
@@ -341,6 +386,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     return RefreshIndicator(
       onRefresh: () => viewModel.searchUsers(widget.query),
       child: CustomScrollView(
+        controller: _usersScrollController,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -351,16 +397,26 @@ class _SearchResultsPageState extends State<SearchResultsPage>
               }, childCount: viewModel.userResults.length),
             ),
           ),
+          SliverToBoxAdapter(
+            child: _buildBottomLoader(show: viewModel.isLoadingMoreUsers),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildBottomLoader({required bool show}) {
+    if (!show) return const SizedBox.shrink();
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 16),
+      child: Center(child: CircularProgressIndicator()),
     );
   }
 
   double _calculateAspectRatio(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final columns = responsiveGridColumns(context).toDouble();
-    final cardWidth =
-        (screenWidth - 12.w * 2 - 12.w * (columns - 1)) / columns;
+    final cardWidth = (screenWidth - 12.w * 2 - 12.w * (columns - 1)) / columns;
     final thumbnailHeight = cardWidth * 9 / 16;
     final textHeight = responsiveGridTextSectionHeight(context);
     final totalHeight = thumbnailHeight + 8.h + textHeight;
@@ -533,7 +589,9 @@ class _GridVideoCard extends StatelessWidget {
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                                fontSize: responsiveGridSubtitleFontSize(context),
+                                fontSize: responsiveGridSubtitleFontSize(
+                                  context,
+                                ),
                               ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

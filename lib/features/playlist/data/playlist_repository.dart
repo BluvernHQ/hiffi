@@ -11,6 +11,12 @@ import '../domain/models/playlist_models.dart';
 /// Hiffi list endpoints. This client fetches **all pages** for list + detail
 /// unless you introduce a paged UI later.
 abstract class PlaylistRepository {
+  /// `GET /playlists/curated` — public curated playlists.
+  Future<List<PlaylistSummary>> getCuratedPlaylists();
+
+  /// `GET /playlists/curated/{playlistID}` — public curated playlist detail.
+  Future<PlaylistDetail> getCuratedPlaylist(String playlistId);
+
   /// `GET /playlists/list/self` — all pages merged, server order preserved.
   Future<List<PlaylistSummary>> getSelfPlaylists();
 
@@ -52,6 +58,78 @@ class PlaylistRepositoryImpl implements PlaylistRepository {
   final ApiClient _apiClient;
 
   static const int _maxPageLimit = 100;
+
+  @override
+  Future<List<PlaylistSummary>> getCuratedPlaylists() async {
+    final merged = <PlaylistSummary>[];
+    var offset = 0;
+    while (true) {
+      final endpoint =
+          '${ApiConstants.playlistCuratedList}?limit=$_maxPageLimit&offset=$offset';
+      final response = await _apiClient.get(endpoint, requiresAuth: false);
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Failed to fetch curated playlists (${response.statusCode})',
+        );
+      }
+      final payload = _decode(response.body);
+      _ensureSuccessOrThrow(payload);
+      final data = _extractData(payload);
+      final raw = _coerceJsonList(data['items']).isNotEmpty
+          ? _coerceJsonList(data['items'])
+          : _coerceJsonList(data['playlists']);
+      final page = raw
+          .whereType<Map<String, dynamic>>()
+          .map(PlaylistSummary.fromJson)
+          .where((p) => p.playlistId.isNotEmpty)
+          .toList();
+      merged.addAll(page);
+      if (page.length < _maxPageLimit) break;
+      offset += _maxPageLimit;
+    }
+    return merged;
+  }
+
+  @override
+  Future<PlaylistDetail> getCuratedPlaylist(String playlistId) async {
+    final allItems = <PlaylistItem>[];
+    late PlaylistDetail header;
+    var offset = 0;
+    var isFirstPage = true;
+    while (true) {
+      final endpoint =
+          '${ApiConstants.playlistCuratedDetail(playlistId)}?limit=$_maxPageLimit&offset=$offset';
+      final response = await _apiClient.get(endpoint, requiresAuth: false);
+      if (response.statusCode == 404) {
+        throw ApiException('Curated playlist not found', 404);
+      }
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Failed to fetch curated playlist (${response.statusCode})',
+        );
+      }
+      final payload = _decode(response.body);
+      _ensureSuccessOrThrow(payload);
+      final data = _extractData(payload);
+      final pageDetail = PlaylistDetail.fromPlaylistGetData(data);
+      if (isFirstPage) {
+        header = pageDetail;
+        isFirstPage = false;
+      }
+      allItems.addAll(pageDetail.items);
+      if (pageDetail.items.length < _maxPageLimit) break;
+      offset += _maxPageLimit;
+    }
+    final deduped = _mergeItemsByPosition(allItems);
+    return PlaylistDetail(
+      playlistId: header.playlistId,
+      title: header.title,
+      description: header.description,
+      items: deduped,
+      updatedAt: header.updatedAt,
+      createdAt: header.createdAt,
+    );
+  }
 
   @override
   Future<List<PlaylistSummary>> getSelfPlaylists() async {

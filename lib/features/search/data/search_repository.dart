@@ -36,8 +36,16 @@ class VideoSearchResult {
 }
 
 abstract class SearchRepository {
-  Future<UserSearchResult> searchUsers(String query, {int limit = 50});
-  Future<VideoSearchResult> searchVideos(String query, {int limit = 100});
+  Future<UserSearchResult> searchUsers(
+    String query, {
+    int page = 1,
+    int limit = 50,
+  });
+  Future<VideoSearchResult> searchVideos(
+    String query, {
+    int page = 1,
+    int limit = 100,
+  });
 }
 
 class ApiSearchRepository implements SearchRepository {
@@ -46,14 +54,18 @@ class ApiSearchRepository implements SearchRepository {
   final ApiClient _apiClient;
 
   @override
-  Future<UserSearchResult> searchUsers(String query, {int limit = 50}) async {
+  Future<UserSearchResult> searchUsers(
+    String query, {
+    int page = 1,
+    int limit = 50,
+  }) async {
     if (query.trim().isEmpty) {
       return UserSearchResult(users: [], count: 0, limit: limit, query: query);
     }
 
     try {
       final response = await _apiClient.get(
-        ApiConstants.searchUsers(query),
+        ApiConstants.searchUsers(query, page: page, limit: limit),
         requiresAuth: false,
       );
 
@@ -88,6 +100,7 @@ class ApiSearchRepository implements SearchRepository {
   @override
   Future<VideoSearchResult> searchVideos(
     String query, {
+    int page = 1,
     int limit = 100,
   }) async {
     if (query.trim().isEmpty) {
@@ -101,7 +114,7 @@ class ApiSearchRepository implements SearchRepository {
 
     try {
       final response = await _apiClient.get(
-        ApiConstants.searchVideos(query),
+        ApiConstants.searchVideos(query, page: page, limit: limit),
         requiresAuth: false,
       );
 

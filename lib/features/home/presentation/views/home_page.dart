@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,7 @@ import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../search/presentation/widgets/search_overlay.dart';
+import '../../../playlist/presentation/viewmodels/playlist_view_model.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
@@ -38,6 +40,7 @@ class _HomePageState extends State<HomePage> {
   final FocusNode _searchFocusNode = FocusNode();
   bool _isSearchActive = false;
   bool _isCheckingUpdate = false;
+  int _curatedShuffleSeed = DateTime.now().millisecondsSinceEpoch;
 
   @override
   void initState() {
@@ -213,6 +216,8 @@ class _HomePageState extends State<HomePage> {
 
     // Load videos feed (works for both authenticated and unauthenticated users)
     context.read<VideoViewModel>().loadVideos(refresh: true);
+    context.read<PlaylistViewModel>().loadCuratedPlaylists(silent: true);
+    _curatedShuffleSeed = DateTime.now().millisecondsSinceEpoch;
   }
 
   Future<bool> _onWillPop() async {
@@ -241,6 +246,12 @@ class _HomePageState extends State<HomePage> {
     final homeViewModel = context.watch<HomeViewModel>();
     final userViewModel = context.watch<UserViewModel>();
     final videoViewModel = context.watch<VideoViewModel>();
+    final playlistViewModel = context.watch<PlaylistViewModel>();
+    final feedVideos = _buildPrioritizedFeed(
+      videoViewModel.videos,
+      playlistViewModel,
+    );
+
     final authRepository = context.watch<AuthRepository>();
     final isAuthenticated = authRepository.currentUser != null;
     final user = isAuthenticated ? userViewModel.currentUser : null;
@@ -607,7 +618,7 @@ class _HomePageState extends State<HomePage> {
                                 },
                               ),
                             )
-                          else if (videoViewModel.videos.isEmpty)
+                          else if (feedVideos.isEmpty)
                             SliverFillRemaining(
                               child: Center(
                                 child: Column(
@@ -673,7 +684,7 @@ class _HomePageState extends State<HomePage> {
                                 ),
                                 delegate: SliverChildBuilderDelegate(
                                   (context, index) {
-                                    if (index >= videoViewModel.videos.length) {
+                                    if (index >= feedVideos.length) {
                                       // Load more if available (schedule after build to avoid setState during build)
                                       if (videoViewModel.hasMore &&
                                           !videoViewModel.isLoading) {
@@ -691,11 +702,11 @@ class _HomePageState extends State<HomePage> {
                                             )
                                           : const SizedBox.shrink();
                                     }
-                                    final video = videoViewModel.videos[index];
+                                    final video = feedVideos[index];
                                     return _GridVideoCard(video: video);
                                   },
                                   childCount:
-                                      videoViewModel.videos.length +
+                                      feedVideos.length +
                                       (videoViewModel.hasMore ? 1 : 0),
                                 ),
                               ),
@@ -722,6 +733,38 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  List<VideoModel> _buildPrioritizedFeed(
+    List<VideoModel> source,
+    PlaylistViewModel playlistViewModel,
+  ) {
+    if (source.isEmpty) return const [];
+
+    final curatedIds = <String>{};
+    for (final curated in playlistViewModel.curatedPlaylists) {
+      final detail = playlistViewModel.curatedDetail(curated.playlistId);
+      if (detail == null) continue;
+      for (final item in detail.items) {
+        if (item.videoId.isNotEmpty) curatedIds.add(item.videoId);
+      }
+    }
+    if (curatedIds.isEmpty) return source;
+
+    final curatedVideos = <VideoModel>[];
+    final nonCuratedVideos = <VideoModel>[];
+    for (final video in source) {
+      if (curatedIds.contains(video.videoId)) {
+        curatedVideos.add(video);
+      } else {
+        nonCuratedVideos.add(video);
+      }
+    }
+
+    // Keep curated-first behavior while rotating order per refresh/session.
+    final rng = Random(_curatedShuffleSeed);
+    curatedVideos.shuffle(rng);
+    return [...curatedVideos, ...nonCuratedVideos];
   }
 }
 

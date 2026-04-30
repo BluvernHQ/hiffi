@@ -172,6 +172,7 @@ class AppRouter {
             final pindex = int.tryParse(
               state.uri.queryParameters['pindex'] ?? '',
             );
+            final isCurated = state.uri.queryParameters['curated'] == '1';
 
             if (videoId.isEmpty) {
               // Invalid deep link: send to home instead of crashing.
@@ -185,6 +186,7 @@ class AppRouter {
               videoId: videoId,
               playlistId: playlistId,
               playlistIndex: pindex,
+              isCuratedPlaylist: isCurated,
             );
           },
         ),

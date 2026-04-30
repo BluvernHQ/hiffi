@@ -22,10 +22,14 @@ class PlaylistViewModel extends ChangeNotifier {
   final NetworkConnectivityService? _connectivityService;
 
   List<PlaylistSummary> _playlists = [];
+  List<PlaylistSummary> _curatedPlaylists = [];
   final Map<String, PlaylistDetail> _details = {};
+  final Map<String, PlaylistDetail> _curatedDetails = {};
   final Map<String, VideoModel> _videoCache = {};
   bool _isLoadingList = false;
+  bool _isLoadingCurated = false;
   String? _listError;
+  String? _curatedError;
   final Set<String> _removingItems = <String>{};
   final Set<String> _addingToPlaylist = <String>{};
   bool _creating = false;
@@ -33,8 +37,11 @@ class PlaylistViewModel extends ChangeNotifier {
   Timer? _searchDebounce;
 
   List<PlaylistSummary> get playlists => List.unmodifiable(_playlists);
+  List<PlaylistSummary> get curatedPlaylists => List.unmodifiable(_curatedPlaylists);
   bool get isLoadingList => _isLoadingList;
+  bool get isLoadingCurated => _isLoadingCurated;
   String? get listError => _listError;
+  String? get curatedError => _curatedError;
   bool get isCreating => _creating;
   bool get isDeleting => _deleting;
 
@@ -44,6 +51,7 @@ class PlaylistViewModel extends ChangeNotifier {
       _addingToPlaylist.contains(playlistId);
 
   PlaylistDetail? detail(String playlistId) => _details[playlistId];
+  PlaylistDetail? curatedDetail(String playlistId) => _curatedDetails[playlistId];
   VideoModel? cachedVideo(String videoId) => _videoCache[videoId];
 
   Future<void> loadPlaylists() async {
@@ -68,6 +76,27 @@ class PlaylistViewModel extends ChangeNotifier {
       _listError = e.toString();
     } finally {
       _isLoadingList = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadCuratedPlaylists({bool silent = false}) async {
+    if (_isLoadingCurated) return;
+    if (!silent) {
+      _isLoadingCurated = true;
+      _curatedError = null;
+      notifyListeners();
+    }
+    try {
+      final curated = await _playlistRepository.getCuratedPlaylists();
+      _curatedPlaylists = curated;
+      for (final playlist in curated.take(6)) {
+        unawaited(loadCuratedPlaylistDetail(playlist.playlistId, silent: true));
+      }
+    } catch (e) {
+      _curatedError = e.toString();
+    } finally {
+      _isLoadingCurated = false;
       notifyListeners();
     }
   }
@@ -99,6 +128,22 @@ class PlaylistViewModel extends ChangeNotifier {
           createdAt: detail.createdAt,
         ),
       );
+      await _primeVideoMetadata(detail.items.map((e) => e.videoId).take(12));
+      notifyListeners();
+      return detail;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  Future<PlaylistDetail?> loadCuratedPlaylistDetail(
+    String playlistId, {
+    bool silent = false,
+  }) async {
+    if (!silent) notifyListeners();
+    try {
+      final detail = await _playlistRepository.getCuratedPlaylist(playlistId);
+      _curatedDetails[playlistId] = detail;
       await _primeVideoMetadata(detail.items.map((e) => e.videoId).take(12));
       notifyListeners();
       return detail;

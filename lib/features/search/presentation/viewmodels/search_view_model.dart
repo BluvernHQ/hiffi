@@ -26,7 +26,15 @@ class SearchViewModel extends ChangeNotifier {
   int _userCount = 0;
   int _videoCount = 0;
   bool _isLoading = false;
+  bool _isLoadingMoreUsers = false;
+  bool _isLoadingMoreVideos = false;
   String? _error;
+  int _userPage = 1;
+  int _videoPage = 1;
+  static const int _userPageLimit = 50;
+  static const int _videoPageLimit = 30;
+  bool _hasMoreUsers = true;
+  bool _hasMoreVideos = true;
 
   // Getters
   String get query => _query;
@@ -35,9 +43,13 @@ class SearchViewModel extends ChangeNotifier {
   int get userCount => _userCount;
   int get videoCount => _videoCount;
   bool get isLoading => _isLoading;
+  bool get isLoadingMoreUsers => _isLoadingMoreUsers;
+  bool get isLoadingMoreVideos => _isLoadingMoreVideos;
   String? get error => _error;
   bool get hasResults => _userResults.isNotEmpty || _videoResults.isNotEmpty;
   bool get hasNoResults => !_isLoading && _query.isNotEmpty && !hasResults;
+  bool get hasMoreUsers => _hasMoreUsers;
+  bool get hasMoreVideos => _hasMoreVideos;
 
   /// Search for both users and videos in parallel
   Future<void> search(String query) async {
@@ -47,6 +59,7 @@ class SearchViewModel extends ChangeNotifier {
     }
 
     _query = query.trim();
+    _resetPagination();
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -54,8 +67,12 @@ class SearchViewModel extends ChangeNotifier {
     try {
       // Search both users and videos in parallel
       final results = await Future.wait([
-        _searchRepository.searchUsers(_query, limit: 50),
-        _searchRepository.searchVideos(_query, limit: 100),
+        _searchRepository.searchUsers(_query, page: _userPage, limit: _userPageLimit),
+        _searchRepository.searchVideos(
+          _query,
+          page: _videoPage,
+          limit: _videoPageLimit,
+        ),
       ]);
 
       final userResult = results[0] as UserSearchResult;
@@ -73,6 +90,8 @@ class SearchViewModel extends ChangeNotifier {
       _videoResults = videoResult.videos;
       _userCount = updatedUsers.length; // Use actual displayed count
       _videoCount = videoResult.count;
+      _hasMoreUsers = updatedUsers.length >= _userPageLimit;
+      _hasMoreVideos = videoResult.videos.length >= _videoPageLimit;
       _error = null;
     } catch (e) {
       _error = 'Failed to search: ${e.toString()}';
@@ -96,12 +115,18 @@ class SearchViewModel extends ChangeNotifier {
     }
 
     _query = query.trim();
+    _userPage = 1;
+    _hasMoreUsers = true;
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final result = await _searchRepository.searchUsers(_query, limit: 50);
+      final result = await _searchRepository.searchUsers(
+        _query,
+        page: _userPage,
+        limit: _userPageLimit,
+      );
 
       // Deduplicate users by UID to prevent showing the same user twice
       final uniqueUsers = _deduplicateUsersByUid(result.users);
@@ -112,6 +137,7 @@ class SearchViewModel extends ChangeNotifier {
       // Use the actual deduplicated count, not the API count
       _userResults = updatedUsers;
       _userCount = updatedUsers.length; // Use actual displayed count
+      _hasMoreUsers = updatedUsers.length >= _userPageLimit;
       _error = null;
     } catch (e) {
       _error = 'Failed to search users: ${e.toString()}';
@@ -133,14 +159,21 @@ class SearchViewModel extends ChangeNotifier {
     }
 
     _query = query.trim();
+    _videoPage = 1;
+    _hasMoreVideos = true;
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final result = await _searchRepository.searchVideos(_query, limit: 100);
+      final result = await _searchRepository.searchVideos(
+        _query,
+        page: _videoPage,
+        limit: _videoPageLimit,
+      );
       _videoResults = result.videos;
       _videoCount = result.count;
+      _hasMoreVideos = result.videos.length >= _videoPageLimit;
       _error = null;
     } catch (e) {
       _error = 'Failed to search videos: ${e.toString()}';
@@ -161,8 +194,8 @@ class SearchViewModel extends ChangeNotifier {
     try {
       // Get limited results for suggestions (5 users, 5 videos)
       final results = await Future.wait([
-        _searchRepository.searchUsers(query.trim(), limit: 5),
-        _searchRepository.searchVideos(query.trim(), limit: 5),
+        _searchRepository.searchUsers(query.trim(), page: 1, limit: 5),
+        _searchRepository.searchVideos(query.trim(), page: 1, limit: 5),
       ]);
 
       final userResult = results[0] as UserSearchResult;
@@ -189,7 +222,81 @@ class SearchViewModel extends ChangeNotifier {
     _videoCount = 0;
     _isLoading = false;
     _error = null;
+    _resetPagination();
     notifyListeners();
+  }
+
+  Future<void> loadMoreUsers() async {
+    if (_query.isEmpty || _isLoading || _isLoadingMoreUsers || !_hasMoreUsers) {
+      return;
+    }
+
+    _isLoadingMoreUsers = true;
+    notifyListeners();
+
+    try {
+      final nextPage = _userPage + 1;
+      final result = await _searchRepository.searchUsers(
+        _query,
+        page: nextPage,
+        limit: _userPageLimit,
+      );
+
+      final merged = _deduplicateUsersByUid([..._userResults, ...result.users]);
+      final updatedUsers = await _updateCurrentUserProfile(merged);
+
+      _userPage = nextPage;
+      _userResults = updatedUsers;
+      _userCount = updatedUsers.length;
+      _hasMoreUsers = result.users.length >= _userPageLimit;
+    } catch (e) {
+      _error = 'Failed to load more users: ${e.toString()}';
+    } finally {
+      _isLoadingMoreUsers = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMoreVideos() async {
+    if (_query.isEmpty || _isLoading || _isLoadingMoreVideos || !_hasMoreVideos) {
+      return;
+    }
+
+    _isLoadingMoreVideos = true;
+    notifyListeners();
+
+    try {
+      final nextPage = _videoPage + 1;
+      final result = await _searchRepository.searchVideos(
+        _query,
+        page: nextPage,
+        limit: _videoPageLimit,
+      );
+
+      final existingVideoIds = _videoResults.map((v) => v.videoId).toSet();
+      final uniqueNewVideos = result.videos
+          .where((video) => !existingVideoIds.contains(video.videoId))
+          .toList();
+
+      _videoPage = nextPage;
+      _videoResults = [..._videoResults, ...uniqueNewVideos];
+      _videoCount = _videoResults.length;
+      _hasMoreVideos = result.videos.length >= _videoPageLimit;
+    } catch (e) {
+      _error = 'Failed to load more videos: ${e.toString()}';
+    } finally {
+      _isLoadingMoreVideos = false;
+      notifyListeners();
+    }
+  }
+
+  void _resetPagination() {
+    _userPage = 1;
+    _videoPage = 1;
+    _hasMoreUsers = true;
+    _hasMoreVideos = true;
+    _isLoadingMoreUsers = false;
+    _isLoadingMoreVideos = false;
   }
 
   void clear() {

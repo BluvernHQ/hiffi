@@ -5,6 +5,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/data/auth_user.dart';
+import '../../features/playlist/presentation/viewmodels/playlist_view_model.dart';
+import '../../features/playlist/domain/models/playlist_models.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/user/domain/models/user_model.dart';
 import 'hiffi_image.dart';
@@ -77,7 +79,17 @@ class _AppSidebarState extends State<AppSidebar>
     final authRepository = context.watch<AuthRepository>();
     final user = authRepository.currentUser;
     final userViewModel = context.watch<UserViewModel>();
+    final playlistViewModel = context.watch<PlaylistViewModel>();
     final currentUserModel = userViewModel.currentUser;
+
+    if (playlistViewModel.curatedPlaylists.isEmpty &&
+        !playlistViewModel.isLoadingCurated) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          context.read<PlaylistViewModel>().loadCuratedPlaylists(silent: true);
+        }
+      });
+    }
 
     return Stack(
       children: [
@@ -287,6 +299,40 @@ class _AppSidebarState extends State<AppSidebar>
                                         }
                                       },
                                     ),
+                                  const SizedBox(height: 12),
+                                  _CuratedPlaylistsSection(
+                                    playlists: playlistViewModel.curatedPlaylists,
+                                    onTapPlaylist: (playlistId) async {
+                                      final vm = context.read<PlaylistViewModel>();
+                                      try {
+                                        final detail =
+                                            await vm.loadCuratedPlaylistDetail(
+                                          playlistId,
+                                          silent: true,
+                                        );
+                                        final firstVideoId =
+                                            detail?.items.isNotEmpty == true
+                                            ? detail!.items.first.videoId
+                                            : null;
+                                        if (firstVideoId == null ||
+                                            firstVideoId.isEmpty) {
+                                          return;
+                                        }
+                                        _toggleSidebar();
+                                        Future.delayed(
+                                          const Duration(milliseconds: 200),
+                                          () {
+                                            if (!mounted) return;
+                                            context.push(
+                                              '/watch/$firstVideoId?playlist=$playlistId&pindex=0&curated=1',
+                                            );
+                                          },
+                                        );
+                                      } catch (_) {
+                                        // Ignore and keep sidebar responsive.
+                                      }
+                                    },
+                                  ),
                                 ],
                               ),
                             ),
@@ -477,6 +523,87 @@ class _AppSidebarState extends State<AppSidebar>
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _CuratedPlaylistsSection extends StatelessWidget {
+  const _CuratedPlaylistsSection({
+    required this.playlists,
+    required this.onTapPlaylist,
+  });
+
+  final List<PlaylistSummary> playlists;
+  final void Function(String playlistId) onTapPlaylist;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (playlists.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Text(
+              'CURATED MIX',
+              style: theme.textTheme.labelMedium?.copyWith(
+                letterSpacing: 1.5,
+                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          ...playlists.take(4).map((playlist) {
+            return Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => onTapPlaylist(playlist.playlistId),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 16,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          playlist.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

@@ -15,11 +15,13 @@ class WatchScreen extends StatefulWidget {
     required this.videoId,
     this.playlistId,
     this.playlistIndex,
+    this.isCuratedPlaylist = false,
   });
 
   final String videoId;
   final String? playlistId;
   final int? playlistIndex;
+  final bool isCuratedPlaylist;
 
   @override
   State<WatchScreen> createState() => _WatchScreenState();
@@ -64,7 +66,9 @@ class _WatchScreenState extends State<WatchScreen> {
 
     try {
       final repo = context.read<PlaylistRepository>();
-      final detail = await repo.getPlaylist(incomingPlaylistId);
+      final detail = widget.isCuratedPlaylist
+          ? await repo.getCuratedPlaylist(incomingPlaylistId)
+          : await repo.getPlaylist(incomingPlaylistId);
       final ids = detail.items.map((e) => e.videoId).toList();
       final index = widget.playlistIndex ?? ids.indexOf(widget.videoId);
       if (ids.isEmpty) return;

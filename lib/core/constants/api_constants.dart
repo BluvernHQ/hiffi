@@ -56,15 +56,18 @@ class ApiConstants {
       '/social/users/unfollow/$username';
 
   // Search endpoints
-  static String searchUsers(String query) =>
-      '/search/users/${Uri.encodeComponent(query)}';
-  static String searchVideos(String query) =>
-      '/search/videos/${Uri.encodeComponent(query)}';
+  static String searchUsers(String query, {int page = 1, int limit = 50}) =>
+      '/search/users/${Uri.encodeComponent(query)}?page=$page&limit=$limit';
+  static String searchVideos(String query, {int page = 1, int limit = 100}) =>
+      '/search/videos/${Uri.encodeComponent(query)}?page=$page&limit=$limit';
 
   /// Watch-time / playback signals (Bearer auth).
   static const String signalsWatchhours = '/signals/watchhours';
 
   // Playlist endpoints
+  static const String playlistCuratedList = '/playlists/curated';
+  static String playlistCuratedDetail(String playlistId) =>
+      '/playlists/curated/$playlistId';
   static const String playlistListSelf = '/playlists/list/self';
   static const String playlistCreate = '/playlists/create';
   static String playlistDetail(String playlistId) => '/playlists/$playlistId';
