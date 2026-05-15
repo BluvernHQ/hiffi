@@ -25,6 +25,8 @@ import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../viewmodels/home_view_model.dart';
 
 class HomePage extends StatefulWidget {
@@ -34,7 +36,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   StreamSubscription? _authSubscription;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
@@ -45,6 +47,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadData(clearViewedUser: true);
       _setupAuthListener();
@@ -54,10 +57,22 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<PlaylistViewModel>().loadCuratedPlaylists(
+        silent: true,
+        force: true,
+      );
+      _curatedShuffleSeed = DateTime.now().millisecondsSinceEpoch;
+    }
   }
 
   void _onSearchChanged(String query) {
@@ -77,6 +92,14 @@ class _HomePageState extends State<HomePage> {
   void _onViewAllResults() {
     final query = _searchController.text.trim();
     if (query.isNotEmpty) {
+      unawaited(
+        context.read<FirstPartyAnalyticsService>().capture(
+          r'$click',
+          elementUiName: 'search-overlay-view-all-results-button',
+          screenName: 'search_overlay',
+          properties: {'query': query},
+        ),
+      );
       context.push('/search?q=${Uri.encodeComponent(query)}');
       _searchController.clear();
       _searchFocusNode.unfocus();
@@ -216,7 +239,10 @@ class _HomePageState extends State<HomePage> {
 
     // Load videos feed (works for both authenticated and unauthenticated users)
     context.read<VideoViewModel>().loadVideos(refresh: true);
-    context.read<PlaylistViewModel>().loadCuratedPlaylists(silent: true);
+    context.read<PlaylistViewModel>().loadCuratedPlaylists(
+      silent: true,
+      force: true,
+    );
     _curatedShuffleSeed = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -352,7 +378,16 @@ class _HomePageState extends State<HomePage> {
             if (!_isSearchActive)
               IconButton(
                 icon: const Icon(Icons.search),
-                onPressed: _activateSearch,
+                onPressed: () {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'navbar-open-search-button',
+                      screenName: 'home',
+                    ),
+                  );
+                  _activateSearch();
+                },
                 tooltip: 'Search',
               ),
             if (_isSearchActive)
@@ -373,6 +408,13 @@ class _HomePageState extends State<HomePage> {
             if (user != null)
               IconButton(
                 onPressed: () async {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'navbar-logout-confirm-button',
+                      screenName: 'home',
+                    ),
+                  );
                   final shouldSignOut = await showDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
@@ -400,6 +442,13 @@ class _HomePageState extends State<HomePage> {
             else if (!_isSearchActive)
               TextButton(
                 onPressed: () {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'navbar-login-button',
+                      screenName: 'home',
+                    ),
+                  );
                   context.push('/signup');
                 },
                 child: const Text('Sign Up'),
@@ -415,6 +464,16 @@ class _HomePageState extends State<HomePage> {
                       onRefresh: () async {
                         await context.read<UserViewModel>().loadCurrentUser();
                         await context.read<VideoViewModel>().refresh();
+                        await context.read<PlaylistViewModel>().loadCuratedPlaylists(
+                          silent: true,
+                          force: true,
+                        );
+                        if (mounted) {
+                          setState(() {
+                            _curatedShuffleSeed =
+                                DateTime.now().millisecondsSinceEpoch;
+                          });
+                        }
                       },
                       child: CustomScrollView(
                         slivers: [
@@ -429,6 +488,16 @@ class _HomePageState extends State<HomePage> {
                                   ? _CompactProfileSection(
                                       user: user,
                                       onProfileTap: () {
+                                        unawaited(
+                                          context
+                                              .read<FirstPartyAnalyticsService>()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'navbar-profile-link',
+                                                screenName: 'home',
+                                              ),
+                                        );
                                         context.push('/users/${user.username}');
                                       },
                                       onUploadTap: () {
@@ -1008,16 +1077,29 @@ class _GridVideoCard extends StatelessWidget {
 
   final VideoModel video;
 
-  String? get _thumbnailUrl {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
+          unawaited(
+            context.read<FirstPartyAnalyticsService>().capture(
+              r'$click',
+              elementUiName: 'opened-video-from-home',
+              screenName: 'home',
+              videoId: video.videoId,
+              videoTitle: video.videoTitle,
+              properties: {
+                'source': 'home',
+                'source_path': '/home',
+                'path': '/home',
+                // Some downstream UIs expect these inside properties.
+                'video_id': video.videoId,
+                'video_title': video.videoTitle,
+              },
+            ),
+          );
           context.push('/video/${video.videoId}', extra: video);
         },
         borderRadius: BorderRadius.circular(8),
@@ -1030,83 +1112,12 @@ class _GridVideoCard extends StatelessWidget {
               flex: 3,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: _thumbnailUrl == null || _thumbnailUrl!.isEmpty
-                    ? Container(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        child: Center(
-                          child: Icon(
-                            Icons.video_library,
-                            size: 48,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                          ),
-                        ),
-                      )
-                    : Stack(
+                child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.network(
-                            _thumbnailUrl!,
-                            headers: ImageUtils.getVideoThumbnailHeaders(),
+                          HiffiVideoThumbnail(
+                            thumbnailPath: video.videoThumbnail,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.broken_image,
-                                        size: 32,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Failed to load thumbnail',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    value:
-                                        loadingProgress.expectedTotalBytes !=
-                                            null
-                                        ? loadingProgress
-                                                  .cumulativeBytesLoaded /
-                                              loadingProgress
-                                                  .expectedTotalBytes!
-                                        : null,
-                                    strokeWidth: 2,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary,
-                                  ),
-                                ),
-                              );
-                            },
                           ),
                           // Processing indicator overlay (top right) – only when processing
                           if (video.status == 'temp')

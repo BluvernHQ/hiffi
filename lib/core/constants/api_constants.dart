@@ -1,6 +1,6 @@
 class ApiConstants {
   static const String baseUrl = 'https://api.dev.hiffi.com';
-  // static const String baseUrl = 'https://api.hiffi.com';
+//   static const String baseUrl = 'https://api.hiffi.com';
   // Auth endpoints
   static const String authRegister = '/auth/register';
   static const String authLogin = '/auth/login';

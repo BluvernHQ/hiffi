@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -6,11 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../auth/data/auth_repository.dart';
@@ -98,7 +100,21 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => context.push('/search'),
+                      onTap: () {
+                        unawaited(
+                          context.read<FirstPartyAnalyticsService>().capture(
+                            r'$click',
+                            elementUiName: 'navbar-open-search-button',
+                            screenName: 'playlists',
+                            properties: {
+                              'source': 'playlists',
+                              'source_path': '/playlists',
+                              'path': '/playlists',
+                            },
+                          ),
+                        );
+                        context.push('/search');
+                      },
                   borderRadius: BorderRadius.circular(22),
                   child: Container(
                     height: 40,
@@ -142,6 +158,18 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               child: IconButton(
                 tooltip: 'Your profile',
                 onPressed: () {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'navbar-profile-link',
+                      screenName: 'playlists',
+                      properties: {
+                        'source': 'playlists',
+                        'source_path': '/playlists',
+                        'path': '/playlists',
+                      },
+                    ),
+                  );
                   context.push('/users/${user.username}');
                 },
                 icon: HiffiAvatar(
@@ -156,6 +184,18 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           else
             TextButton(
               onPressed: () {
+                unawaited(
+                  context.read<FirstPartyAnalyticsService>().capture(
+                    r'$click',
+                    elementUiName: 'navbar-login-button',
+                    screenName: 'playlists',
+                    properties: {
+                      'source': 'playlists',
+                      'source_path': '/playlists',
+                      'path': '/playlists',
+                    },
+                  ),
+                );
                 context.push(
                   '/login?returnTo=${Uri.encodeComponent('/playlists')}',
                 );
@@ -314,7 +354,22 @@ class _PlaylistCard extends StatelessWidget {
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
-        onTap: onOpen,
+        onTap: () {
+          unawaited(
+            context.read<FirstPartyAnalyticsService>().capture(
+              r'$click',
+              elementUiName: 'opened-video-from-playlist',
+              screenName: 'playlists',
+              properties: {
+                'source': 'playlists',
+                'source_path': '/playlists',
+                'path': '/playlists',
+                'playlist_id': playlist.playlistId,
+              },
+            ),
+          );
+          onOpen();
+        },
         borderRadius: BorderRadius.circular(16),
         child: Container(
           decoration: BoxDecoration(
@@ -470,9 +525,10 @@ class _StackImageCube extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = ImageUtils.getVideoThumbnailUrl(
-      video?.videoThumbnail ?? fallbackThumbnail,
-    );
+    final thumbPath = video?.videoThumbnail ?? fallbackThumbnail;
+    final useCustomPlaceholder =
+        placeholder != null && (thumbPath == null || thumbPath.isEmpty);
+
     return SizedBox(
       width: _kStackCube,
       height: _kStackCube,
@@ -483,30 +539,18 @@ class _StackImageCube extends StatelessWidget {
               borderRadius: BorderRadius.circular(
                 math.max(0, _kStackCubeRadius - _kStackBorder),
               ),
-              child: url == null || url.isEmpty
-                  ? placeholder ??
-                      ColoredBox(
-                        color: const Color(0xFF2A2A2A),
-                        child: Icon(
-                          Icons.videocam_outlined,
-                          color: Colors.grey.shade600,
-                          size: 24,
-                        ),
-                      )
-                  : Image.network(
-                      url,
+              child: useCustomPlaceholder
+                  ? ColoredBox(
+                      color: const Color(0xFF2A2A2A),
+                      child: Center(child: placeholder),
+                    )
+                  : HiffiVideoThumbnail(
+                      thumbnailPath: thumbPath,
                       width: _kStackCube,
                       height: _kStackCube,
                       fit: BoxFit.cover,
-                      headers: ImageUtils.getVideoThumbnailHeaders(),
-                      errorBuilder: (_, __, ___) => ColoredBox(
-                        color: const Color(0xFF2A2A2A),
-                        child: Icon(
-                          Icons.broken_image_outlined,
-                          color: Colors.grey.shade600,
-                          size: 24,
-                        ),
-                      ),
+                      backgroundColor: const Color(0xFF2A2A2A),
+                      logoOpacity: 0.22,
                     ),
             ),
           ),

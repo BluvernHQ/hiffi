@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/presentation/viewmodels/auth_view_model.dart';
 import '../../../video/domain/models/liked_video_item.dart';
@@ -255,16 +257,28 @@ class _LikedGridVideoCard extends StatelessWidget {
 
   VideoModel get video => item.video;
 
-  String? get _thumbnailUrl {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
+          unawaited(
+            context.read<FirstPartyAnalyticsService>().capture(
+              r'$click',
+              elementUiName: 'opened-video-from-liked',
+              screenName: 'liked',
+              videoId: video.videoId,
+              videoTitle: video.videoTitle,
+              properties: {
+                'source': 'liked',
+                'source_path': '/liked',
+                'path': '/liked',
+                'video_id': video.videoId,
+                'video_title': video.videoTitle,
+              },
+            ),
+          );
           context.push('/video/${video.videoId}', extra: video);
         },
         borderRadius: BorderRadius.circular(8),
@@ -276,63 +290,12 @@ class _LikedGridVideoCard extends StatelessWidget {
               flex: 3,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: _thumbnailUrl == null || _thumbnailUrl!.isEmpty
-                    ? Container(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        child: Center(
-                          child: Icon(
-                            Icons.video_library,
-                            size: 48,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                          ),
-                        ),
-                      )
-                    : Stack(
+                child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.network(
-                            _thumbnailUrl!,
-                            headers: ImageUtils.getVideoThumbnailHeaders(),
+                          HiffiVideoThumbnail(
+                            thumbnailPath: video.videoThumbnail,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.broken_image,
-                                  size: 32,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                              );
-                            },
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    value:
-                                        loadingProgress.expectedTotalBytes !=
-                                            null
-                                        ? loadingProgress
-                                                  .cumulativeBytesLoaded /
-                                              loadingProgress
-                                                  .expectedTotalBytes!
-                                        : null,
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              );
-                            },
                           ),
                           if (video.status == 'temp')
                             Positioned(

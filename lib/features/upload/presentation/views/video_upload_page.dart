@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../../../user/data/user_repository.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../viewmodels/video_upload_view_model.dart';
 
 class VideoUploadPage extends StatefulWidget {
@@ -224,6 +226,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
             if (viewModel.isUploading || viewModel.isQueued)
               TextButton.icon(
                 onPressed: () async {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'upload-cancel-draft-button',
+                      screenName: 'upload',
+                    ),
+                  );
                   await viewModel.cancelUpload();
                   if (!mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -259,13 +268,48 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                         false, // Don't show custom badge when adding thumbnails
                     onThumbnailTap: viewModel.isUploading
                         ? null
-                        : () => viewModel.pickThumbnail(),
+                            : () {
+                                unawaited(
+                                  context
+                                      .read<FirstPartyAnalyticsService>()
+                                      .capture(
+                                        r'$click',
+                                        elementUiName:
+                                            'upload-custom-thumbnail-button',
+                                        screenName: 'upload',
+                                      ),
+                                );
+                                viewModel.pickThumbnail();
+                              },
                     onRemoveCustomThumbnail: viewModel.isUploading
                         ? null
-                        : () => viewModel.removeCustomThumbnail(),
+                            : () {
+                                unawaited(
+                                  context
+                                      .read<FirstPartyAnalyticsService>()
+                                      .capture(
+                                        r'$click',
+                                        elementUiName:
+                                            'upload-remove-thumbnail-button',
+                                        screenName: 'upload',
+                                      ),
+                                );
+                                viewModel.removeCustomThumbnail();
+                              },
                     onReplaceVideo: viewModel.isUploading || viewModel.isQueued
                         ? null
-                        : () => viewModel.pickVideo(),
+                            : () {
+                                unawaited(
+                                  context
+                                      .read<FirstPartyAnalyticsService>()
+                                      .capture(
+                                        r'$click',
+                                        elementUiName: 'upload-select-files-button',
+                                        screenName: 'upload',
+                                      ),
+                                );
+                                viewModel.pickVideo();
+                              },
                   ),
                   const SizedBox(height: 24),
                 ] else ...[
@@ -275,7 +319,18 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                     subtitle: 'Select your video file',
                     icon: Icons.videocam,
                     file: viewModel.selectedVideo,
-                    onTap: viewModel.isUploading ? null : viewModel.pickVideo,
+                    onTap: viewModel.isUploading
+                        ? null
+                        : () {
+                            unawaited(
+                              context.read<FirstPartyAnalyticsService>().capture(
+                                r'$click',
+                                elementUiName: 'upload-select-files-button',
+                                screenName: 'upload',
+                              ),
+                            );
+                            viewModel.pickVideo();
+                          },
                     isRequired: true,
                   ),
                   const SizedBox(height: 24),
@@ -577,6 +632,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                               child: OutlinedButton(
                                 onPressed: () {
                                   // Clear form and allow another upload
+                                  unawaited(
+                                    context.read<FirstPartyAnalyticsService>().capture(
+                                      r'$click',
+                                      elementUiName: 'upload-another-video-button',
+                                      screenName: 'upload_success',
+                                    ),
+                                  );
                                   viewModel.clear();
                                 },
                                 style: OutlinedButton.styleFrom(
@@ -600,6 +662,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                               child: FilledButton(
                                 onPressed: () {
                                   // Navigate to home
+                                  unawaited(
+                                    context.read<FirstPartyAnalyticsService>().capture(
+                                      r'$click',
+                                      elementUiName: 'upload-success-watch-video-button',
+                                      screenName: 'upload_success',
+                                    ),
+                                  );
                                   viewModel.clear();
                                   if (context.canPop()) {
                                     context.pop();
@@ -822,6 +891,13 @@ class _VideoUploadPageState extends State<VideoUploadPage> {
                 FilledButton(
                   onPressed: viewModel.canUpload && !viewModel.isUploading
                       ? () async {
+                          unawaited(
+                            context.read<FirstPartyAnalyticsService>().capture(
+                              r'$click',
+                              elementUiName: 'upload-submit-video-button',
+                              screenName: 'upload',
+                            ),
+                          );
                           final success = await viewModel.startUpload();
                           if (success && mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(

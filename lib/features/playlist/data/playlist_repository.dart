@@ -302,6 +302,17 @@ class PlaylistRepositoryImpl implements PlaylistRepository {
       requiresAuth: true,
     );
     _throwIfAuth(response.statusCode);
+    if (response.statusCode == 500) {
+      // Backend sometimes fails DELETE even though remove is supported.
+      // Best-effort fallback to a POST-style remove endpoint.
+      final fallback = await _apiClient.post(
+        '/playlists/$playlistId/items/remove',
+        {'video_id': videoId},
+        requiresAuth: true,
+      );
+      _throwIfAuth(fallback.statusCode);
+      if (fallback.statusCode == 200 || fallback.statusCode == 204) return;
+    }
     if (response.statusCode != 200 && response.statusCode != 204) {
       throw Exception('Failed to remove video (${response.statusCode})');
     }

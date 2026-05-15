@@ -508,6 +508,18 @@ class ApiUserRepository implements UserRepository {
       } else {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final error = json['error'] as String? ?? 'Failed to follow user';
+        final normalizedError = error.toLowerCase();
+        // Make follow idempotent for rapid taps / stale client state.
+        // Backend may respond 400 if the user is already following.
+        if (response.statusCode == 400 &&
+            (normalizedError.contains('already following') ||
+                normalizedError.contains('already followed'))) {
+          developer.log(
+            'Follow treated as success (already following): $error',
+            name: 'hiffi.user',
+          );
+          return;
+        }
         developer.log(error, name: 'hiffi.user');
         print('   ❌ $error');
         throw ApiException(error, response.statusCode);
@@ -556,6 +568,19 @@ class ApiUserRepository implements UserRepository {
       } else {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final error = json['error'] as String? ?? 'Failed to unfollow user';
+        final normalizedError = error.toLowerCase();
+        // Make unfollow idempotent for rapid taps / stale client state.
+        // Backend may respond 400 if the user isn't following.
+        if (response.statusCode == 400 &&
+            (normalizedError.contains('not following') ||
+                normalizedError.contains("aren't following") ||
+                normalizedError.contains('are not following'))) {
+          developer.log(
+            'Unfollow treated as success (not following): $error',
+            name: 'hiffi.user',
+          );
+          return;
+        }
         developer.log(error, name: 'hiffi.user');
         print('   ❌ $error');
         throw ApiException(error, response.statusCode);

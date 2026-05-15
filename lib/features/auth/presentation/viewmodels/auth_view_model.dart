@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/auth_failure.dart';
 import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../data/auth_repository.dart';
 import '../../../user/data/user_repository.dart';
 
@@ -14,13 +16,16 @@ class AuthViewModel extends ChangeNotifier {
     required AuthRepository authRepository,
     required UserRepository userRepository,
     NetworkConnectivityService? connectivityService,
+    FirstPartyAnalyticsService? firstPartyAnalytics,
   }) : _authRepository = authRepository,
        _userRepository = userRepository,
-       _connectivityService = connectivityService;
+       _connectivityService = connectivityService,
+       _firstPartyAnalytics = firstPartyAnalytics;
 
   final AuthRepository _authRepository;
   final UserRepository _userRepository;
   final NetworkConnectivityService? _connectivityService;
+  final FirstPartyAnalyticsService? _firstPartyAnalytics;
 
   final usernameController = TextEditingController();
   final signInPasswordController = TextEditingController();
@@ -51,6 +56,8 @@ class AuthViewModel extends ChangeNotifier {
   String? get resetId => _resetId;
   int get resendTimer => _resendTimer;
   bool get canResendOtp => _resendTimer == 0;
+
+  String _normalizeEmail(String value) => value.trim().toLowerCase();
 
   void _startResendTimer() {
     _resendTimer = 60;
@@ -127,6 +134,8 @@ class AuthViewModel extends ChangeNotifier {
         if (currentUser?.username != null) {
           _currentUsername = currentUser!.username;
         }
+        // Switch analytics to stable logged-in id.
+        await _firstPartyAnalytics?.identify(currentUser?.uid);
 
         // Notify listeners to trigger router refresh
         notifyListeners();
@@ -136,7 +145,7 @@ class AuthViewModel extends ChangeNotifier {
         _fetchUserProfileAsync();
       } else if (_mode == AuthMode.signUp) {
         final name = nameController.text.trim();
-        final email = emailController.text.trim();
+        final email = _normalizeEmail(emailController.text);
         final username = signUpUsernameController.text.trim();
         final password = signUpPasswordController.text;
 
@@ -186,6 +195,12 @@ class AuthViewModel extends ChangeNotifier {
         if (currentUser?.username != null) {
           _currentUsername = currentUser!.username;
         }
+        await _firstPartyAnalytics?.identify(currentUser?.uid);
+        // Conversion event mirroring web usage.
+        await _firstPartyAnalytics?.capture(
+          'conversion_signup_completed',
+          properties: {'source': 'signup', 'source_path': '/signup'},
+        );
 
         notifyListeners();
 
@@ -193,7 +208,7 @@ class AuthViewModel extends ChangeNotifier {
         _clearSignUpForm();
         _clearOtpForm();
       } else if (_mode == AuthMode.forgotPassword) {
-        final email = emailController.text.trim();
+        final email = _normalizeEmail(emailController.text);
 
         developer.log(
           'Requesting password reset for: $email',
@@ -246,7 +261,7 @@ class AuthViewModel extends ChangeNotifier {
       _setError(error.message);
     } catch (error) {
       _postSignUpRedirectPending = false;
-      _setError('Unexpected error: $error');
+      _setError(userFriendlyErrorMessage(error));
     } finally {
       _setLoading(false);
     }
@@ -261,7 +276,7 @@ class AuthViewModel extends ChangeNotifier {
     try {
       if (_mode == AuthMode.verifyOtp) {
         final name = nameController.text.trim();
-        final email = emailController.text.trim();
+        final email = _normalizeEmail(emailController.text);
         final username = signUpUsernameController.text.trim();
         final password = signUpPasswordController.text;
 
@@ -276,7 +291,7 @@ class AuthViewModel extends ChangeNotifier {
 
         _registrationId = regId;
       } else if (_mode == AuthMode.resetPassword) {
-        final email = emailController.text.trim();
+        final email = _normalizeEmail(emailController.text);
 
         developer.log('Resending password reset OTP', name: 'hiffi.auth');
 
@@ -289,7 +304,7 @@ class AuthViewModel extends ChangeNotifier {
     } on AuthFailure catch (error) {
       _setError(error.message);
     } catch (error) {
-      _setError('Unexpected error: $error');
+      _setError(userFriendlyErrorMessage(error));
     } finally {
       _setLoading(false);
     }

@@ -1,8 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../../../core/exceptions/api_exception.dart';
+import '../../../../core/utils/auth_error_utils.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../domain/models/playlist_models.dart';
 import '../viewmodels/playlist_view_model.dart';
 
@@ -21,10 +29,169 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
   List<PlaylistSummary> _filtered = [];
   bool _creatingMode = false;
   bool _initialLoading = true;
+  bool _savingSelections = false;
   final _title = TextEditingController();
   final _description = TextEditingController();
   final Set<String> _addedInSession = <String>{};
   final Set<String> _existingMembership = <String>{};
+  final Set<String> _pendingAdds = <String>{};
+  final Set<String> _pendingRemoves = <String>{};
+
+  bool _isSelected(String playlistId) {
+    final base = _addedInSession.contains(playlistId) ||
+        _existingMembership.contains(playlistId);
+    if (_pendingAdds.contains(playlistId)) return true;
+    if (_pendingRemoves.contains(playlistId)) return false;
+    return base;
+  }
+
+  void _toggleSelection(String playlistId) {
+    final currentlySelected = _isSelected(playlistId);
+    setState(() {
+      if (currentlySelected) {
+        // User wants to unselect -> schedule remove.
+        _pendingAdds.remove(playlistId);
+        _pendingRemoves.add(playlistId);
+      } else {
+        // User wants to select -> schedule add.
+        _pendingRemoves.remove(playlistId);
+        _pendingAdds.add(playlistId);
+      }
+    });
+  }
+
+  Future<bool> _isOnline() async {
+    final connectivity = context.read<NetworkConnectivityService>();
+    await connectivity.ensureInitialized();
+    return connectivity.isConnected;
+  }
+
+  Future<bool> _applySelections(PlaylistViewModel vm) async {
+    if (_savingSelections) return false;
+    if (_pendingAdds.isEmpty && _pendingRemoves.isEmpty) return true;
+
+    if (!await _isOnline()) {
+      _showPlaylistError(NoInternetException());
+      return false;
+    }
+
+    setState(() => _savingSelections = true);
+    try {
+      // Apply removes first, then adds.
+      for (final pid in _pendingRemoves.toList()) {
+        PlaylistDetail? detail = vm.detail(pid);
+        detail ??= await vm.loadPlaylistDetail(pid, silent: true);
+        final itemCount = detail?.items
+                .where((e) => e.videoId.isNotEmpty)
+                .length ??
+            0;
+        final isLastItem = itemCount == 1;
+        if (isLastItem) {
+          final playlistTitle = detail?.title ??
+              vm.playlists
+                  .where((p) => p.playlistId == pid)
+                  .map((p) => p.title)
+                  .firstOrNull ??
+              'this playlist';
+          final confirmDelete = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Delete playlist?'),
+              content: Text(
+                'This is the last video in "$playlistTitle". '
+                'Removing it will also delete the playlist.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          );
+          if (confirmDelete != true) {
+            // Keep it selected.
+            _pendingRemoves.remove(pid);
+            continue;
+          }
+          await vm.deletePlaylist(pid);
+          _filtered.removeWhere((p) => p.playlistId == pid);
+          continue;
+        }
+        await vm.removeItem(pid, widget.videoId);
+      }
+      for (final pid in _pendingAdds.toList()) {
+        await vm.addToPlaylist(pid, widget.videoId);
+        // Fire analytics for a confirmed add.
+        unawaited(
+          context.read<FirstPartyAnalyticsService>().capture(
+            r'$click',
+            elementUiName: 'added-to-playlist',
+            screenName: 'watch',
+            videoId: widget.videoId,
+            videoTitle: widget.videoTitle,
+            properties: {
+              'path': '/watch/${widget.videoId}',
+              'source_path': '/watch/${widget.videoId}',
+              'playlist_id': pid,
+              'source': 'watch',
+              'video_id': widget.videoId,
+              if (widget.videoTitle != null) 'video_title': widget.videoTitle,
+            },
+          ),
+        );
+      }
+
+      if (!mounted) return false;
+      setState(() {
+        _existingMembership
+          ..removeAll(_pendingRemoves)
+          ..addAll(_pendingAdds);
+        _pendingAdds.clear();
+        _pendingRemoves.clear();
+      });
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      _showPlaylistError(e);
+      return false;
+    } finally {
+      if (mounted) setState(() => _savingSelections = false);
+    }
+  }
+
+  void _showPlaylistError(Object error) {
+    final message = isAuthRequiredError(error)
+        ? authRequiredUserMessage()
+        : isOfflineError(error)
+        ? offlineUserMessage
+        : 'Could not update playlists. Please try again.';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          action: isAuthRequiredError(error)
+              ? SnackBarAction(
+                  label: 'Sign in',
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    final returnTo =
+                        '/watch/${widget.videoId}';
+                    context.push(
+                      '/login?returnTo=${Uri.encodeComponent(returnTo)}',
+                    );
+                  },
+                )
+              : null,
+        ),
+      );
+  }
 
   void _resetCreateForm() {
     _title.clear();
@@ -72,18 +239,26 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final analytics = context.read<AnalyticsService>();
-      await analytics.logEvent(
-        context,
-        'add_to_playlist_opened',
-        parameters: {'video_id': widget.videoId},
+      unawaited(
+        analytics
+            .logEvent(
+              context,
+              'add_to_playlist_opened',
+              parameters: {'video_id': widget.videoId},
+            )
+            .catchError((_) {}),
       );
       final vm = context.read<PlaylistViewModel>();
       try {
         await vm.loadPlaylists();
-        await _hydrateExistingMembership(vm);
+        if (!mounted) return;
+        final online = await _isOnline();
+        if (online) {
+          await _hydrateExistingMembership(vm);
+        }
         if (!mounted) return;
         setState(() {
-          _filtered = vm.playlists;
+          _filtered = vm.filterPlaylists(_query);
         });
       } finally {
         if (mounted) {
@@ -251,10 +426,48 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
           ),
         ),
         const SizedBox(height: 8),
+        if (vm.listError != null && !_initialLoading) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3F3),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF4C7C7)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    isOfflineErrorMessage(vm.listError)
+                        ? Icons.wifi_off_rounded
+                        : Icons.error_outline_rounded,
+                    color: const Color(0xFFED1C2F),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      vm.listError!,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF5A5A60),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _initialLoading || (vm.isLoadingList && _filtered.isEmpty)
+            child: _initialLoading
                 ? const _PlaylistPickerShimmer()
                 : _filtered.isEmpty
                 ? SingleChildScrollView(
@@ -304,14 +517,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
                       final item = _filtered[index];
-                      final adding = vm.isAddingToPlaylist(item.playlistId);
-                      final removing = vm.isRemovingItem(
-                        item.playlistId,
-                        widget.videoId,
-                      );
-                      final added =
-                          _addedInSession.contains(item.playlistId) ||
-                          _existingMembership.contains(item.playlistId);
+                      final added = _isSelected(item.playlistId);
                       return Material(
                         color: const Color(0xFFFAFAFB),
                         borderRadius: BorderRadius.circular(12),
@@ -327,7 +533,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                             '${item.itemCount ?? 0} video${(item.itemCount ?? 0) == 1 ? '' : 's'}',
                             style: const TextStyle(fontSize: 14),
                           ),
-                          trailing: adding || removing
+                          trailing: _savingSelections
                               ? const SizedBox(
                                   width: 18,
                                   height: 18,
@@ -357,68 +563,9 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                                     size: 18,
                                   ),
                                 ),
-                          onTap: adding || removing
+                          onTap: _savingSelections
                               ? null
-                              : () async {
-                                  if (added) {
-                                    setState(() {
-                                      _addedInSession.remove(item.playlistId);
-                                      _existingMembership.remove(item.playlistId);
-                                    });
-                                    try {
-                                      await vm.removeItem(
-                                        item.playlistId,
-                                        widget.videoId,
-                                      );
-                                      if (!mounted) return;
-                                      await context
-                                          .read<AnalyticsService>()
-                                          .logEvent(
-                                            context,
-                                            'playlist_item_removed',
-                                            parameters: {
-                                              'playlist_id': item.playlistId,
-                                              'video_id': widget.videoId,
-                                              'source': 'watch',
-                                            },
-                                          );
-                                    } catch (_) {
-                                      if (!mounted) return;
-                                      // Rollback optimistic removal on failure.
-                                      setState(() {
-                                        _existingMembership.add(item.playlistId);
-                                      });
-                                    }
-                                  } else {
-                                    setState(
-                                      () => _addedInSession.add(item.playlistId),
-                                    );
-                                    try {
-                                      await vm.addToPlaylist(
-                                        item.playlistId,
-                                        widget.videoId,
-                                      );
-                                      if (!mounted) return;
-                                      await context
-                                          .read<AnalyticsService>()
-                                          .logEvent(
-                                            context,
-                                            'playlist_item_added',
-                                            parameters: {
-                                              'playlist_id': item.playlistId,
-                                              'video_id': widget.videoId,
-                                              'source': 'watch',
-                                            },
-                                          );
-                                    } catch (_) {
-                                      if (!mounted) return;
-                                      // Rollback optimistic add on failure.
-                                      setState(() {
-                                        _addedInSession.remove(item.playlistId);
-                                      });
-                                    }
-                                  }
-                                },
+                              : () => _toggleSelection(item.playlistId),
                         ),
                       );
                     },
@@ -434,7 +581,13 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
             children: [
               const Spacer(),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: _savingSelections
+                    ? null
+                    : () async {
+                        final saved = await _applySelections(vm);
+                        if (!context.mounted || !saved) return;
+                        Navigator.of(context).pop();
+                      },
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFED1C2F),
                   foregroundColor: Colors.white,
@@ -443,7 +596,7 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                   ),
                 ),
                 child: Text(
-                  'Done',
+                  _savingSelections ? 'Saving...' : 'Done',
                   style: TextStyle(fontSize: compact ? 16 : 17),
                 ),
               ),
@@ -614,36 +767,43 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
                   child: FilledButton.icon(
                     onPressed: canCreate
                         ? () async {
-                            final detail = await vm.createPlaylist(
-                              title: _title.text.trim(),
-                              description: _description.text.trim(),
-                              videoId: widget.videoId,
-                            );
-                            if (!mounted) return;
                             try {
-                              await context.read<AnalyticsService>().logEvent(
-                                context,
-                                'playlist_created',
-                                parameters: {
-                                  'playlist_id': detail.playlistId,
-                                  'video_id': widget.videoId,
-                                  'source': 'watch',
-                                },
+                              final detail = await vm.createPlaylist(
+                                title: _title.text.trim(),
+                                description: _description.text.trim(),
+                                videoId: widget.videoId,
                               );
-                            } catch (_) {
-                              // Analytics must not interrupt the add-to-playlist flow.
-                            }
+                              if (!mounted) return;
+                              try {
+                                await context
+                                    .read<AnalyticsService>()
+                                    .logEvent(
+                                  context,
+                                  'playlist_created',
+                                  parameters: {
+                                    'playlist_id': detail.playlistId,
+                                    'video_id': widget.videoId,
+                                    'source': 'watch',
+                                  },
+                                );
+                              } catch (_) {
+                                // Analytics must not interrupt the flow.
+                              }
 
-                            if (!mounted) return;
-                            await vm.loadPlaylists();
-                            if (!mounted) return;
-                            final refreshed = vm.filterPlaylists(_query);
-                            setState(() {
-                              _addedInSession.add(detail.playlistId);
-                              _filtered = refreshed;
-                              _creatingMode = false;
-                            });
-                            _resetCreateForm();
+                              if (!mounted) return;
+                              await vm.loadPlaylists();
+                              if (!mounted) return;
+                              final refreshed = vm.filterPlaylists(_query);
+                              setState(() {
+                                _addedInSession.add(detail.playlistId);
+                                _filtered = refreshed;
+                                _creatingMode = false;
+                              });
+                              _resetCreateForm();
+                            } catch (e) {
+                              if (!mounted) return;
+                              _showPlaylistError(e);
+                            }
                           }
                         : null,
                     style: FilledButton.styleFrom(

@@ -24,6 +24,9 @@ import '../services/api_client.dart';
 import '../services/network_connectivity_service.dart';
 import '../services/notification_service.dart';
 import '../services/analytics_service.dart';
+import '../analytics/analytics_config.dart';
+import '../analytics/first_party_analytics_service.dart';
+import '../constants/api_constants.dart';
 
 List<SingleChildWidget> buildAppProviders() {
   return [
@@ -67,6 +70,16 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) =>
           AnalyticsService(appRouter: context.read<AppRouter>()),
     ),
+    Provider<FirstPartyAnalyticsService>(
+      create: (_) => FirstPartyAnalyticsService(
+        config: const AnalyticsConfig(
+          baseUrl: ApiConstants.baseUrl,
+          flushIntervalSeconds: 5,
+          maxBatchSize: 25,
+        ),
+      )..init(),
+      dispose: (_, svc) => svc.dispose(),
+    ),
     Provider<WebRtcService>(create: (_) => WebRtcService()),
     Provider<SpacesService>(
       create: (_) => SpacesService(
@@ -81,6 +94,7 @@ List<SingleChildWidget> buildAppProviders() {
         authRepository: context.read<AuthRepository>(),
         userRepository: context.read<UserRepository>(),
         connectivityService: context.read<NetworkConnectivityService>(),
+        firstPartyAnalytics: context.read<FirstPartyAnalyticsService>(),
       ),
     ),
     ChangeNotifierProvider<UserViewModel>(
@@ -93,6 +107,7 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) => HomeViewModel(
         authRepository: context.read<AuthRepository>(),
         authViewModel: context.read<AuthViewModel>(),
+        firstPartyAnalytics: context.read<FirstPartyAnalyticsService>(),
       ),
     ),
     ChangeNotifierProvider<UploadViewModel>(
@@ -127,17 +142,21 @@ List<SingleChildWidget> buildAppProviders() {
       ),
     ),
     ChangeNotifierProvider<FollowingViewModel>(
-      create: (context) =>
-          FollowingViewModel(videoRepository: context.read<VideoRepository>()),
+      create: (context) => FollowingViewModel(
+        videoRepository: context.read<VideoRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
+      ),
     ),
     ChangeNotifierProvider<LikedVideosViewModel>(
       create: (context) => LikedVideosViewModel(
         videoRepository: context.read<VideoRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       ),
     ),
     ChangeNotifierProvider<WatchHistoryViewModel>(
       create: (context) => WatchHistoryViewModel(
         videoRepository: context.read<VideoRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       ),
     ),
   ];

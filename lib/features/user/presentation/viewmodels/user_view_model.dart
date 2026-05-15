@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../data/user_repository.dart';
 import '../../domain/models/user_model.dart';
 
@@ -162,7 +163,7 @@ class UserViewModel extends ChangeNotifier {
           'Skipping loadCurrentUser: No internet connection',
           name: 'hiffi.user',
         );
-        _setError('No internet connection. Please check your settings.');
+        _setError(offlineUserMessage);
         return;
       }
     }
@@ -183,9 +184,7 @@ class UserViewModel extends ChangeNotifier {
         name: 'hiffi.user',
         error: error,
       );
-      if (error is NoInternetException) {
-        _setError('No internet connection');
-      } else if (error is ApiException) {
+      if (error is ApiException) {
         _setError(error.message);
         // If 401 Unauthorized, clear the current user and set flag to prevent infinite retry loops
         if (error.statusCode == 401) {
@@ -199,7 +198,12 @@ class UserViewModel extends ChangeNotifier {
           _hasUnauthorizedError = false;
         }
       } else {
-        _setError('Failed to load current user: $error');
+        _setError(
+          userFriendlyErrorMessage(
+            error,
+            fallback: 'Could not load your profile. Please try again.',
+          ),
+        );
         _hasUnauthorizedError = false;
       }
     } finally {
@@ -219,7 +223,7 @@ class UserViewModel extends ChangeNotifier {
           'Skipping loadUser: No internet connection',
           name: 'hiffi.user',
         );
-        _errorMessage = 'No internet connection';
+        _errorMessage = offlineUserMessage;
         notifyListeners();
         return;
       }
@@ -252,15 +256,18 @@ class UserViewModel extends ChangeNotifier {
         name: 'hiffi.user',
         error: error,
       );
-      // Clear viewed user on error
-      _viewedUser = null;
+      // Keep last loaded profile when offline so the page can still show layout.
+      if (!isOfflineError(error)) {
+        _viewedUser = null;
+      }
       _isLoading = false;
-      if (error is NoInternetException) {
-        _errorMessage = 'No internet connection';
-      } else if (error is ApiException) {
+      if (error is ApiException) {
         _errorMessage = error.message;
       } else {
-        _errorMessage = 'Failed to load user: $error';
+        _errorMessage = userFriendlyErrorMessage(
+          error,
+          fallback: 'Could not load this profile. Please try again.',
+        );
       }
       notifyListeners(); // Notify listeners of error
     }

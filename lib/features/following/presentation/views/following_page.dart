@@ -3,7 +3,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
@@ -11,6 +10,7 @@ import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/following_view_model.dart';
 
@@ -303,10 +303,6 @@ class _GridVideoCard extends StatelessWidget {
 
   final VideoModel video;
 
-  String? get _thumbnailUrl {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -325,83 +321,12 @@ class _GridVideoCard extends StatelessWidget {
               flex: 3,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: _thumbnailUrl == null || _thumbnailUrl!.isEmpty
-                    ? Container(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        child: Center(
-                          child: Icon(
-                            Icons.video_library,
-                            size: 48,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                          ),
-                        ),
-                      )
-                    : Stack(
+                child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.network(
-                            _thumbnailUrl!,
-                            headers: ImageUtils.getVideoThumbnailHeaders(),
+                          HiffiVideoThumbnail(
+                            thumbnailPath: video.videoThumbnail,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.broken_image,
-                                        size: 32,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Failed to load thumbnail',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    value:
-                                        loadingProgress.expectedTotalBytes !=
-                                            null
-                                        ? loadingProgress
-                                                  .cumulativeBytesLoaded /
-                                              loadingProgress
-                                                  .expectedTotalBytes!
-                                        : null,
-                                    strokeWidth: 2,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary,
-                                  ),
-                                ),
-                              );
-                            },
                           ),
                           // Processing indicator overlay (top right) – only when processing
                           if (video.status == 'temp')

@@ -16,6 +16,8 @@ import 'core/services/hls_proxy_service.dart';
 import 'core/services/pip_service.dart';
 import 'core/workers/video_upload_worker.dart';
 import 'core/utils/http_overrides.dart';
+import 'core/utils/auth_error_utils.dart';
+import 'core/utils/thumbnail_error_utils.dart';
 import 'firebase_options.dart';
 import 'package:clarity_flutter/clarity_flutter.dart';
 
@@ -51,6 +53,12 @@ Future<void> main() async {
       }
       return;
     }
+    if (isExpectedThumbnailLoadError(errorDetails.exception)) {
+      return;
+    }
+    if (isAuthRequiredError(errorDetails.exception)) {
+      return;
+    }
     FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
     originalOnError?.call(errorDetails);
   };
@@ -60,6 +68,12 @@ Future<void> main() async {
       if (kDebugMode) {
         debugPrint('Skipping expected Umami offline exception.');
       }
+      return true;
+    }
+    if (isExpectedThumbnailLoadError(error)) {
+      return true;
+    }
+    if (isAuthRequiredError(error)) {
       return true;
     }
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);

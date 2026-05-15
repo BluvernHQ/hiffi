@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
 
@@ -34,14 +35,11 @@ class VideoViewModel extends ChangeNotifier {
   Future<void> loadVideos({bool refresh = false, String? searchQuery}) async {
     if (_isLoading) return;
 
-    final connectivity = _connectivityService;
-    if (connectivity != null) {
-      await connectivity.ensureInitialized();
-      if (!connectivity.isConnected) {
-        _errorMessage = 'No internet connection';
-        notifyListeners();
-        return;
-      }
+    if (await isDeviceOffline(_connectivityService)) {
+      _errorMessage = offlineUserMessage;
+      _hasMore = false;
+      notifyListeners();
+      return;
     }
 
     // If search query changed, reset pagination
@@ -88,7 +86,10 @@ class VideoViewModel extends ChangeNotifier {
 
       _errorMessage = null;
     } catch (error) {
-      _errorMessage = error.toString();
+      _errorMessage = userFriendlyErrorMessage(error);
+      if (isOfflineError(error)) {
+        _hasMore = false;
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

@@ -4,12 +4,18 @@ import '../../../video/domain/models/liked_video_item.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/domain/repositories/video_repository.dart';
 import '../../../../core/exceptions/api_exception.dart';
+import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 
 class LikedVideosViewModel extends ChangeNotifier {
-  LikedVideosViewModel({required VideoRepository videoRepository})
-    : _videoRepository = videoRepository;
+  LikedVideosViewModel({
+    required VideoRepository videoRepository,
+    NetworkConnectivityService? connectivityService,
+  }) : _videoRepository = videoRepository,
+       _connectivityService = connectivityService;
 
   final VideoRepository _videoRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   List<LikedVideoItem> _items = [];
   bool _isLoading = false;
@@ -27,6 +33,13 @@ class LikedVideosViewModel extends ChangeNotifier {
 
   Future<void> loadVideos({bool refresh = false}) async {
     if (_isLoading) return;
+
+    if (await isDeviceOffline(_connectivityService)) {
+      _errorMessage = offlineUserMessage;
+      _hasMore = false;
+      notifyListeners();
+      return;
+    }
 
     if (refresh) {
       _offset = 0;
@@ -80,7 +93,10 @@ class LikedVideosViewModel extends ChangeNotifier {
         _errorMessage = e.toString();
       }
     } catch (error) {
-      _errorMessage = error.toString();
+      _errorMessage = userFriendlyErrorMessage(error);
+      if (isOfflineError(error)) {
+        _hasMore = false;
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

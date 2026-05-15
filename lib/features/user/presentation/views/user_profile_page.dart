@@ -16,8 +16,11 @@ import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/utils/file_validation_utils.dart';
+import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
+import '../../../../core/utils/network_error_utils.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key, required this.username});
@@ -128,11 +131,60 @@ class _UserProfilePageState extends State<UserProfilePage> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _videosError = e.toString();
+          _videosError = isOfflineError(e)
+              ? offlineUserMessage
+              : 'Could not load videos. Please try again.';
           _isLoadingVideos = false;
         });
       }
     }
+  }
+
+  UserModel _profileShellUser() {
+    final username = widget.username.trim();
+    final displayName = username.isEmpty
+        ? 'User'
+        : username[0].toUpperCase() + username.substring(1);
+    return UserModel(username: username, name: displayName);
+  }
+
+  Widget _buildProfileOfflineBanner(
+    BuildContext context, {
+    required VoidCallback onRetry,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3F3),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFF4C7C7)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.wifi_off_rounded,
+            color: Color(0xFFED1C2F),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              offlineUserMessage,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF5A5A60),
+                height: 1.35,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -147,6 +199,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final viewModel = context.watch<UserViewModel>();
     // Use viewedUser for the profile being displayed, not currentUser
     final user = viewModel.viewedUser;
+    final isOffline = isOfflineErrorMessage(viewModel.errorMessage);
+    final displayUser = user ?? _profileShellUser();
     final isOwnProfile = _currentLoggedInUser?.username == widget.username;
     final authRepository = context.read<AuthRepository>();
     final isAuthenticated = authRepository.currentUser != null;
@@ -237,7 +291,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
           ),
           iconTheme: const IconThemeData(color: Colors.white),
           actions: [
-            if (isOwnProfile && user != null)
+            if (isOwnProfile && user != null && !isOffline)
               IconButton(
                 icon: const Icon(Icons.edit, color: Colors.white),
                 onPressed: () =>
@@ -257,156 +311,46 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 ),
               )
             : ((!_hasAttemptedLoad && user == null) ||
-                  (user == null && viewModel.isLoading))
+                  (user == null && viewModel.isLoading && !isOffline))
             ? const ProfileShimmer()
-            : viewModel.errorMessage != null
+            : user == null && viewModel.errorMessage != null && !isOffline
             ? Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(24.0),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(24),
-                        decoration: BoxDecoration(
-                          color:
-                              (viewModel.errorMessage!.contains(
-                                    'SocketException',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Failed host lookup',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Network is unreachable',
-                                  ))
-                              ? Theme.of(
-                                  context,
-                                ).colorScheme.primaryContainer.withOpacity(0.3)
-                              : Theme.of(
-                                  context,
-                                ).colorScheme.errorContainer.withOpacity(0.3),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          (viewModel.errorMessage!.contains(
-                                    'SocketException',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Failed host lookup',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Network is unreachable',
-                                  ))
-                              ? Icons.wifi_off_rounded
-                              : Icons.error_outline_rounded,
-                          size: 64,
-                          color:
-                              (viewModel.errorMessage!.contains(
-                                    'SocketException',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Failed host lookup',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Network is unreachable',
-                                  ))
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.error,
-                        ),
+                      Icon(
+                        viewModel.errorMessage!.toLowerCase().contains('not found')
+                            ? Icons.person_off
+                            : Icons.error_outline_rounded,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.error,
                       ),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 16),
                       Text(
-                        (viewModel.errorMessage!.contains('SocketException') ||
-                                viewModel.errorMessage!.contains(
-                                  'Failed host lookup',
-                                ) ||
-                                viewModel.errorMessage!.contains(
-                                  'Network is unreachable',
-                                ))
-                            ? 'No Internet Connection'
-                            : 'Oops! Something went wrong',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: -0.5,
-                            ),
+                        viewModel.errorMessage!.toLowerCase().contains('not found')
+                            ? 'User not found'
+                            : 'Something went wrong',
+                        style: Theme.of(context).textTheme.titleMedium,
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          (viewModel.errorMessage!.contains(
-                                    'SocketException',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Failed host lookup',
-                                  ) ||
-                                  viewModel.errorMessage!.contains(
-                                    'Network is unreachable',
-                                  ))
-                              ? 'Please check your connection and try again to view this profile.'
-                              : 'We encountered an error while loading the profile. Please try again later.',
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                                height: 1.5,
-                              ),
-                          textAlign: TextAlign.center,
+                      const SizedBox(height: 8),
+                      Text(
+                        viewModel.errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 24),
                       ElevatedButton.icon(
-                        onPressed: () {
-                          viewModel.loadUser(widget.username);
-                        },
+                        onPressed: () => viewModel.loadUser(widget.username),
                         icon: const Icon(Icons.refresh_rounded),
-                        label: const Text(
-                          'Try Again',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.primary,
-                          foregroundColor: Theme.of(
-                            context,
-                          ).colorScheme.onPrimary,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 40,
-                            vertical: 16,
-                          ),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
+                        label: const Text('Try Again'),
                       ),
                     ],
                   ),
-                ),
-              )
-            : user == null
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.person_off,
-                      size: 64,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'User not found',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
                 ),
               )
             : RefreshIndicator(
@@ -422,38 +366,47 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
-                    // Banner with Profile Header Stacked on Top
                     SliverToBoxAdapter(
                       child: _buildBannerWithProfileHeader(
                         context,
-                        user,
-                        isOwnProfile,
+                        displayUser,
+                        isOwnProfile && user != null,
                         viewModel,
                       ),
                     ),
-                    // Profile Content
                     SliverPadding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
                           const SizedBox(height: 32),
-                          // About Card with Stats
+                          if (isOffline)
+                            _buildProfileOfflineBanner(
+                              context,
+                              onRetry: () => viewModel.loadUser(widget.username),
+                            ),
+                          if (isOffline) const SizedBox(height: 16),
                           _buildAboutCard(
                             context,
-                            user,
-                            isOwnProfile,
+                            displayUser,
+                            isOwnProfile && user != null,
                             viewModel,
                           ),
                           const SizedBox(height: 24),
-                          // Follow/Unfollow button for other users
-                          if (!isOwnProfile && _currentLoggedInUser != null)
+                          if (!isOwnProfile &&
+                              _currentLoggedInUser != null &&
+                              user != null)
                             _buildFollowButton(context, viewModel, user),
-                          const SizedBox(height: 16),
-                          // Videos Section - Show if user is a creator or has videos
-                          if (user.role == 'creator' || user.totalVideos > 0)
-                            _buildUserVideosSection(context, isOwnProfile),
-                          // Creator Studio Promo - Show for non-creators (own profile only)
+                          if (!isOwnProfile &&
+                              _currentLoggedInUser != null &&
+                              user != null)
+                            const SizedBox(height: 16),
+                          if (user != null &&
+                              (user.role == 'creator' || user.totalVideos > 0))
+                            _buildUserVideosSection(context, isOwnProfile)
+                          else if (isOffline)
+                            _buildVideosOfflinePlaceholder(context),
                           if (isOwnProfile &&
+                              user != null &&
                               user.role != 'creator' &&
                               user.totalVideos == 0)
                             _buildCreatorStudioPromo(context),
@@ -667,6 +620,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       await viewModel.followUser(widget.username);
                     }
                   } catch (e) {
+                    // Rapid taps can surface idempotent backend responses; avoid
+                    // showing a scary error for "already following"/"not following".
+                    if (e is ApiException && e.statusCode == 400) {
+                      final msg = e.message.toLowerCase();
+                      if (msg.contains('not following') ||
+                          msg.contains("aren't following") ||
+                          msg.contains('are not following') ||
+                          msg.contains('already following') ||
+                          msg.contains('already followed')) {
+                        return;
+                      }
+                    }
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -752,6 +717,62 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ],
+            ),
+
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 12),
+            Text(
+              'Referral URL',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Builder(
+              builder: (context) {
+                final referralUrl =
+                    'https://hiffi.com/referrar/${user.username.toLowerCase()}';
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.link,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SelectableText(
+                        referralUrl,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Copy',
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: referralUrl),
+                        );
+                        if (!context.mounted) return;
+                        final messenger = ScaffoldMessenger.maybeOf(context);
+                        messenger?.hideCurrentSnackBar();
+                        messenger?.showSnackBar(
+                          const SnackBar(
+                            content: Text('Referral URL copied'),
+                            behavior: SnackBarBehavior.floating,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.copy_rounded, size: 18),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
           // Stats Section - Only show if user is a creator
@@ -1057,6 +1078,46 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
+  Widget _buildVideosOfflinePlaceholder(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Videos',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.wifi_off_rounded,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Connect to the internet to load videos.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildUserVideosSection(BuildContext context, bool isOwnProfile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1071,31 +1132,55 @@ class _UserProfilePageState extends State<UserProfilePage> {
         if (_isLoadingVideos)
           _buildVideoListShimmer(context)
         else if (_videosError != null)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 48,
-                    color: Theme.of(context).colorScheme.error,
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: isOfflineErrorMessage(_videosError)
+                ? Row(
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 20,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _videosError!,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _loadUserVideos(widget.username),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 48,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _videosError!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      TextButton(
+                        onPressed: () => _loadUserVideos(widget.username),
+                        child: const Text('Retry'),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Failed to load videos',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => _loadUserVideos(widget.username),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            ),
           )
         else if (_userVideos.isEmpty && _hasAttemptedLoadVideos)
           Center(
@@ -2447,10 +2532,6 @@ class _VideoGridItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onDelete;
 
-  String? get _thumbnailUrl {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
   String _formatCount(int count) {
     if (count >= 1000000) {
       return '${(count / 1000000).toStringAsFixed(1)}M';
@@ -2472,75 +2553,10 @@ class _VideoGridItem extends StatelessWidget {
             color: Colors.transparent,
             child: InkWell(
               onTap: onTap,
-              child: _thumbnailUrl == null || _thumbnailUrl!.isEmpty
-                  ? Container(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      child: Center(
-                        child: Icon(
-                          Icons.video_library,
-                          size: 48,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                        ),
-                      ),
-                    )
-                  : Image.network(
-                      _thumbnailUrl!,
-                      headers: ImageUtils.getVideoThumbnailHeaders(),
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest,
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.broken_image,
-                                  size: 32,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Failed to load thumbnail',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest,
-                          child: Center(
-                            child: CircularProgressIndicator(
-                              value: loadingProgress.expectedTotalBytes != null
-                                  ? loadingProgress.cumulativeBytesLoaded /
-                                        loadingProgress.expectedTotalBytes!
-                                  : null,
-                              strokeWidth: 2,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+              child: HiffiVideoThumbnail(
+                thumbnailPath: video.videoThumbnail,
+                fit: BoxFit.cover,
+              ),
             ),
           ), // 1.5 Processing Overlay
           if (video.status == 'temp')

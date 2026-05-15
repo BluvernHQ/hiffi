@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/search_view_model.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 
 /// Search overlay widget that shows real-time suggestions (Twitch-style)
 class SearchOverlay extends StatefulWidget {
@@ -224,6 +225,21 @@ class _SearchOverlayState extends State<SearchOverlay> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              const Spacer(),
+              TextButton(
+                onPressed: () {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: 'search-overlay-view-all-results-button',
+                      screenName: 'search_overlay',
+                      properties: {'query': widget.query},
+                    ),
+                  );
+                  widget.onViewAllResults();
+                },
+                child: const Text('View all'),
+              ),
             ],
           ),
         ),
@@ -240,8 +256,26 @@ class _SearchOverlayState extends State<SearchOverlay> {
                 searchQuery: widget.query,
                 onTap: () {
                   if (item.isVideo) {
+                    unawaited(
+                      context.read<FirstPartyAnalyticsService>().capture(
+                        r'$click',
+                        elementUiName: 'search-overlay-video-result-link',
+                        screenName: 'search_overlay',
+                        videoId: item.video!.videoId,
+                        videoTitle: item.video!.videoTitle,
+                        properties: {'query': widget.query},
+                      ),
+                    );
                     widget.onResultTap(item.video!);
                   } else {
+                    unawaited(
+                      context.read<FirstPartyAnalyticsService>().capture(
+                        r'$click',
+                        elementUiName: 'search-overlay-user-result-link',
+                        screenName: 'search_overlay',
+                        properties: {'query': widget.query},
+                      ),
+                    );
                     context.push('/users/${item.user!.username}');
                   }
                 },
@@ -320,36 +354,13 @@ class _SearchSuggestionTile extends StatelessWidget {
   }
 
   Widget _buildVideoThumbnail(BuildContext context, VideoModel video) {
-    final thumbnailUrl = ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Container(
+      child: HiffiVideoThumbnail(
+        thumbnailPath: video.videoThumbnail,
         width: 60,
         height: 40,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: thumbnailUrl != null
-            ? Image.network(
-                thumbnailUrl,
-                headers: ImageUtils.getVideoThumbnailHeaders(),
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Icon(
-                    Icons.video_library,
-                    size: 24,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                  );
-                },
-              )
-            : Icon(
-                Icons.video_library,
-                size: 24,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-              ),
+        fit: BoxFit.cover,
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +10,7 @@ import '../../features/playlist/presentation/viewmodels/playlist_view_model.dart
 import '../../features/playlist/domain/models/playlist_models.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/user/domain/models/user_model.dart';
+import '../analytics/first_party_analytics_service.dart';
 import 'hiffi_image.dart';
 import 'hiffi_logo.dart';
 
@@ -61,14 +63,21 @@ class _AppSidebarState extends State<AppSidebar>
   }
 
   void toggleSidebar() {
+    final opening = !_isExpanded;
     setState(() {
-      _isExpanded = !_isExpanded;
+      _isExpanded = opening;
       if (_isExpanded) {
         _animationController.forward();
       } else {
         _animationController.reverse();
       }
     });
+    if (opening) {
+      context.read<PlaylistViewModel>().loadCuratedPlaylists(
+        silent: true,
+        force: true,
+      );
+    }
   }
 
   void _toggleSidebar() => toggleSidebar();
@@ -82,11 +91,16 @@ class _AppSidebarState extends State<AppSidebar>
     final playlistViewModel = context.watch<PlaylistViewModel>();
     final currentUserModel = userViewModel.currentUser;
 
-    if (playlistViewModel.curatedPlaylists.isEmpty &&
+    // Only auto-fetch once per app lifetime (or until TTL refresh is requested elsewhere).
+    // Curated can legitimately be empty; don't treat empty as "not loaded".
+    if (playlistViewModel.curatedLastFetchedAt == null &&
         !playlistViewModel.isLoadingCurated) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          context.read<PlaylistViewModel>().loadCuratedPlaylists(silent: true);
+          context.read<PlaylistViewModel>().loadCuratedPlaylists(
+            silent: true,
+            force: false,
+          );
         }
       });
     }
@@ -201,6 +215,16 @@ class _AppSidebarState extends State<AppSidebar>
                                     label: 'Home',
                                     isActive: widget.currentRoute == '/home',
                                     onTap: () {
+                                      unawaited(
+                                        context
+                                            .read<FirstPartyAnalyticsService>()
+                                            .capture(
+                                              r'$click',
+                                              elementUiName:
+                                                  'sidebar-home-button',
+                                              screenName: 'sidebar',
+                                            ),
+                                      );
                                       _toggleSidebar();
                                       if (widget.currentRoute != '/home') {
                                         Future.delayed(
@@ -221,6 +245,18 @@ class _AppSidebarState extends State<AppSidebar>
                                           widget.currentRoute ==
                                           '/watch-history',
                                       onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-history-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=
                                             '/watch-history') {
@@ -242,6 +278,18 @@ class _AppSidebarState extends State<AppSidebar>
                                       label: 'Liked videos',
                                       isActive: widget.currentRoute == '/liked',
                                       onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-liked-videos-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
                                         _toggleSidebar();
                                         if (widget.currentRoute != '/liked') {
                                           Future.delayed(
@@ -263,6 +311,18 @@ class _AppSidebarState extends State<AppSidebar>
                                       isActive:
                                           widget.currentRoute == '/playlists',
                                       onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-playlists-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=
                                             '/playlists') {
@@ -285,6 +345,18 @@ class _AppSidebarState extends State<AppSidebar>
                                       isActive:
                                           widget.currentRoute == '/following',
                                       onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-following-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=
                                             '/following') {

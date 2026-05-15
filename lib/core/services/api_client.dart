@@ -16,16 +16,22 @@ class ApiClient {
 
   final NetworkConnectivityService? _connectivityService;
   final http.Client _client = http.Client();
+  static DateTime? _lastOfflineLogAt;
 
   Future<void> _checkConnectivity() async {
     if (_connectivityService != null) {
       final isConnected = _connectivityService.checkConnectivitySync();
       if (!isConnected) {
-        developer.log(
-          'No internet connection - skipping API call',
-          name: 'hiffi.api',
-        );
-        print('   🚫 No internet connection - skipping API call');
+        final now = DateTime.now();
+        final last = _lastOfflineLogAt;
+        if (last == null || now.difference(last) > const Duration(seconds: 3)) {
+          _lastOfflineLogAt = now;
+          developer.log(
+            'No internet connection - skipping API call',
+            name: 'hiffi.api',
+          );
+          print('   🚫 No internet connection - skipping API call');
+        }
         throw NoInternetException();
       }
     }

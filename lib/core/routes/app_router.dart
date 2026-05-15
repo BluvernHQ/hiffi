@@ -11,6 +11,7 @@ import 'package:flutter_estatisticas/umami_service.dart';
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/presentation/viewmodels/auth_view_model.dart';
 import '../../features/auth/presentation/views/auth_page.dart';
+import '../../features/auth/presentation/views/referral_entry_page.dart';
 import '../../features/home/presentation/views/home_page.dart';
 import '../../features/following/presentation/views/following_page.dart';
 import '../../features/liked/presentation/views/liked_videos_page.dart';
@@ -83,6 +84,14 @@ class AppRouter {
               initialMode: AuthMode.signUp,
               returnRoute: returnRoute,
             );
+          },
+        ),
+        GoRoute(
+          path: '/r/:username',
+          name: 'referral_entry',
+          builder: (context, state) {
+            final username = state.pathParameters['username'] ?? '';
+            return ReferralEntryPage(username: username);
           },
         ),
         GoRoute(
@@ -233,6 +242,7 @@ class AppRouter {
         final onWatch = state.uri.path.startsWith('/watch/');
         final onSearch = state.uri.path == '/search';
         final onPlaylists = state.uri.path.startsWith('/playlists');
+        final onReferral = state.uri.path.startsWith('/r/');
 
         if (!isLoggedIn) {
           if (onPlaylists) {
@@ -260,6 +270,7 @@ class AppRouter {
               onVideo ||
               onWatch ||
               onSearch ||
+              onReferral ||
               onPlaylists) {
             return null;
           }

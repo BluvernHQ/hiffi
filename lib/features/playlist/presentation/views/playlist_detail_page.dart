@@ -10,6 +10,7 @@ import 'package:shimmer/shimmer.dart';
 import '../../../../core/services/analytics_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/image_utils.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../video/domain/models/video_model.dart';
@@ -30,6 +31,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
   String? _error;
   final Set<String> _optimisticallyRemovedItems = <String>{};
   final Set<String> _hintAnimatingItems = <String>{};
+  final Set<String> _dismissDeletesPlaylist = <String>{};
 
   @override
   void initState() {
@@ -223,11 +225,52 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                       ? DismissDirection.none
                       : DismissDirection.endToStart,
                   background: const _SwipeRemoveBackground(),
-                  confirmDismiss: (_) => _confirmRemoveItemSheet(
-                    context,
-                    videoTitle: title,
-                  ),
+                  confirmDismiss: (_) async {
+                    final isLastItem = visibleItems.length == 1;
+                    final decision = await _confirmRemoveOrDeleteLastSheet(
+                      context,
+                      videoTitle: title,
+                      isLastItem: isLastItem,
+                    );
+                    if (decision == _RemoveDecision.deletePlaylist) {
+                      _dismissDeletesPlaylist.add(itemKey);
+                      return true;
+                    }
+                    if (decision == _RemoveDecision.removeOnly) {
+                      _dismissDeletesPlaylist.remove(itemKey);
+                      return true;
+                    }
+                    return false;
+                  },
                   onDismissed: (_) async {
+                    if (_dismissDeletesPlaylist.remove(itemKey)) {
+                      // Remove from tree immediately after dismiss completes.
+                      if (mounted) {
+                        setState(() {
+                          _optimisticallyRemovedItems.add(itemKey);
+                        });
+                      }
+                      try {
+                        await vm.deletePlaylist(detail.playlistId);
+                        if (!mounted) return;
+                        _goBack();
+                        return;
+                      } catch (e) {
+                        if (!mounted) return;
+                        // Roll back optimistic removal if deletion fails.
+                        setState(() {
+                          _optimisticallyRemovedItems.remove(itemKey);
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Could not delete playlist. Please try again. ($e)',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                    }
                     await _removePlaylistItem(
                       vm: vm,
                       playlistId: detail.playlistId,
@@ -351,6 +394,84 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     required String videoId,
   }) async {
     final itemKey = _itemRemovalKey(playlistId, videoId);
+    final detail = vm.detail(playlistId);
+    final remainingCount = detail?.items
+        .where(
+          (item) => !_optimisticallyRemovedItems.contains(
+            _itemRemovalKey(playlistId, item.videoId),
+          ),
+        )
+        .length;
+    final isLastItem = remainingCount == 1;
+
+    if (isLastItem) {
+      final confirmDelete = await showModalBottomSheet<bool>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x26000000),
+                    blurRadius: 20,
+                    offset: Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Delete playlist?',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This is the last video in the playlist. Removing it will also delete the playlist.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFDE3341),
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Delete'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      if (confirmDelete != true) return;
+      await vm.deletePlaylist(playlistId);
+      if (!mounted) return;
+      _goBack();
+      return;
+    }
+
     setState(() {
       _optimisticallyRemovedItems.add(itemKey);
     });
@@ -370,11 +491,26 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     required PlaylistItem item,
     required String videoTitle,
   }) async {
-    final confirmed = await _confirmRemoveItemSheet(
+    final visibleCount = detail.items
+        .where(
+          (it) =>
+              !_optimisticallyRemovedItems.contains(
+                _itemRemovalKey(detail.playlistId, it.videoId),
+              ),
+        )
+        .length;
+    final decision = await _confirmRemoveOrDeleteLastSheet(
       context,
       videoTitle: videoTitle,
+      isLastItem: visibleCount == 1,
     );
-    if (!confirmed || !mounted) return;
+    if (decision == _RemoveDecision.cancelled || !mounted) return;
+    if (decision == _RemoveDecision.deletePlaylist) {
+      await vm.deletePlaylist(detail.playlistId);
+      if (!mounted) return;
+      _goBack();
+      return;
+    }
 
     final itemKey = _itemRemovalKey(detail.playlistId, item.videoId);
     setState(() {
@@ -395,9 +531,10 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     });
   }
 
-  Future<bool> _confirmRemoveItemSheet(
+  Future<_RemoveDecision> _confirmRemoveOrDeleteLastSheet(
     BuildContext context, {
     required String videoTitle,
+    required bool isLastItem,
   }) async {
     final confirm = await showModalBottomSheet<bool>(
       context: context,
@@ -422,13 +559,15 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Remove from playlist?',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                Text(
+                  isLastItem ? 'Delete playlist?' : 'Remove from playlist?',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'This removes "$videoTitle" from this playlist.',
+                  isLastItem
+                      ? 'This is the last video in the playlist. Removing it will also delete the playlist.'
+                      : 'This removes "$videoTitle" from this playlist.',
                   style: const TextStyle(color: Colors.black54),
                 ),
                 const SizedBox(height: 14),
@@ -448,7 +587,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                           backgroundColor: const Color(0xFFDE3341),
                           foregroundColor: Colors.white,
                         ),
-                        child: const Text('Remove'),
+                        child: Text(isLastItem ? 'Delete' : 'Remove'),
                       ),
                     ),
                   ],
@@ -459,26 +598,18 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         ),
       ),
     );
-    return confirm == true;
+    if (confirm != true) return _RemoveDecision.cancelled;
+    return isLastItem ? _RemoveDecision.deletePlaylist : _RemoveDecision.removeOnly;
   }
 
   Widget _thumb(VideoModel? video) {
-    final url = ImageUtils.getVideoThumbnailUrl(video?.videoThumbnail);
-    if (url == null || url.isEmpty) {
-      return const SizedBox(
-        width: 56,
-        height: 56,
-        child: ColoredBox(color: Color(0x11000000)),
-      );
-    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
-      child: Image.network(
-        url,
+      child: HiffiVideoThumbnail(
+        thumbnailPath: video?.videoThumbnail,
         width: 56,
         height: 56,
         fit: BoxFit.cover,
-        headers: ImageUtils.getVideoThumbnailHeaders(),
       ),
     );
   }
@@ -490,6 +621,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
   ) async {
     final title = TextEditingController(text: detail.title);
     final description = TextEditingController(text: detail.description ?? '');
+    final formKey = GlobalKey<FormState>();
     final saved = await showDialog<bool>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.55),
@@ -509,125 +641,140 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
             ],
           ),
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Edit playlist',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
-                  color: Color(0xFF1A1A1A),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Title',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black54,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: title,
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                  hintText: 'Playlist title',
-                  filled: true,
-                  fillColor: const Color(0xFFF6F6F8),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFED1C2F)),
+          child: Form(
+            key: formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Edit playlist',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                    color: Color(0xFF1A1A1A),
                   ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Description',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black54,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: description,
-                maxLines: 3,
-                minLines: 2,
-                decoration: InputDecoration(
-                  hintText: 'Describe this playlist',
-                  filled: true,
-                  fillColor: const Color(0xFFF6F6F8),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFED1C2F)),
+                const SizedBox(height: 16),
+                const Text(
+                  'Title',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black54,
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(ctx).pop(false),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black87,
-                        side: const BorderSide(color: Color(0xFFD8D8DC)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: const Text('Cancel'),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: title,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    hintText: 'Playlist title',
+                    filled: true,
+                    fillColor: const Color(0xFFF6F6F8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFED1C2F)),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(ctx).pop(true),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFED1C2F),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: const Text('Save'),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) {
+                      return 'Playlist name is required.';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Description',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: description,
+                  maxLines: 3,
+                  minLines: 2,
+                  decoration: InputDecoration(
+                    hintText: 'Describe this playlist',
+                    filled: true,
+                    fillColor: const Color(0xFFF6F6F8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFD8D8DC)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFED1C2F)),
                     ),
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: const BorderSide(color: Color(0xFFD8D8DC)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          final valid =
+                              formKey.currentState?.validate() ?? false;
+                          if (!valid) return;
+                          Navigator.of(ctx).pop(true);
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFED1C2F),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text('Save'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -641,6 +788,8 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     }
   }
 }
+
+enum _RemoveDecision { cancelled, removeOnly, deletePlaylist }
 
 class _DetailHero extends StatefulWidget {
   const _DetailHero({

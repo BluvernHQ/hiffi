@@ -16,6 +16,8 @@ import 'package:hiffi/core/utils/fullscreen_manager.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/features/video/domain/repositories/video_repository.dart';
 import 'package:hiffi/core/utils/image_utils.dart';
+import 'package:hiffi/core/utils/playback_error_utils.dart';
+import 'package:hiffi/core/widgets/playback_error_view.dart';
 import 'package:hiffi/features/video/presentation/widgets/hiffi_video_controls.dart';
 
 /// Controller for HLS video playback lifecycle and state management.
@@ -41,6 +43,8 @@ class HlsPlayerController extends ChangeNotifier {
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
+  String? _rawErrorMessage;
+  bool _errorIsOffline = false;
   PlayerState _currentState = PlayerState.ready;
   bool _isFullScreen = false;
   bool _hasEnded = false;
@@ -62,6 +66,12 @@ class HlsPlayerController extends ChangeNotifier {
   Future<void> _seekChain = Future.value();
   int _pendingSeekRequests = 0;
   bool _resumeAfterQueuedSeeks = false;
+
+  /// Prevents overlapping native teardown/rebuild during Android lifecycle recovery.
+  bool _recoveryInFlight = false;
+
+  /// MediaCodec errors can appear shortly after reconnecting Surface; one-shot probe.
+  Timer? _androidResumeErrorProbeTimer;
 
   /// Drives fullscreen icon in [HiffiVideoControls] (Chewie fullscreen flag stays false).
   final ValueNotifier<bool> fullscreenUiForControls = ValueNotifier<bool>(
@@ -112,6 +122,8 @@ class HlsPlayerController extends ChangeNotifier {
   bool get isDisposed => _isDisposed;
   bool get hasError => _hasError;
   String? get errorMessage => _errorMessage;
+  String? get rawErrorMessage => _rawErrorMessage;
+  bool get errorIsOffline => _errorIsOffline;
   PlayerState get currentState => _currentState;
   bool get isFullScreen => _isFullScreen;
   bool get isMuted => _userIntentMuted;
@@ -419,6 +431,8 @@ class HlsPlayerController extends ChangeNotifier {
     try {
       _hasError = false;
       _errorMessage = null;
+      _rawErrorMessage = null;
+      _errorIsOffline = false;
       _currentState = PlayerState.buffering;
 
       final profileUrl = ImageUtils.resolveVideoPlaybackUrl(
@@ -522,36 +536,9 @@ class HlsPlayerController extends ChangeNotifier {
           bufferedColor: Colors.white70,
         ),
         errorBuilder: (context, errorMessage) {
-          return Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.error_outline,
-                    color: Colors.white,
-                    size: 48,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    errorMessage,
-                    style: const TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: retry,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFED1C2F),
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            ),
+          return PlaybackErrorView(
+            rawErrorMessage: errorMessage,
+            onRetry: retry,
           );
         },
       );
@@ -775,15 +762,106 @@ class HlsPlayerController extends ChangeNotifier {
     if (_isDisposed) return;
     _cancelWatchHoursTimer();
     debugPrint('HLS Player Error: $message');
+    final display = playbackErrorDisplay(message);
     _hasError = true;
-    _errorMessage = message;
+    _rawErrorMessage = message;
+    _errorMessage = display.title;
+    _errorIsOffline = display.isOffline;
     _currentState = PlayerState.error;
     notifyListeners();
   }
 
   Future<void> retry() async {
-    if (_isDisposed) return;
-    await _setupPlayer();
+    if (_isDisposed || _recoveryInFlight) return;
+    debugPrint('HlsPlayerController: retry() — full native graph reset');
+    _recoveryInFlight = true;
+    try {
+      _androidResumeErrorProbeTimer?.cancel();
+      _androidResumeErrorProbeTimer = null;
+      await _disposeControllers(
+        skipClearPipWants: true,
+      );
+      await _setupPlayer();
+    } finally {
+      _recoveryInFlight = false;
+    }
+  }
+
+  /// Android: after pause-for-background + resume we may need a fresh ExoPlayer graph
+  /// when MediaCodec / Surface churn leaves the renderer in error.
+  Future<void> onAndroidAppLifecycleResume({
+    required bool resumePlaybackIntent,
+  }) async {
+    if (_isDisposed ||
+        kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+
+    _androidResumeErrorProbeTimer?.cancel();
+    final vcEarly = _safeVideoController();
+
+    Future<void> hardRecover({required String reason}) async {
+      if (_isDisposed || _recoveryInFlight) return;
+      debugPrint('HlsPlayerController: Android lifecycle hard recover ($reason)');
+      await _disposeAndRebuildForLifecycle(
+        resumePlaybackIntent: resumePlaybackIntent,
+      );
+    }
+
+    if (vcEarly != null && vcEarly.value.hasError) {
+      await hardRecover(reason: 'player already flagged error');
+      return;
+    }
+
+    if (!resumePlaybackIntent) {
+      return;
+    }
+
+    await play();
+
+    _androidResumeErrorProbeTimer = Timer(const Duration(milliseconds: 600), () {
+      if (_isDisposed) return;
+      final vc = _safeVideoController();
+      if (vc != null && vc.value.hasError) {
+        unawaited(hardRecover(reason: 'late MediaCodec error after resume'));
+      }
+    });
+  }
+
+  Future<void> _disposeAndRebuildForLifecycle({
+    required bool resumePlaybackIntent,
+  }) async {
+    if (_isDisposed || _recoveryInFlight) return;
+    _recoveryInFlight = true;
+    _androidResumeErrorProbeTimer?.cancel();
+    _androidResumeErrorProbeTimer = null;
+    try {
+      _hasError = false;
+      _errorMessage = null;
+      _rawErrorMessage = null;
+      _errorIsOffline = false;
+      await _disposeControllers(
+        skipClearPipWants: true,
+      );
+      await _setupPlayer();
+      final vcSync = _safeVideoController();
+      if (!_isDisposed &&
+          vcSync != null &&
+          vcSync.value.isInitialized &&
+          !vcSync.value.hasError) {
+        // _setupPlayer() uses ctor [autoPlay]; reconcile with foreground intent after recovery.
+        if (resumePlaybackIntent) {
+          if (!vcSync.value.isPlaying) {
+            await play();
+          }
+        } else if (vcSync.value.isPlaying) {
+          await pause();
+        }
+      }
+    } finally {
+      _recoveryInFlight = false;
+    }
   }
 
   Future<void> toggleMute() async {
@@ -956,6 +1034,8 @@ class HlsPlayerController extends ChangeNotifier {
     required bool skipClearPipWants,
   }) {
     if (_isDisposed) return;
+    _androidResumeErrorProbeTimer?.cancel();
+    _androidResumeErrorProbeTimer = null;
     _isDisposed = true;
     debugPrint(
       'HlsPlayerController: dispose(${skipClearPipWants ? 'video switch' : 'full'}) '

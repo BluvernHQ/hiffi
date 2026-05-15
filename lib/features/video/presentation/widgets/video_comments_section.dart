@@ -7,6 +7,9 @@ import 'package:hiffi/features/auth/data/auth_repository.dart';
 import 'package:hiffi/features/user/presentation/viewmodels/user_view_model.dart';
 import 'package:hiffi/core/widgets/hiffi_image.dart';
 import 'package:go_router/go_router.dart';
+import 'dart:async';
+import '../../../../core/analytics/first_party_analytics_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 
 /// Username for a new comment/reply: [AuthRepository] can lag behind [UserViewModel].
 String resolvedCommentPosterUsername(
@@ -387,7 +390,23 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
                       Material(
                         color: Colors.transparent,
                         child: InkWell(
-                          onTap: onOpenSheet,
+                          onTap: () {
+                            unawaited(
+                              context.read<FirstPartyAnalyticsService>().capture(
+                                r'$click',
+                                elementUiName: 'opened-comments',
+                                screenName: 'watch',
+                                videoId: controller.videoId,
+                                properties: {
+                                  'source': 'watch',
+                                  'source_path': '/watch/${controller.videoId}',
+                                  'path': '/watch/${controller.videoId}',
+                                  'video_id': controller.videoId,
+                                },
+                              ),
+                            );
+                            onOpenSheet();
+                          },
                           borderRadius: BorderRadius.circular(20),
                           child: const Padding(
                             padding: EdgeInsets.all(4),
@@ -418,7 +437,23 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
-                      onTap: onOpenSheet,
+                      onTap: () {
+                        unawaited(
+                          context.read<FirstPartyAnalyticsService>().capture(
+                            r'$click',
+                            elementUiName: 'opened-comments',
+                            screenName: 'watch',
+                            videoId: controller.videoId,
+                            properties: {
+                              'source': 'watch',
+                              'source_path': '/watch/${controller.videoId}',
+                              'path': '/watch/${controller.videoId}',
+                              'video_id': controller.videoId,
+                            },
+                          ),
+                        );
+                        onOpenSheet();
+                      },
                       child: LatestCommentPreview(
                         controller: controller,
                         onTap: onOpenSheet,
@@ -607,21 +642,26 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
                     }
 
                     if (widget.controller.state == CommentsState.error) {
+                      final message =
+                          widget.controller.errorMessage ??
+                          'Failed to load comments. Please try again.';
+                      final isOffline = isOfflineErrorMessage(message);
                       return Center(
                         child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(
-                                Icons.error_outline,
+                              Icon(
+                                isOffline
+                                    ? Icons.wifi_off_rounded
+                                    : Icons.error_outline,
                                 size: 48,
                                 color: Colors.grey,
                               ),
                               const SizedBox(height: 16),
                               Text(
-                                widget.controller.errorMessage ??
-                                    'Failed to load comments',
+                                message,
                                 style: const TextStyle(
                                   color: Color(0xFF6B6B6B),
                                   fontSize: 14,
@@ -833,7 +873,29 @@ class _CommentTileState extends State<CommentTile> {
                             ),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
-                            onPressed: () => _showDeleteConfirmation(context),
+                            onPressed: () {
+                              unawaited(
+                                context
+                                    .read<FirstPartyAnalyticsService>()
+                                    .capture(
+                                      r'$click',
+                                      elementUiName:
+                                          'video-comment-delete-prompt-button',
+                                      screenName: 'comments',
+                                      videoId: widget.controller.videoId,
+                                      properties: {
+                                        'source': 'watch',
+                                        'source_path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'video_id': widget.controller.videoId,
+                                        'comment_id': widget.comment.commentId,
+                                      },
+                                    ),
+                              );
+                              _showDeleteConfirmation(context);
+                            },
                           ),
                       ],
                     ),
@@ -849,6 +911,22 @@ class _CommentTileState extends State<CommentTile> {
                     const SizedBox(height: 8),
                     GestureDetector(
                       onTap: () {
+                        unawaited(
+                          context.read<FirstPartyAnalyticsService>().capture(
+                            r'$click',
+                            elementUiName: 'video-comment-reply-toggle-button',
+                            screenName: 'comments',
+                            videoId: widget.controller.videoId,
+                            properties: {
+                              'source': 'watch',
+                              'source_path':
+                                  '/watch/${widget.controller.videoId}',
+                              'path': '/watch/${widget.controller.videoId}',
+                              'video_id': widget.controller.videoId,
+                              'comment_id': widget.comment.commentId,
+                            },
+                          ),
+                        );
                         setState(() {
                           _isReplying = true;
                         });
@@ -875,6 +953,23 @@ class _CommentTileState extends State<CommentTile> {
               padding: const EdgeInsets.only(left: 48, top: 8),
               child: GestureDetector(
                 onTap: () {
+                  unawaited(
+                    context.read<FirstPartyAnalyticsService>().capture(
+                      r'$click',
+                      elementUiName: _showReplies
+                          ? 'video-comment-hide-replies-button'
+                          : 'video-comment-show-replies-button',
+                      screenName: 'comments',
+                      videoId: widget.controller.videoId,
+                      properties: {
+                        'source': 'watch',
+                        'source_path': '/watch/${widget.controller.videoId}',
+                        'path': '/watch/${widget.controller.videoId}',
+                        'video_id': widget.controller.videoId,
+                        'comment_id': widget.comment.commentId,
+                      },
+                    ),
+                  );
                   setState(() => _showReplies = !_showReplies);
                   if (_showReplies && widget.comment.replies.isEmpty) {
                     widget.controller.fetchReplies(widget.comment.commentId);
@@ -1099,6 +1194,27 @@ class _CommentTileState extends State<CommentTile> {
                             ),
                             onPressed: () {
                               if (_replyController.text.trim().isNotEmpty) {
+                                unawaited(
+                                  context
+                                      .read<FirstPartyAnalyticsService>()
+                                      .capture(
+                                        r'$click',
+                                        elementUiName:
+                                            'video-comment-reply-submit-button',
+                                        screenName: 'comments',
+                                        videoId: widget.controller.videoId,
+                                        properties: {
+                                          'source': 'watch',
+                                          'source_path':
+                                              '/watch/${widget.controller.videoId}',
+                                          'path':
+                                              '/watch/${widget.controller.videoId}',
+                                          'video_id': widget.controller.videoId,
+                                          'comment_id':
+                                              widget.comment.commentId,
+                                        },
+                                      ),
+                                );
                                 _postReply(_replyController.text.trim());
                               }
                             },
@@ -1112,6 +1228,26 @@ class _CommentTileState extends State<CommentTile> {
                               color: Color(0xFF6B6B6B),
                             ),
                             onPressed: () {
+                              unawaited(
+                                context
+                                    .read<FirstPartyAnalyticsService>()
+                                    .capture(
+                                      r'$click',
+                                      elementUiName:
+                                          'video-comment-reply-cancel-button',
+                                      screenName: 'comments',
+                                      videoId: widget.controller.videoId,
+                                      properties: {
+                                        'source': 'watch',
+                                        'source_path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'video_id': widget.controller.videoId,
+                                        'comment_id': widget.comment.commentId,
+                                      },
+                                    ),
+                              );
                               setState(() {
                                 _isReplying = false;
                                 _replyController.clear();
@@ -1205,6 +1341,21 @@ class _CommentTileState extends State<CommentTile> {
                     ),
                     onPressed: () {
                       if (_replyController.text.trim().isNotEmpty) {
+                        unawaited(
+                          context.read<FirstPartyAnalyticsService>().capture(
+                            r'$click',
+                            elementUiName: 'video-comment-reply-submit-button',
+                            screenName: 'comments',
+                            videoId: widget.controller.videoId,
+                            properties: {
+                              'source': 'watch',
+                              'source_path': '/watch/${widget.controller.videoId}',
+                              'path': '/watch/${widget.controller.videoId}',
+                              'video_id': widget.controller.videoId,
+                              'comment_id': widget.comment.commentId,
+                            },
+                          ),
+                        );
                         _postReply(_replyController.text.trim());
                       }
                     },
@@ -1218,6 +1369,21 @@ class _CommentTileState extends State<CommentTile> {
                       color: Color(0xFF6B6B6B),
                     ),
                     onPressed: () {
+                      unawaited(
+                        context.read<FirstPartyAnalyticsService>().capture(
+                          r'$click',
+                          elementUiName: 'video-comment-reply-cancel-button',
+                          screenName: 'comments',
+                          videoId: widget.controller.videoId,
+                          properties: {
+                            'source': 'watch',
+                            'source_path': '/watch/${widget.controller.videoId}',
+                            'path': '/watch/${widget.controller.videoId}',
+                            'video_id': widget.controller.videoId,
+                            'comment_id': widget.comment.commentId,
+                          },
+                        ),
+                      );
                       setState(() {
                         _isReplying = false;
                         _replyController.clear();
@@ -1287,6 +1453,21 @@ class _CommentTileState extends State<CommentTile> {
 
     if (confirmed == true && mounted) {
       try {
+        unawaited(
+          context.read<FirstPartyAnalyticsService>().capture(
+            r'$click',
+            elementUiName: 'video-comment-delete-confirm-button',
+            screenName: 'comments',
+            videoId: widget.controller.videoId,
+            properties: {
+              'source': 'watch',
+              'source_path': '/watch/${widget.controller.videoId}',
+              'path': '/watch/${widget.controller.videoId}',
+              'video_id': widget.controller.videoId,
+              'comment_id': widget.comment.commentId,
+            },
+          ),
+        );
         await widget.controller.deleteComment(widget.comment.commentId);
       } catch (e) {
         if (mounted) {
@@ -1325,6 +1506,22 @@ class _CommentTileState extends State<CommentTile> {
 
     if (confirmed == true && mounted) {
       try {
+        unawaited(
+          context.read<FirstPartyAnalyticsService>().capture(
+            r'$click',
+            elementUiName: 'video-comment-delete-confirm-button',
+            screenName: 'comments',
+            videoId: widget.controller.videoId,
+            properties: {
+              'source': 'watch',
+              'source_path': '/watch/${widget.controller.videoId}',
+              'path': '/watch/${widget.controller.videoId}',
+              'video_id': widget.controller.videoId,
+              'comment_id': widget.comment.commentId,
+              'reply_id': replyId,
+            },
+          ),
+        );
         await widget.controller.deleteReply(widget.comment.commentId, replyId);
       } catch (e) {
         if (mounted) {
@@ -1431,7 +1628,25 @@ class _CommentComposerState extends State<CommentComposer> {
                         ),
                       ),
                       GestureDetector(
-                        onTap: () => widget.controller.setReplyTarget(null),
+                        onTap: () {
+                          unawaited(
+                            context.read<FirstPartyAnalyticsService>().capture(
+                              r'$click',
+                              elementUiName: 'video-comment-reply-cancel-button',
+                              screenName: 'comments',
+                              videoId: widget.controller.videoId,
+                              properties: {
+                                'source': 'watch',
+                                'source_path':
+                                    '/watch/${widget.controller.videoId}',
+                                'path': '/watch/${widget.controller.videoId}',
+                                'video_id': widget.controller.videoId,
+                                'comment_id': replyTarget.commentId,
+                              },
+                            ),
+                          );
+                          widget.controller.setReplyTarget(null);
+                        },
                         child: const Icon(
                           Icons.close,
                           size: 18,
@@ -1519,6 +1734,26 @@ class _CommentComposerState extends State<CommentComposer> {
                                 userVm.currentUser?.profilePicture;
 
                             if (isReplying) {
+                              unawaited(
+                                context
+                                    .read<FirstPartyAnalyticsService>()
+                                    .capture(
+                                      r'$click',
+                                      elementUiName:
+                                          'video-comment-reply-submit-button',
+                                      screenName: 'comments',
+                                      videoId: widget.controller.videoId,
+                                      properties: {
+                                        'source': 'watch',
+                                        'source_path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'video_id': widget.controller.videoId,
+                                        'comment_id': replyTarget.commentId,
+                                      },
+                                    ),
+                              );
                               widget.controller.postReply(
                                 commentId: replyTarget.commentId,
                                 text: text,
@@ -1527,6 +1762,24 @@ class _CommentComposerState extends State<CommentComposer> {
                                 profilePicture: profilePic,
                               );
                             } else {
+                              unawaited(
+                                context
+                                    .read<FirstPartyAnalyticsService>()
+                                    .capture(
+                                      r'$click',
+                                      elementUiName: 'video-comment-submit-button',
+                                      screenName: 'comments',
+                                      videoId: widget.controller.videoId,
+                                      properties: {
+                                        'source': 'watch',
+                                        'source_path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'path':
+                                            '/watch/${widget.controller.videoId}',
+                                        'video_id': widget.controller.videoId,
+                                      },
+                                    ),
+                              );
                               widget.controller.postComment(
                                 text: text,
                                 username: posterName,

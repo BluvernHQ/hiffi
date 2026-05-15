@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'core/di/app_providers.dart';
 import 'core/routes/app_router.dart';
+import 'core/analytics/first_party_analytics_service.dart';
 import 'core/services/in_app_notification_service.dart';
 import 'core/widgets/global_upload_overlay.dart';
 
@@ -18,13 +19,41 @@ class HiffiApp extends StatefulWidget {
   State<HiffiApp> createState() => _HiffiAppState();
 }
 
-class _HiffiAppState extends State<HiffiApp> {
+class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
   AppLinks? _appLinks;
   StreamSubscription<Uri>? _linkSub;
   bool _deepLinksInitialized = false;
+  FirstPartyAnalyticsService? _firstPartyAnalytics;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Best-effort flush when app backgrounds/terminates.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      // Avoid awaiting; lifecycle transitions should stay snappy.
+      Future.microtask(() {
+        if (!mounted) return;
+        try {
+          _firstPartyAnalytics?.flush(
+            reason: 'lifecycle_$state',
+            bestEffort: true,
+          );
+        } catch (_) {
+          // Best-effort only — never crash the app on analytics flush.
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _linkSub?.cancel();
     super.dispose();
   }
@@ -69,11 +98,26 @@ class _HiffiAppState extends State<HiffiApp> {
     return id;
   }
 
+  /// Extracts referral username from URLs like https://www.hiffi.com/r/{username}.
+  String? _extractReferralUsername(Uri uri) {
+    final host = uri.host.toLowerCase();
+    if (host != 'www.hiffi.com' && host != 'hiffi.com') return null;
+
+    final segments = uri.pathSegments;
+    if (segments.length != 2) return null;
+    if (segments.first != 'r') return null;
+
+    final username = segments[1].trim().toLowerCase();
+    if (username.isEmpty) return null;
+    return username;
+  }
+
   void _handleIncomingUri(Uri uri, AppRouter appRouter) {
     final videoId = _extractVideoId(uri);
+    final referralUsername = _extractReferralUsername(uri);
 
     // If the link is not a valid watch URL, send the user to home.
-    if (videoId == null) {
+    if (videoId == null && referralUsername == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         appRouter.router.go('/home');
@@ -81,10 +125,15 @@ class _HiffiAppState extends State<HiffiApp> {
       return;
     }
 
-    // Navigate to the internal /watch/:videoId route via GoRouter.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      appRouter.router.go('/watch/$videoId');
+      if (referralUsername != null) {
+        appRouter.router.go('/r/$referralUsername');
+        return;
+      }
+      if (videoId != null) {
+        appRouter.router.go('/watch/$videoId');
+      }
     });
   }
 
@@ -95,6 +144,7 @@ class _HiffiAppState extends State<HiffiApp> {
       child: Builder(
         builder: (context) {
           final appRouter = context.read<AppRouter>();
+          _firstPartyAnalytics ??= context.read<FirstPartyAnalyticsService>();
 
           if (!_deepLinksInitialized) {
             _initDeepLinks(appRouter);

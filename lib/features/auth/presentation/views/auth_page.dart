@@ -9,6 +9,52 @@ import '../viewmodels/auth_view_model.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
+
+class _LowerCaseTextFormatter extends TextInputFormatter {
+  const _LowerCaseTextFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final lower = newValue.text.toLowerCase();
+    if (lower == newValue.text) return newValue;
+    return newValue.copyWith(
+      text: lower,
+      selection: newValue.selection,
+      composing: TextRange.empty,
+    );
+  }
+}
+
+/// Keeps [hintText] visible in the field (M3 default hides hint behind the label).
+InputDecoration authInputDecoration({
+  required String label,
+  required String hint,
+  Widget? suffixIcon,
+  String? helperText,
+  int? helperMaxLines,
+}) {
+  return InputDecoration(
+    labelText: label,
+    hintText: hint,
+    floatingLabelBehavior: FloatingLabelBehavior.always,
+    hintStyle: const TextStyle(
+      color: Color(0xFF9A9AA1),
+      fontSize: 16,
+      fontWeight: FontWeight.w400,
+    ),
+    labelStyle: const TextStyle(
+      color: Color(0xFF6B6B6B),
+      fontSize: 14,
+    ),
+    suffixIcon: suffixIcon,
+    helperText: helperText,
+    helperMaxLines: helperMaxLines,
+  );
+}
 
 class AuthPage extends StatefulWidget {
   const AuthPage({
@@ -78,6 +124,15 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   void _handleSkip(BuildContext context) {
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: widget.initialMode == AuthMode.signUp
+            ? 'signup-skip-button'
+            : 'login-skip-button',
+        screenName: widget.initialMode == AuthMode.signUp ? 'signup' : 'login',
+      ),
+    );
     // If we have a return route, navigate to it using context.go()
     // This is the most reliable way to ensure we land on the intended page
     // even if the navigation stack was reset or if we came from a deep link.
@@ -110,6 +165,13 @@ class _AuthPageState extends State<AuthPage> {
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
                   if (isVerifyOtp) {
+                    unawaited(
+                      context.read<FirstPartyAnalyticsService>().capture(
+                        r'$click',
+                        elementUiName: 'signup-back-to-registration-button',
+                        screenName: 'signup',
+                      ),
+                    );
                     viewModel.setMode(AuthMode.signUp);
                   } else if (isResetPassword) {
                     viewModel.setMode(AuthMode.forgotPassword);
@@ -195,9 +257,9 @@ class _AuthPageState extends State<AuthPage> {
                           if (isSignIn) ...[
                             TextFormField(
                               controller: viewModel.usernameController,
-                              decoration: const InputDecoration(
-                                labelText: 'Username or Email',
-                                hintText: 'Enter your username or email',
+                              decoration: authInputDecoration(
+                                label: 'Username or Email *',
+                                hint: 'Enter your username or email',
                               ),
                               textInputAction: TextInputAction.next,
                               textCapitalization: TextCapitalization.none,
@@ -235,8 +297,9 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: viewModel.signInPasswordController,
-                              decoration: InputDecoration(
-                                labelText: 'Password',
+                              decoration: authInputDecoration(
+                                label: 'Password *',
+                                hint: 'Enter your password',
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     _signInPasswordVisible
@@ -244,6 +307,16 @@ class _AuthPageState extends State<AuthPage> {
                                         : Icons.visibility_off,
                                   ),
                                   onPressed: () {
+                                    unawaited(
+                                      context
+                                          .read<FirstPartyAnalyticsService>()
+                                          .capture(
+                                            r'$click',
+                                            elementUiName:
+                                                'login-toggle-password-visibility-button',
+                                            screenName: 'login',
+                                          ),
+                                    );
                                     setState(() {
                                       _signInPasswordVisible =
                                           !_signInPasswordVisible;
@@ -254,14 +327,34 @@ class _AuthPageState extends State<AuthPage> {
                               obscureText: !_signInPasswordVisible,
                               textInputAction: TextInputAction.done,
                               autofillHints: const [AutofillHints.password],
+                              inputFormatters: [
+                                FilteringTextInputFormatter.deny(
+                                  RegExp(r'\s'),
+                                ),
+                              ],
                               onFieldSubmitted: (_) {
                                 if (!viewModel.isLoading) {
+                                  unawaited(
+                                    context
+                                        .read<FirstPartyAnalyticsService>()
+                                        .capture(
+                                          r'$click',
+                                          elementUiName: 'login-submit-button',
+                                          screenName: 'login',
+                                        ),
+                                  );
                                   viewModel.submit(formKey: _signInFormKey);
                                 }
                               },
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
                                   return 'Please enter your password.';
+                                }
+                                if (value.contains(RegExp(r'\s'))) {
+                                  return 'Password cannot contain spaces.';
+                                }
+                                if (value.length < 6) {
+                                  return 'Password must be at least 6 characters.';
                                 }
                                 return null;
                               },
@@ -282,8 +375,9 @@ class _AuthPageState extends State<AuthPage> {
                           ] else if (isSignUp) ...[
                             TextFormField(
                               controller: viewModel.nameController,
-                              decoration: const InputDecoration(
-                                labelText: 'Full name *',
+                              decoration: authInputDecoration(
+                                label: 'Full name *',
+                                hint: 'Enter your full name',
                               ),
                               textInputAction: TextInputAction.next,
                               autofillHints: const [AutofillHints.name],
@@ -311,13 +405,14 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: viewModel.emailController,
-                              decoration: const InputDecoration(
-                                labelText: 'Email *',
-                                hintText: 'Enter your email',
+                              decoration: authInputDecoration(
+                                label: 'Email *',
+                                hint: 'Enter your email',
                               ),
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               autofillHints: const [AutofillHints.email],
+                              inputFormatters: const [_LowerCaseTextFormatter()],
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Please enter your email.';
@@ -325,7 +420,9 @@ class _AuthPageState extends State<AuthPage> {
                                 final emailRegex = RegExp(
                                   r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
                                 );
-                                if (!emailRegex.hasMatch(value.trim())) {
+                                if (!emailRegex.hasMatch(
+                                  value.trim().toLowerCase(),
+                                )) {
                                   return 'Please enter a valid email address.';
                                 }
                                 return null;
@@ -338,8 +435,9 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: viewModel.signUpPasswordController,
-                              decoration: InputDecoration(
-                                labelText: 'Password',
+                              decoration: authInputDecoration(
+                                label: 'Password *',
+                                hint: 'Enter your password',
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     _signUpPasswordVisible
@@ -347,6 +445,16 @@ class _AuthPageState extends State<AuthPage> {
                                         : Icons.visibility_off,
                                   ),
                                   onPressed: () {
+                                    unawaited(
+                                      context
+                                          .read<FirstPartyAnalyticsService>()
+                                          .capture(
+                                            r'$click',
+                                            elementUiName:
+                                                'signup-toggle-password-visibility-button',
+                                            screenName: 'signup',
+                                          ),
+                                    );
                                     setState(() {
                                       _signUpPasswordVisible =
                                           !_signUpPasswordVisible;
@@ -357,6 +465,11 @@ class _AuthPageState extends State<AuthPage> {
                               obscureText: !_signUpPasswordVisible,
                               textInputAction: TextInputAction.done,
                               autofillHints: const [AutofillHints.newPassword],
+                              inputFormatters: [
+                                FilteringTextInputFormatter.deny(
+                                  RegExp(r'\s'),
+                                ),
+                              ],
                               onFieldSubmitted: (_) {
                                 if (!viewModel.isLoading) {
                                   viewModel.submit(formKey: _signUpFormKey);
@@ -365,6 +478,9 @@ class _AuthPageState extends State<AuthPage> {
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
                                   return 'Please set a password.';
+                                }
+                                if (value.contains(RegExp(r'\s'))) {
+                                  return 'Password cannot contain spaces.';
                                 }
                                 if (value.length < 6) {
                                   return 'Password must be at least 6 characters.';
@@ -398,7 +514,21 @@ class _AuthPageState extends State<AuthPage> {
                                         !viewModel.canResendOtp ||
                                             viewModel.isLoading
                                         ? null
-                                        : () => viewModel.resendOtp(),
+                                        : () {
+                                            unawaited(
+                                              context
+                                                  .read<
+                                                    FirstPartyAnalyticsService
+                                                  >()
+                                                  .capture(
+                                                    r'$click',
+                                                    elementUiName:
+                                                        'signup-resend-otp-button',
+                                                    screenName: 'signup',
+                                                  ),
+                                            );
+                                            viewModel.resendOtp();
+                                          },
                                     child: Text(
                                       viewModel.canResendOtp
                                           ? 'Resend code'
@@ -411,13 +541,14 @@ class _AuthPageState extends State<AuthPage> {
                           ] else if (isForgotPassword) ...[
                             TextFormField(
                               controller: viewModel.emailController,
-                              decoration: const InputDecoration(
-                                labelText: 'Email',
-                                hintText: 'Enter your registered email',
+                              decoration: authInputDecoration(
+                                label: 'Email',
+                                hint: 'Enter your registered email',
                               ),
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.done,
                               autofillHints: const [AutofillHints.email],
+                              inputFormatters: const [_LowerCaseTextFormatter()],
                               onFieldSubmitted: (_) {
                                 if (!viewModel.isLoading) {
                                   viewModel.submit(
@@ -432,7 +563,9 @@ class _AuthPageState extends State<AuthPage> {
                                 final emailRegex = RegExp(
                                   r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
                                 );
-                                if (!emailRegex.hasMatch(value.trim())) {
+                                if (!emailRegex.hasMatch(
+                                  value.trim().toLowerCase(),
+                                )) {
                                   return 'Please enter a valid email address.';
                                 }
                                 return null;
@@ -450,8 +583,9 @@ class _AuthPageState extends State<AuthPage> {
                             const SizedBox(height: 32),
                             TextFormField(
                               controller: viewModel.resetPasswordController,
-                              decoration: InputDecoration(
-                                labelText: 'New Password',
+                              decoration: authInputDecoration(
+                                label: 'New Password',
+                                hint: 'Enter your new password',
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     _resetPasswordVisible
@@ -459,6 +593,16 @@ class _AuthPageState extends State<AuthPage> {
                                         : Icons.visibility_off,
                                   ),
                                   onPressed: () {
+                                    unawaited(
+                                      context
+                                          .read<FirstPartyAnalyticsService>()
+                                          .capture(
+                                            r'$click',
+                                            elementUiName:
+                                                'login-toggle-password-visibility-button',
+                                            screenName: 'reset_password',
+                                          ),
+                                    );
                                     setState(() {
                                       _resetPasswordVisible =
                                           !_resetPasswordVisible;
@@ -482,8 +626,9 @@ class _AuthPageState extends State<AuthPage> {
                             TextFormField(
                               controller:
                                   viewModel.confirmResetPasswordController,
-                              decoration: InputDecoration(
-                                labelText: 'Confirm New Password',
+                              decoration: authInputDecoration(
+                                label: 'Confirm New Password',
+                                hint: 'Confirm your new password',
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     _confirmResetPasswordVisible
@@ -491,6 +636,16 @@ class _AuthPageState extends State<AuthPage> {
                                         : Icons.visibility_off,
                                   ),
                                   onPressed: () {
+                                    unawaited(
+                                      context
+                                          .read<FirstPartyAnalyticsService>()
+                                          .capture(
+                                            r'$click',
+                                            elementUiName:
+                                                'login-toggle-password-visibility-button',
+                                            screenName: 'reset_password',
+                                          ),
+                                    );
                                     setState(() {
                                       _confirmResetPasswordVisible =
                                           !_confirmResetPasswordVisible;
@@ -533,7 +688,21 @@ class _AuthPageState extends State<AuthPage> {
                                         !viewModel.canResendOtp ||
                                             viewModel.isLoading
                                         ? null
-                                        : () => viewModel.resendOtp(),
+                                        : () {
+                                            unawaited(
+                                              context
+                                                  .read<
+                                                    FirstPartyAnalyticsService
+                                                  >()
+                                                  .capture(
+                                                    r'$click',
+                                                    elementUiName:
+                                                        'signup-resend-otp-button',
+                                                    screenName: 'reset_password',
+                                                  ),
+                                            );
+                                            viewModel.resendOtp();
+                                          },
                                     child: Text(
                                       viewModel.canResendOtp
                                           ? 'Resend code'
@@ -555,6 +724,34 @@ class _AuthPageState extends State<AuthPage> {
                             ? null
                             : () {
                                 FocusScope.of(context).unfocus();
+                                final firstParty =
+                                    context.read<FirstPartyAnalyticsService>();
+                                if (isSignIn) {
+                                  unawaited(
+                                    firstParty.capture(
+                                      r'$click',
+                                      elementUiName: 'login-submit-button',
+                                      screenName: 'login',
+                                    ),
+                                  );
+                                } else if (isSignUp) {
+                                  unawaited(
+                                    firstParty.capture(
+                                      r'$click',
+                                      elementUiName:
+                                          'signup-create-account-button',
+                                      screenName: 'signup',
+                                    ),
+                                  );
+                                } else if (isVerifyOtp) {
+                                  unawaited(
+                                    firstParty.capture(
+                                      r'$click',
+                                      elementUiName: 'signup-verify-otp-button',
+                                      screenName: 'signup',
+                                    ),
+                                  );
+                                }
                                 final formKey = isSignIn
                                     ? _signInFormKey
                                     : isSignUp
@@ -587,6 +784,19 @@ class _AuthPageState extends State<AuthPage> {
                               ? null
                               : () {
                                   FocusScope.of(context).unfocus();
+                                  unawaited(
+                                    context
+                                        .read<FirstPartyAnalyticsService>()
+                                        .capture(
+                                          r'$click',
+                                          elementUiName: isSignIn ||
+                                                  isForgotPassword
+                                              ? 'auth-dialog-signup-button'
+                                              : 'auth-dialog-login-button',
+                                          screenName:
+                                              isSignIn ? 'login' : 'signup',
+                                        ),
+                                  );
                                   // Preserve return route when switching between sign in and sign up
                                   final returnRouteParam =
                                       widget.returnRoute != null
@@ -829,8 +1039,9 @@ class _UsernameFieldState extends State<_UsernameField> {
           controller: widget.controller,
           textCapitalization: TextCapitalization.none,
           keyboardType: TextInputType.text,
-          decoration: InputDecoration(
-            labelText: 'Username',
+          decoration: authInputDecoration(
+            label: 'Username *',
+            hint: 'Choose a username',
             helperText:
                 '3-30 characters, lowercase letters, numbers, and underscores only.',
             suffixIcon: isChecking

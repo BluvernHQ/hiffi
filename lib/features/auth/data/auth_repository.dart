@@ -5,6 +5,7 @@ import '../../../core/exceptions/auth_failure.dart';
 import '../../../core/services/token_storage_service.dart';
 import '../../../core/services/api_client.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../../core/utils/network_error_utils.dart';
 import 'auth_user.dart';
 
 abstract class AuthRepository {
@@ -161,7 +162,13 @@ class BackendAuthRepository implements AuthRepository {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to sign in: $error');
+      final offline = offlineMessageIfApplicable(error);
+      if (offline != null) {
+        throw AuthFailure(offline);
+      }
+      throw const AuthFailure(
+        'Unable to sign in. Please try again.',
+      );
     }
   }
 
@@ -241,7 +248,13 @@ class BackendAuthRepository implements AuthRepository {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to register: $error');
+      final offline = offlineMessageIfApplicable(error);
+      if (offline != null) {
+        throw AuthFailure(offline);
+      }
+      throw const AuthFailure(
+        'Unable to create account. Please try again.',
+      );
     }
   }
 
@@ -304,7 +317,13 @@ class BackendAuthRepository implements AuthRepository {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to verify OTP: $error');
+      final offline = offlineMessageIfApplicable(error);
+      if (offline != null) {
+        throw AuthFailure(offline);
+      }
+      throw const AuthFailure(
+        'Unable to verify code. Please try again.',
+      );
     }
   }
 
@@ -346,7 +365,13 @@ class BackendAuthRepository implements AuthRepository {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to request password reset: $error');
+      final offline = offlineMessageIfApplicable(error);
+      if (offline != null) {
+        throw AuthFailure(offline);
+      }
+      throw const AuthFailure(
+        'Unable to send reset link. Please try again.',
+      );
     }
   }
 
@@ -386,7 +411,13 @@ class BackendAuthRepository implements AuthRepository {
       if (error is AuthFailure) {
         rethrow;
       }
-      throw AuthFailure('Failed to reset password: $error');
+      final offline = offlineMessageIfApplicable(error);
+      if (offline != null) {
+        throw AuthFailure(offline);
+      }
+      throw const AuthFailure(
+        'Unable to reset password. Please try again.',
+      );
     }
   }
 

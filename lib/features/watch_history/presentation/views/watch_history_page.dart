@@ -5,11 +5,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/routes/video_player_route_extra.dart';
+import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
@@ -69,6 +70,8 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
     if (!mounted) return;
     final vm = context.read<WatchHistoryViewModel>();
     if (!vm.hasMore || vm.isLoading) return;
+    final connectivity = context.read<NetworkConnectivityService>();
+    if (!connectivity.checkConnectivitySync()) return;
     if (!_scrollController.hasClients) return;
 
     final p = _scrollController.position;
@@ -354,10 +357,6 @@ class _HistoryTile extends StatelessWidget {
 
   VideoModel get video => item.video;
 
-  String? get _thumb {
-    return ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -379,39 +378,10 @@ class _HistoryTile extends StatelessWidget {
                 child: SizedBox(
                   width: thumbW,
                   height: thumbH,
-                  child: _thumb == null || _thumb!.isEmpty
-                      ? ColoredBox(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          child: Icon(
-                            Icons.play_circle_outline_rounded,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        )
-                      : Image.network(
-                          _thumb!,
-                          fit: BoxFit.cover,
-                          headers: ImageUtils.getVideoThumbnailHeaders(),
-                          errorBuilder: (_, __, ___) => ColoredBox(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              Icons.broken_image_outlined,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          loadingBuilder: (context, child, progress) {
-                            if (progress == null) return child;
-                            return Center(
-                              child: SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: theme.colorScheme.primary,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                  child: HiffiVideoThumbnail(
+                    thumbnailPath: video.videoThumbnail,
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
               SizedBox(width: 12.w),

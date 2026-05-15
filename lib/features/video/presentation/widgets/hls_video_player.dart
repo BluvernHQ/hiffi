@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:chewie/chewie.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
 import 'package:hiffi/features/video/domain/repositories/video_repository.dart';
+import 'package:hiffi/core/widgets/playback_error_view.dart';
 import 'package:hiffi/features/video/presentation/controllers/hls_player_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -122,6 +125,20 @@ class HlsVideoPlayer extends StatefulWidget {
 
   static HlsPlayerController? getController(String videoId) {
     return _controllers[videoId];
+  }
+
+  /// After [pausePlayer] when the Android app backgrounds, restores playback and
+  /// rebuilds native ExoPlayer if MediaCodec surfaced an error during resume.
+  static Future<void> onAndroidLifecycleResumedFromBackground(
+    String videoId, {
+    required bool resumePlaybackIntent,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    final c = _controllers[videoId];
+    if (c == null || c.isDisposed) return;
+    await c.onAndroidAppLifecycleResume(
+      resumePlaybackIntent: resumePlaybackIntent,
+    );
   }
 
   /// Truly disposes and removes the controller for a given videoId.
@@ -379,32 +396,9 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
     if (_controller.hasError) {
       return Container(
         color: Colors.black87,
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  _controller.errorMessage ?? 'Failed to load video',
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => _controller.retry(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFED1C2F),
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
+        child: PlaybackErrorView(
+          rawErrorMessage: _controller.rawErrorMessage,
+          onRetry: _controller.retry,
         ),
       );
     }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:hiffi/core/services/network_connectivity_service.dart';
+import 'package:hiffi/core/utils/network_error_utils.dart';
 import 'package:hiffi/features/video/domain/models/comment_model.dart';
 import 'package:hiffi/features/video/domain/repositories/video_repository.dart';
 import 'package:hiffi/features/user/data/user_repository.dart';
@@ -11,13 +13,16 @@ class VideoCommentsController extends ChangeNotifier {
   final VideoRepository _repository;
   final String videoId;
   final UserRepository? _userRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   VideoCommentsController({
     required VideoRepository repository,
     required this.videoId,
     UserRepository? userRepository,
+    NetworkConnectivityService? connectivityService,
   }) : _repository = repository,
-       _userRepository = userRepository;
+       _userRepository = userRepository,
+       _connectivityService = connectivityService;
 
   List<CommentModel> _comments = [];
   int _totalCommentsCount = 0;
@@ -51,6 +56,7 @@ class VideoCommentsController extends ChangeNotifier {
   /// Fetches the latest comment only for the inline preview.
   /// This is "lightweight data" fetching.
   Future<void> fetchLatestComment() async {
+    if (await isDeviceOffline(_connectivityService)) return;
     try {
       final response = await _repository.getComments(
         videoId,
@@ -90,6 +96,13 @@ class VideoCommentsController extends ChangeNotifier {
   Future<void> fetchAllComments() async {
     if (_state == CommentsState.loading) return;
 
+    if (await isDeviceOffline(_connectivityService)) {
+      _state = CommentsState.error;
+      _errorMessage = offlineUserMessage;
+      notifyListeners();
+      return;
+    }
+
     _state = CommentsState.loading;
     notifyListeners();
 
@@ -113,7 +126,10 @@ class VideoCommentsController extends ChangeNotifier {
       _state = CommentsState.loaded;
     } catch (e) {
       _state = CommentsState.error;
-      _errorMessage = e.toString();
+      _errorMessage = userFriendlyErrorMessage(
+        e,
+        fallback: 'Failed to load comments. Please try again.',
+      );
     } finally {
       notifyListeners();
     }

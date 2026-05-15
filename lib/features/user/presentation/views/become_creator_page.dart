@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'dart:async';
 
 import '../viewmodels/user_view_model.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 
 class BecomeCreatorPage extends StatefulWidget {
   const BecomeCreatorPage({super.key});
@@ -22,6 +24,13 @@ class _BecomeCreatorPageState extends State<BecomeCreatorPage> {
     });
 
     try {
+      unawaited(
+        context.read<FirstPartyAnalyticsService>().capture(
+          r'$click',
+          elementUiName: 'creator-become-creator-button',
+          screenName: 'become_creator',
+        ),
+      );
       await viewModel.becomeCreator();
       // Reload current user to ensure role is updated
       await viewModel.loadCurrentUser();

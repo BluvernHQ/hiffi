@@ -3,12 +3,18 @@ import 'package:flutter/material.dart';
 import '../../../video/domain/models/watch_history_item.dart';
 import '../../../video/domain/repositories/video_repository.dart';
 import '../../../../core/exceptions/api_exception.dart';
+import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 
 class WatchHistoryViewModel extends ChangeNotifier {
-  WatchHistoryViewModel({required VideoRepository videoRepository})
-    : _videoRepository = videoRepository;
+  WatchHistoryViewModel({
+    required VideoRepository videoRepository,
+    NetworkConnectivityService? connectivityService,
+  }) : _videoRepository = videoRepository,
+       _connectivityService = connectivityService;
 
   final VideoRepository _videoRepository;
+  final NetworkConnectivityService? _connectivityService;
 
   List<WatchHistoryItem> _items = [];
   bool _isLoading = false;
@@ -26,6 +32,13 @@ class WatchHistoryViewModel extends ChangeNotifier {
 
   Future<void> loadHistory({bool refresh = false}) async {
     if (_isLoading) return;
+
+    if (await isDeviceOffline(_connectivityService)) {
+      _errorMessage = offlineUserMessage;
+      _hasMore = false;
+      notifyListeners();
+      return;
+    }
 
     if (refresh) {
       _offset = 0;
@@ -80,7 +93,10 @@ class WatchHistoryViewModel extends ChangeNotifier {
         _errorMessage = e.toString();
       }
     } catch (error) {
-      _errorMessage = error.toString();
+      _errorMessage = userFriendlyErrorMessage(error);
+      if (isOfflineError(error)) {
+        _hasMore = false;
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

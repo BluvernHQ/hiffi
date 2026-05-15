@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
@@ -19,13 +20,17 @@ import 'package:hiffi/features/video/presentation/controllers/video_comments_con
 import 'package:hiffi/features/video/presentation/widgets/video_comments_section.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/fullscreen_manager.dart';
+import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/services/pip_service.dart';
 import '../../../../core/widgets/hiffi_image.dart';
+import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/services/media/media_sync_service.dart';
 import '../../../../core/routes/app_router.dart';
 import '../../../../core/services/playlist_session_storage.dart';
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../playlist/presentation/widgets/add_to_playlist_sheet.dart';
 import '../../../liked/presentation/viewmodels/liked_videos_view_model.dart';
@@ -100,6 +105,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   int _upvoteCount = 0;
   int _downvoteCount = 0;
   String? _videoUrlFromApi;
+  String? _playConversionSentForVideoId;
 
   // Follow state
   bool _isFollowing = false;
@@ -119,6 +125,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   // Flag to prevent autoplay when returning from auth (video should be paused)
   bool _isReturningFromAuth = false;
+
+  /// Android: remembers if video was playing before we paused for app background.
+  bool _androidWasPlayingBeforeBackground = false;
 
   // Suggested videos for autoplay (loaded on page; not tied to portrait-only subtree)
   List<VideoModel> _suggestedVideos = [];
@@ -180,6 +189,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       repository: context.read<VideoRepository>(),
       videoId: _video.videoId,
       userRepository: context.read<UserRepository>(),
+      connectivityService: context.read<NetworkConnectivityService>(),
     );
 
     _upvoteCount = _video.videoUpvotes;
@@ -202,7 +212,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
     // 💡 SYNC FIX: Register navigation callbacks for notification controls
     MediaSyncService().registerNavigationCallbacks(
-      onNext: _playNextVideo,
+      onNext: () => _playNextVideo(userInitiated: true),
       onPrevious: _playPreviousVideo,
       hasPreviousVideo: () => _videoHistory.isNotEmpty,
     );
@@ -260,8 +270,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
+  Future<bool> _isDeviceOnline() async {
+    final connectivity = context.read<NetworkConnectivityService>();
+    await connectivity.ensureInitialized();
+    return connectivity.isConnected;
+  }
+
   Future<void> _loadSuggestedVideosForPlayer({bool useNewSeed = false}) async {
     final forVideoId = _video.videoId;
+    if (!await _isDeviceOnline()) {
+      if (!mounted || _video.videoId != forVideoId) return;
+      setState(() {
+        _suggestedLoading = false;
+        _suggestedError = true;
+        _suggestedNoInternet = true;
+      });
+      return;
+    }
     setState(() {
       _suggestedLoading = true;
       _suggestedError = false;
@@ -293,20 +318,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       if (!mounted || _video.videoId != forVideoId) {
         return;
       }
-      final errorString = e.toString();
-      final isNoInternet =
-          errorString.contains('SocketException') ||
-          errorString.contains('Failed host lookup') ||
-          errorString.contains('Network is unreachable');
       setState(() {
         _suggestedLoading = false;
         _suggestedError = true;
-        _suggestedNoInternet = isNoInternet;
+        _suggestedNoInternet = isOfflineError(e);
       });
     }
   }
 
-  void _playNextVideo() {
+  void _playNextVideo({required bool userInitiated}) {
+    if (userInitiated) {
+      unawaited(
+        context.read<FirstPartyAnalyticsService>().capture(
+          'conversion_next_clicked',
+          screenName: 'watch',
+          videoId: _video.videoId,
+          videoTitle: _video.videoTitle,
+          properties: {
+            'source': _playlistSession != null ? 'playlist' : 'suggested',
+          },
+        ),
+      );
+    }
+
     final playlist = _playlistSession;
     if (playlist != null && playlist.isValid) {
       final nextIndex = playlist.currentIndex + 1;
@@ -377,7 +411,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       return;
     }
     debugPrint('VideoPlayerPage: Video ended - triggering autoplay');
-    _playNextVideo();
+    _playNextVideo(userInitiated: false);
   }
 
   @override
@@ -464,11 +498,45 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         debugPrint('VideoPlayerPage: lifecycle paused – going to background');
         MediaSyncService().switchToBackground();
       }
+
+      // Android: stop decoding against a Surface that Android is about to tear down.
+      // Helps avoid stale MediaCodec / ExoPlayer state when returning hours later.
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          !_isLoading &&
+          !_hasError &&
+          _videoUrlFromApi != null) {
+        final controller = HlsVideoPlayer.getController(_video.videoId);
+        final wasPlaying =
+            controller != null &&
+            !controller.isDisposed &&
+            controller.isPlaying;
+        _androidWasPlayingBeforeBackground = wasPlaying;
+        unawaited(HlsVideoPlayer.pausePlayer(_video.videoId));
+      }
     } else if (state == AppLifecycleState.resumed) {
       _iosInactivePipProbe?.cancel();
       _iosInactivePipProbe = null;
       debugPrint('VideoPlayerPage: lifecycle resumed – back to foreground');
       MediaSyncService().switchToForeground();
+
+      final shouldResumePlayback = _androidWasPlayingBeforeBackground;
+      _androidWasPlayingBeforeBackground = false;
+
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          !_isLoading &&
+          !_hasError &&
+          _videoUrlFromApi != null &&
+          !_isReturningFromAuth) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(
+            HlsVideoPlayer.onAndroidLifecycleResumedFromBackground(
+              _video.videoId,
+              resumePlaybackIntent: shouldResumePlayback,
+            ),
+          );
+        });
+      }
     }
   }
 
@@ -507,6 +575,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       await HlsVideoPlayer.pausePlayer(_video.videoId);
     }
 
+    // Best-effort tracking for player pause.
+    if (mounted) {
+      unawaited(
+        context.read<FirstPartyAnalyticsService>().capture(
+          r'$click',
+          elementUiName: 'paused-video',
+          screenName: 'watch',
+          videoId: _video.videoId,
+          videoTitle: _video.videoTitle,
+        ),
+      );
+    }
+
     // Avoid setState during teardown (e.g. dispose) and after unmount.
     if (updateUiState && mounted && !_isNavigatingAway) {
       setState(() {
@@ -519,6 +600,42 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (_videoUrlFromApi != null) {
       debugPrint('VideoPlayerPage: _resumeVideo() called - resuming player');
       await HlsVideoPlayer.playPlayer(_video.videoId);
+
+      if (_playConversionSentForVideoId != _video.videoId) {
+        _playConversionSentForVideoId = _video.videoId;
+        unawaited(
+          context.read<FirstPartyAnalyticsService>().capture(
+            'conversion_play_started',
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: {
+              'source': 'watch',
+              if (_playlistSession != null) 'source_path': 'playlist',
+            },
+          ),
+        );
+      }
+
+      // Best-effort player "played" click (mirrors web tap tracking).
+      if (mounted) {
+        unawaited(
+          context.read<FirstPartyAnalyticsService>().capture(
+            r'$click',
+            elementUiName: 'played-video',
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: {
+              'source': 'watch',
+              'source_path': '/watch/${_video.videoId}',
+              'path': '/watch/${_video.videoId}',
+              'video_id': _video.videoId,
+              'video_title': _video.videoTitle,
+            },
+          ),
+        );
+      }
 
       if (_isNavigatingAway) {
         setState(() {
@@ -628,6 +745,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         repository: context.read<VideoRepository>(),
         videoId: newVideo.videoId,
         userRepository: context.read<UserRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       );
     });
 
@@ -651,6 +769,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _loadUserAndFollowStatus() async {
+    if (!await _isDeviceOnline()) return;
     try {
       final userRepository = context.read<UserRepository>();
       try {
@@ -758,6 +877,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _primePlaylistQueueMetadata() async {
     final session = _playlistSession;
     if (session == null || session.videoIds.isEmpty) return;
+    if (!await _isDeviceOnline()) return;
     final repo = context.read<VideoRepository>();
     var changed = false;
     for (final id in session.videoIds) {
@@ -942,6 +1062,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   void _openCommentsSheet() {
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: 'opened-comments',
+        screenName: 'watch',
+        videoId: _video.videoId,
+        videoTitle: _video.videoTitle,
+        properties: {
+          'source': 'watch',
+          'source_path': '/watch/${_video.videoId}',
+          'path': '/watch/${_video.videoId}',
+          'video_id': _video.videoId,
+          'video_title': _video.videoTitle,
+        },
+      ),
+    );
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -976,14 +1112,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _toggleSaveToLiked() async {
     final authRepository = context.read<AuthRepository>();
     if (authRepository.currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign in required')),
-      );
+      await _showSignInRequiredDialog();
       return;
     }
     if (_isLikeActionInFlight) {
       return;
     }
+
+    final connectivity = context.read<NetworkConnectivityService>();
+    await connectivity.ensureInitialized();
+    if (!connectivity.isConnected) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(offlineUserMessage),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
     _isLikeActionInFlight = true;
     final wasUpvoted = _isUpvoted;
     final previousUpvoteCount = _upvoteCount;
@@ -1024,6 +1174,58 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         likedVideo: _video,
       );
       await _refreshVoteStateIfAuthenticated();
+
+      final firstParty = context.read<FirstPartyAnalyticsService>();
+      if (_isUpvoted) {
+        unawaited(
+          firstParty.capture(
+            r'$click',
+            elementUiName: 'liked',
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: {
+              'path': '/watch/${_video.videoId}',
+              'source_path': '/watch/${_video.videoId}',
+              'source': 'watch',
+              'video_id': _video.videoId,
+              'video_title': _video.videoTitle,
+            },
+          ),
+        );
+        unawaited(
+          firstParty.capture(
+            'conversion_like_success',
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: {
+              'path': '/watch/${_video.videoId}',
+              'source_path': '/watch/${_video.videoId}',
+              'source': 'watch',
+              'video_id': _video.videoId,
+              'video_title': _video.videoTitle,
+            },
+          ),
+        );
+      } else {
+        unawaited(
+          firstParty.capture(
+            r'$click',
+            elementUiName: 'unliked',
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: {
+              'path': '/watch/${_video.videoId}',
+              'source_path': '/watch/${_video.videoId}',
+              'source': 'watch',
+              'video_id': _video.videoId,
+              'video_title': _video.videoTitle,
+            },
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -1032,9 +1234,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _isDownvoted = wasDownvoted;
           _downvoteCount = previousDownvoteCount;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update like: $e')),
-        );
+        final message = isOfflineError(e)
+            ? offlineUserMessage
+            : 'Could not update like. Please try again.';
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(message),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
       }
     } finally {
       _isLikeActionInFlight = false;
@@ -1328,6 +1538,39 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     final videoId = _video.videoId;
     if (videoId.isEmpty) return;
 
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: 'shared-video',
+        screenName: 'watch',
+        videoId: videoId,
+        videoTitle: _video.videoTitle,
+        properties: {
+          'source': 'watch',
+          'source_path': '/watch/$videoId',
+          'path': '/watch/$videoId',
+          'video_id': videoId,
+          'video_title': _video.videoTitle,
+        },
+      ),
+    );
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: 'share-video-native-share-button',
+        screenName: 'watch',
+        videoId: videoId,
+        videoTitle: _video.videoTitle,
+        properties: {
+          'source': 'watch',
+          'source_path': '/watch/$videoId',
+          'path': '/watch/$videoId',
+          'video_id': videoId,
+          'video_title': _video.videoTitle,
+        },
+      ),
+    );
+
     final url = 'https://www.hiffi.com/watch/$videoId';
     final title = _video.videoTitle;
     final renderObject = context.findRenderObject();
@@ -1353,7 +1596,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _openAddToPlaylistSheet() async {
     if (_isAddToPlaylistSheetOpen) return;
+
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) {
+      await _showSignInRequiredDialog();
+      return;
+    }
+
     _isAddToPlaylistSheetOpen = true;
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: 'video-card-add-to-playlist-button',
+        screenName: 'watch',
+        videoId: _video.videoId,
+        videoTitle: _video.videoTitle,
+      ),
+    );
     // Fire-and-forget analytics so the sheet appears instantly.
     context.read<AnalyticsService>().logEvent(
       context,
@@ -1376,6 +1635,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _fetchAndInitializePlayer() async {
+    if (!await _isDeviceOnline()) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+          _isNoInternet = true;
+        });
+      }
+      return;
+    }
     try {
       final videoRepository = context.read<VideoRepository>();
       final videoInfo = await videoRepository.getVideoInfo(_video.videoId);
@@ -1402,16 +1671,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
     } catch (e) {
       if (mounted) {
-        final errorString = e.toString();
-        final isNoInternet =
-            errorString.contains('SocketException') ||
-            errorString.contains('Failed host lookup') ||
-            errorString.contains('Network is unreachable');
-
         setState(() {
           _isLoading = false;
           _hasError = true;
-          _isNoInternet = isNoInternet;
+          _isNoInternet = isOfflineError(e);
         });
       }
     }
@@ -1420,6 +1683,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _refreshVoteStateIfAuthenticated() async {
     final authRepository = context.read<AuthRepository>();
     if (authRepository.currentUser == null) return;
+    if (!await _isDeviceOnline()) return;
     try {
       final info = await context.read<VideoRepository>().getVideoInfo(_video.videoId);
       if (!mounted) return;
@@ -1540,21 +1804,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               size: 48,
             ),
             const SizedBox(height: 16),
-            Text(
-              _isNoInternet ? 'No Internet Connection' : 'Failed to load video',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                _isNoInternet ? offlineUserMessage : 'Failed to load video',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: _isNoInternet ? 14 : 16,
+                  fontWeight: _isNoInternet ? FontWeight.w500 : FontWeight.bold,
+                ),
               ),
             ),
-            if (_isNoInternet) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Please check your network and try again.',
-                style: TextStyle(color: Colors.white60, fontSize: 12),
-              ),
-            ],
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () {
@@ -1836,9 +2097,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                       ),
                                     ),
                                     IconButton(
-                                      icon: const Icon(Icons.playlist_add),
+                                      icon: const Icon(Icons.bookmark_border),
                                       color: const Color(0xFF6B6B6B),
-                                      tooltip: 'Add to playlist',
+                                      tooltip: 'Save to playlist',
                                       onPressed: _openAddToPlaylistSheet,
                                       visualDensity: VisualDensity.compact,
                                     ),
@@ -2075,6 +2336,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   onRetry: () =>
                                       _loadSuggestedVideosForPlayer(),
                                   onVideoSelected: (video) async {
+                                    unawaited(
+                                      context
+                                          .read<FirstPartyAnalyticsService>()
+                                          .capture(
+                                            r'$click',
+                                            elementUiName:
+                                                'opened-video-from-recommended',
+                                            screenName: 'watch',
+                                            videoId: video.videoId,
+                                            videoTitle: video.videoTitle,
+                                            properties: {
+                                              'source': 'suggested',
+                                              'source_path': 'watch_suggested',
+                                            },
+                                          ),
+                                    );
                                     final previousSession = _playlistSession;
                                     await _clearPlaylistSession();
                                     await _replaceVideo(
@@ -2202,7 +2479,7 @@ class _SuggestedVideosSection extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               isNoInternet
-                  ? 'No Internet Connection'
+                  ? offlineUserMessage
                   : 'Failed to load suggested videos',
               style: const TextStyle(
                 color: Color(0xFF1A1A1A),
@@ -2443,23 +2720,10 @@ class _PlaylistQueueModule extends StatelessWidget {
   }
 
   Widget _queueThumb(String id) {
-    final thumb = ImageUtils.getVideoThumbnailUrl(videoLookup[id]?.videoThumbnail);
-    if (thumb == null || thumb.isEmpty) {
-      return Container(
-        color: const Color(0xFFE8E8EB),
-        alignment: Alignment.center,
-        child: const Icon(Icons.music_video_rounded, color: Color(0xFF8A8A92)),
-      );
-    }
-    return Image.network(
-      thumb,
+    return HiffiVideoThumbnail(
+      thumbnailPath: videoLookup[id]?.videoThumbnail,
       fit: BoxFit.cover,
-      headers: ImageUtils.getVideoThumbnailHeaders(),
-      errorBuilder: (_, __, ___) => Container(
-        color: const Color(0xFFE8E8EB),
-        alignment: Alignment.center,
-        child: const Icon(Icons.broken_image_outlined, color: Color(0xFF8A8A92)),
-      ),
+      backgroundColor: const Color(0xFFE8E8EB),
     );
   }
 
@@ -2482,7 +2746,6 @@ class _SuggestedVideoCard extends StatelessWidget {
   const _SuggestedVideoCard({required this.video, required this.onTap});
   @override
   Widget build(BuildContext context) {
-    final thumbnailUrl = ImageUtils.getVideoThumbnailUrl(video.videoThumbnail);
     return InkWell(
       onTap: () => onTap(video),
       borderRadius: BorderRadius.circular(8),
@@ -2495,19 +2758,11 @@ class _SuggestedVideoCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: AspectRatio(
                 aspectRatio: 16 / 9,
-                child: thumbnailUrl == null || thumbnailUrl.isEmpty
-                    ? Container(
-                        color: Colors.grey[200],
-                        child: const Icon(
-                          Icons.video_library,
-                          color: Color(0xFF6B6B6B),
-                        ),
-                      )
-                    : Image.network(
-                        thumbnailUrl,
-                        headers: ImageUtils.getVideoThumbnailHeaders(),
-                        fit: BoxFit.cover,
-                      ),
+                child: HiffiVideoThumbnail(
+                  thumbnailPath: video.videoThumbnail,
+                  fit: BoxFit.cover,
+                  backgroundColor: Colors.grey[200],
+                ),
               ),
             ),
             const SizedBox(height: 8),

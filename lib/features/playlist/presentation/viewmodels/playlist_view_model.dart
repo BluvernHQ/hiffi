@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/utils/network_error_utils.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/domain/repositories/video_repository.dart';
 import '../../data/playlist_repository.dart';
@@ -28,6 +30,7 @@ class PlaylistViewModel extends ChangeNotifier {
   final Map<String, VideoModel> _videoCache = {};
   bool _isLoadingList = false;
   bool _isLoadingCurated = false;
+  DateTime? _curatedLastFetchedAt;
   String? _listError;
   String? _curatedError;
   final Set<String> _removingItems = <String>{};
@@ -37,9 +40,11 @@ class PlaylistViewModel extends ChangeNotifier {
   Timer? _searchDebounce;
 
   List<PlaylistSummary> get playlists => List.unmodifiable(_playlists);
-  List<PlaylistSummary> get curatedPlaylists => List.unmodifiable(_curatedPlaylists);
+  List<PlaylistSummary> get curatedPlaylists =>
+      List.unmodifiable(_curatedPlaylists);
   bool get isLoadingList => _isLoadingList;
   bool get isLoadingCurated => _isLoadingCurated;
+  DateTime? get curatedLastFetchedAt => _curatedLastFetchedAt;
   String? get listError => _listError;
   String? get curatedError => _curatedError;
   bool get isCreating => _creating;
@@ -51,8 +56,18 @@ class PlaylistViewModel extends ChangeNotifier {
       _addingToPlaylist.contains(playlistId);
 
   PlaylistDetail? detail(String playlistId) => _details[playlistId];
-  PlaylistDetail? curatedDetail(String playlistId) => _curatedDetails[playlistId];
+  PlaylistDetail? curatedDetail(String playlistId) =>
+      _curatedDetails[playlistId];
   VideoModel? cachedVideo(String videoId) => _videoCache[videoId];
+
+  Future<void> _requireConnection() async {
+    final connectivity = _connectivityService;
+    if (connectivity == null) return;
+    await connectivity.ensureInitialized();
+    if (!connectivity.isConnected) {
+      throw NoInternetException();
+    }
+  }
 
   Future<void> loadPlaylists() async {
     _isLoadingList = true;
@@ -63,8 +78,7 @@ class PlaylistViewModel extends ChangeNotifier {
       if (connectivity != null) {
         await connectivity.ensureInitialized();
         if (!connectivity.isConnected) {
-          _listError =
-              'No internet connection. Connect and pull to refresh playlists.';
+          _listError = offlineUserMessage;
           return;
         }
       }
@@ -73,23 +87,26 @@ class PlaylistViewModel extends ChangeNotifier {
         unawaited(loadPlaylistDetail(playlist.playlistId, silent: true));
       }
     } catch (e) {
-      _listError = e.toString();
+      _listError = isOfflineError(e) ? offlineUserMessage : e.toString();
     } finally {
       _isLoadingList = false;
       notifyListeners();
     }
   }
 
-  Future<void> loadCuratedPlaylists({bool silent = false}) async {
+  Future<void> loadCuratedPlaylists({
+    bool silent = false,
+    bool force = false,
+  }) async {
     if (_isLoadingCurated) return;
-    if (!silent) {
-      _isLoadingCurated = true;
-      _curatedError = null;
-      notifyListeners();
-    }
+    if (!force && !isCuratedStale()) return;
+    _isLoadingCurated = true;
+    _curatedError = null;
+    if (!silent) notifyListeners();
     try {
       final curated = await _playlistRepository.getCuratedPlaylists();
       _curatedPlaylists = curated;
+      _curatedLastFetchedAt = DateTime.now();
       for (final playlist in curated.take(6)) {
         unawaited(loadCuratedPlaylistDetail(playlist.playlistId, silent: true));
       }
@@ -101,21 +118,19 @@ class PlaylistViewModel extends ChangeNotifier {
     }
   }
 
+  bool isCuratedStale({Duration ttl = const Duration(seconds: 90)}) {
+    final lastFetched = _curatedLastFetchedAt;
+    if (lastFetched == null) return true;
+    return DateTime.now().difference(lastFetched) > ttl;
+  }
+
   Future<PlaylistDetail?> loadPlaylistDetail(
     String playlistId, {
     bool silent = false,
   }) async {
     if (!silent) notifyListeners();
     try {
-      final connectivity = _connectivityService;
-      if (connectivity != null) {
-        await connectivity.ensureInitialized();
-        if (!connectivity.isConnected) {
-          throw Exception(
-            'No internet connection. Connect and try opening this playlist again.',
-          );
-        }
-      }
+      await _requireConnection();
       final detail = await _playlistRepository.getPlaylist(playlistId);
       _details[playlistId] = detail;
       _upsertSummary(
@@ -172,6 +187,7 @@ class PlaylistViewModel extends ChangeNotifier {
     _creating = true;
     notifyListeners();
     try {
+      await _requireConnection();
       final detail = await _playlistRepository.createPlaylist(
         title: title,
         description: description,
@@ -201,6 +217,7 @@ class PlaylistViewModel extends ChangeNotifier {
     _addingToPlaylist.add(playlistId);
     notifyListeners();
     try {
+      await _requireConnection();
       await _playlistRepository.addItem(playlistId, videoId);
       await loadPlaylistDetail(playlistId, silent: true);
       _moveSummaryToTop(playlistId);
@@ -216,6 +233,7 @@ class PlaylistViewModel extends ChangeNotifier {
     _removingItems.add(key);
     notifyListeners();
     try {
+      await _requireConnection();
       await _playlistRepository.removeItem(playlistId, videoId);
       await loadPlaylistDetail(playlistId, silent: true);
       _moveSummaryToTop(playlistId);
@@ -256,6 +274,7 @@ class PlaylistViewModel extends ChangeNotifier {
     _deleting = true;
     notifyListeners();
     try {
+      await _requireConnection();
       await _playlistRepository.deletePlaylist(playlistId);
       _playlists.removeWhere((p) => p.playlistId == playlistId);
       _details.remove(playlistId);
