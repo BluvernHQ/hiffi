@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../../../core/routes/watch_route_extra.dart';
 import '../../../../core/services/analytics_service.dart';
 import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
@@ -14,6 +15,7 @@ import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/offline_info_state.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
@@ -204,12 +206,19 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             ),
         ],
       ),
-      child: Stack(
-        children: [
-          RefreshIndicator(
-            onRefresh: vm.loadPlaylists,
-            color: _kHiffiRed,
-            child: CustomScrollView(
+      child: NetworkPageShell(
+        hasCachedContent: vm.playlists.isNotEmpty,
+        isLoading:
+            (vm.isLoadingList || _initialLoadPending) && vm.playlists.isEmpty,
+        emptyDescription:
+            'Connect to the internet to load your playlists.',
+        onRetry: vm.loadPlaylists,
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: vm.loadPlaylists,
+              color: _kHiffiRed,
+              child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(
                 parent: BouncingScrollPhysics(),
               ),
@@ -248,9 +257,28 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                               onQuickPlay: () {
                                 final d = vm.detail(p.playlistId);
                                 if (d == null || d.items.isEmpty) return;
-                                final first = d.items.first.videoId;
+                                final item = d.items.first;
+                                final video =
+                                    vm.cachedVideo(item.videoId) ??
+                                    VideoModel.preview(
+                                      videoId: item.videoId,
+                                      title: item.videoTitle ?? '',
+                                      thumbnail: item.videoThumbnail ?? '',
+                                    );
+                                final session = PlaylistSession(
+                                  playlistId: d.playlistId,
+                                  title: d.title,
+                                  videoIds:
+                                      d.items.map((e) => e.videoId).toList(),
+                                  currentIndex: 0,
+                                  autoplay: true,
+                                );
                                 context.go(
-                                  '/watch/$first?playlist=${p.playlistId}&pindex=0',
+                                  '/watch/${item.videoId}?playlist=${p.playlistId}&pindex=0',
+                                  extra: WatchRouteExtra(
+                                    video: video,
+                                    playlistSession: session,
+                                  ),
                                 );
                               },
                             ),
@@ -263,6 +291,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

@@ -19,9 +19,11 @@ import '../../features/search/presentation/viewmodels/search_view_model.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
 import '../../features/liked/presentation/viewmodels/liked_videos_view_model.dart';
 import '../../features/watch_history/presentation/viewmodels/watch_history_view_model.dart';
+import '../connectivity/connectivity_controller.dart';
 import '../routes/app_router.dart';
 import '../services/api_client.dart';
 import '../services/network_connectivity_service.dart';
+import '../services/session_expiry_handler.dart';
 import '../services/notification_service.dart';
 import '../services/analytics_service.dart';
 import '../analytics/analytics_config.dart';
@@ -33,6 +35,11 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<NetworkConnectivityService>(
       create: (_) => NetworkConnectivityService(),
       dispose: (_, service) => service.dispose(),
+    ),
+    ChangeNotifierProvider<ConnectivityController>(
+      create: (context) => ConnectivityController(
+        connectivityService: context.read<NetworkConnectivityService>(),
+      ),
     ),
     Provider<ApiClient>(
       create: (context) => ApiClient(
@@ -65,6 +72,16 @@ List<SingleChildWidget> buildAppProviders() {
       create: (context) =>
           AppRouter(authRepository: context.read<AuthRepository>()),
       dispose: (_, router) => router.dispose(),
+    ),
+    Provider<SessionExpiryHandler>(
+      create: (context) {
+        final handler = SessionExpiryHandler(
+          authRepository: context.read<AuthRepository>(),
+          appRouter: context.read<AppRouter>(),
+        );
+        context.read<ApiClient>().attachSessionExpiryHandler(handler);
+        return handler;
+      },
     ),
     Provider<AnalyticsService>(
       create: (context) =>

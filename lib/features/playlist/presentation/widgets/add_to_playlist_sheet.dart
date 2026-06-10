@@ -7,6 +7,7 @@ import 'package:shimmer/shimmer.dart';
 
 import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/utils/auth_error_utils.dart';
+import '../../../../core/utils/error_toast_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/services/analytics_service.dart';
 import '../../../../core/services/network_connectivity_service.dart';
@@ -165,32 +166,33 @@ class _AddToPlaylistSheetState extends State<AddToPlaylistSheet> {
   }
 
   void _showPlaylistError(Object error) {
-    final message = isAuthRequiredError(error)
-        ? authRequiredUserMessage()
-        : isOfflineError(error)
-        ? offlineUserMessage
-        : 'Could not update playlists. Please try again.';
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          action: isAuthRequiredError(error)
-              ? SnackBarAction(
-                  label: 'Sign in',
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    final returnTo =
-                        '/watch/${widget.videoId}';
-                    context.push(
-                      '/login?returnTo=${Uri.encodeComponent(returnTo)}',
-                    );
-                  },
-                )
-              : null,
-        ),
-      );
+    if (isAuthRequiredError(error)) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(authRequiredUserMessage()),
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'Sign in',
+              onPressed: () {
+                Navigator.of(context).pop();
+                final returnTo = '/watch/${widget.videoId}';
+                context.push(
+                  '/login?returnTo=${Uri.encodeComponent(returnTo)}',
+                );
+              },
+            ),
+          ),
+        );
+      return;
+    }
+
+    showCatchToast(
+      context,
+      error,
+      fallback: 'Could not update playlists. Please try again.',
+    );
   }
 
   void _resetCreateForm() {

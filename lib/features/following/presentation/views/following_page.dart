@@ -3,8 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/widgets/offline_info_state.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
@@ -61,28 +60,28 @@ class _FollowingPageState extends State<FollowingPage> {
           ),
           title: const Text('Following'),
         ),
-        child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              await context.read<FollowingViewModel>().refresh();
-            },
-            child: CustomScrollView(
-              slivers: [
-                // Video Feed
-                if (followingViewModel.isLoading &&
-                    followingViewModel.videos.isEmpty)
-                  SliverFillRemaining(child: VideoListShimmer(itemCount: 6))
-                else if (followingViewModel.errorMessage != null &&
-                    followingViewModel.videos.isEmpty)
-                  SliverFillRemaining(
-                    child: isOfflineErrorMessage(followingViewModel.errorMessage)
-                        ? OfflineInfoState(
-                            message:
-                                'Connect to the internet to load videos from creators you follow.',
-                            actionLabel: 'Try Again',
-                            onAction: () => followingViewModel.refresh(),
-                          )
-                        : Center(
+        child: NetworkPageShell(
+          hasCachedContent: followingViewModel.videos.isNotEmpty,
+          isLoading:
+              followingViewModel.isLoading &&
+              followingViewModel.videos.isEmpty,
+          emptyDescription:
+              'Connect to the internet to load videos from creators you follow.',
+          onRetry: () => followingViewModel.refresh(),
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await context.read<FollowingViewModel>().refresh();
+              },
+              child: CustomScrollView(
+                slivers: [
+                  if (followingViewModel.isLoading &&
+                      followingViewModel.videos.isEmpty)
+                    SliverFillRemaining(child: VideoListShimmer(itemCount: 6))
+                  else if (followingViewModel.errorMessage != null &&
+                      followingViewModel.videos.isEmpty)
+                    SliverFillRemaining(
+                      child: Center(
                             child: Padding(
                               padding: const EdgeInsets.all(24.0),
                               child: Column(
@@ -274,6 +273,7 @@ class _FollowingPageState extends State<FollowingPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

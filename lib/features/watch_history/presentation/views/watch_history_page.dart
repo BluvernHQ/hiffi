@@ -6,16 +6,13 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/routes/video_player_route_extra.dart';
 import '../../../../core/services/network_connectivity_service.dart';
-import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
-import '../../../../core/widgets/offline_info_state.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
-import '../../../auth/data/auth_repository.dart';
-import '../../../auth/presentation/viewmodels/auth_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/domain/models/watch_history_item.dart';
 import '../viewmodels/watch_history_view_model.dart';
@@ -122,22 +119,6 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
   Widget build(BuildContext context) {
     final vm = context.watch<WatchHistoryViewModel>();
 
-    if (vm.unauthorized) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        final watchVm = context.read<WatchHistoryViewModel>();
-        final authRepository = context.read<AuthRepository>();
-        final authViewModel = context.read<AuthViewModel>();
-        final router = GoRouter.of(context);
-        watchVm.clearUnauthorizedFlag();
-        await authRepository.signOut();
-        if (!mounted) return;
-        authViewModel.reset();
-        if (!mounted) return;
-        router.go('/login?returnTo=/watch-history');
-      });
-    }
-
     final rows = _buildRows(vm.items);
     _scheduleShortListFillIfNeeded();
 
@@ -165,27 +146,26 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
           ),
           title: const Text('History'),
         ),
-        child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: () => context.read<WatchHistoryViewModel>().refresh(),
-            child: CustomScrollView(
-              controller: _scrollController,
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                if (vm.isLoading && vm.items.isEmpty)
-                  const SliverFillRemaining(
-                    child: HistoryListShimmer(itemCount: 8),
-                  )
-                else if (vm.errorMessage != null && vm.items.isEmpty)
-                  SliverFillRemaining(
-                    child: isOfflineErrorMessage(vm.errorMessage)
-                        ? OfflineInfoState(
-                            message:
-                                'Connect to the internet to view your watch history.',
-                            actionLabel: 'Try Again',
-                            onAction: () => vm.refresh(),
-                          )
-                        : Center(
+        child: NetworkPageShell(
+          hasCachedContent: vm.items.isNotEmpty,
+          isLoading: vm.isLoading && vm.items.isEmpty,
+          emptyDescription:
+              'Connect to the internet to view your watch history.',
+          onRetry: () => vm.refresh(),
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: () => context.read<WatchHistoryViewModel>().refresh(),
+              child: CustomScrollView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  if (vm.isLoading && vm.items.isEmpty)
+                    const SliverFillRemaining(
+                      child: HistoryListShimmer(itemCount: 8),
+                    )
+                  else if (vm.errorMessage != null && vm.items.isEmpty)
+                    SliverFillRemaining(
+                      child: Center(
                             child: Padding(
                               padding: const EdgeInsets.all(24),
                               child: Column(
@@ -338,6 +318,7 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

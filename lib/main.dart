@@ -30,6 +30,17 @@ bool _isExpectedUmamiOfflineError(Object error) {
           msg.contains('network is unreachable'));
 }
 
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) return;
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  } on FirebaseException catch (e) {
+    if (e.code != 'duplicate-app') rethrow;
+    // Hot restart can reset Dart state while native Firebase default app still exists.
+    Firebase.app();
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -43,7 +54,7 @@ Future<void> main() async {
     DeviceOrientation.portraitDown,
   ]);
 
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await _ensureFirebaseInitialized();
 
   final originalOnError = FlutterError.onError;
   FlutterError.onError = (errorDetails) {

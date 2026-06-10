@@ -8,9 +8,11 @@ import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/data/auth_user.dart';
 import '../../features/playlist/presentation/viewmodels/playlist_view_model.dart';
 import '../../features/playlist/domain/models/playlist_models.dart';
+import '../../features/video/domain/models/video_model.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/user/domain/models/user_model.dart';
 import '../analytics/first_party_analytics_service.dart';
+import '../routes/watch_route_extra.dart';
 import 'hiffi_image.dart';
 import 'hiffi_logo.dart';
 
@@ -371,32 +373,55 @@ class _AppSidebarState extends State<AppSidebar>
                                         }
                                       },
                                     ),
-                                  const SizedBox(height: 12),
                                   _CuratedPlaylistsSection(
-                                    playlists: playlistViewModel.curatedPlaylists,
+                                    playlists:
+                                        playlistViewModel.curatedPlaylists,
                                     onTapPlaylist: (playlistId) async {
-                                      final vm = context.read<PlaylistViewModel>();
+                                      final vm = context
+                                          .read<PlaylistViewModel>();
                                       try {
-                                        final detail =
-                                            await vm.loadCuratedPlaylistDetail(
-                                          playlistId,
-                                          silent: true,
-                                        );
-                                        final firstVideoId =
+                                        final detail = await vm
+                                            .loadCuratedPlaylistDetail(
+                                              playlistId,
+                                              silent: true,
+                                            );
+                                        final firstItem =
                                             detail?.items.isNotEmpty == true
-                                            ? detail!.items.first.videoId
+                                            ? detail!.items.first
                                             : null;
-                                        if (firstVideoId == null ||
-                                            firstVideoId.isEmpty) {
+                                        if (firstItem == null ||
+                                            firstItem.videoId.isEmpty) {
                                           return;
                                         }
+                                        final video =
+                                            vm.cachedVideo(firstItem.videoId) ??
+                                            VideoModel.preview(
+                                              videoId: firstItem.videoId,
+                                              title: firstItem.videoTitle ?? '',
+                                              thumbnail:
+                                                  firstItem.videoThumbnail ??
+                                                  '',
+                                            );
+                                        final session = PlaylistSession(
+                                          playlistId: detail!.playlistId,
+                                          title: detail.title,
+                                          videoIds: detail.items
+                                              .map((e) => e.videoId)
+                                              .toList(),
+                                          currentIndex: 0,
+                                          autoplay: true,
+                                        );
                                         _toggleSidebar();
                                         Future.delayed(
                                           const Duration(milliseconds: 200),
                                           () {
                                             if (!mounted) return;
                                             context.push(
-                                              '/watch/$firstVideoId?playlist=$playlistId&pindex=0&curated=1',
+                                              '/watch/${firstItem.videoId}?playlist=$playlistId&pindex=0&curated=1',
+                                              extra: WatchRouteExtra(
+                                                video: video,
+                                                playlistSession: session,
+                                              ),
                                             );
                                           },
                                         );
@@ -413,6 +438,7 @@ class _AppSidebarState extends State<AppSidebar>
                             Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                _buildHelpLegalEntry(context),
                                 _buildProfileSection(
                                   context,
                                   user,
@@ -432,6 +458,58 @@ class _AppSidebarState extends State<AppSidebar>
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildHelpLegalEntry(BuildContext context) {
+    final theme = Theme.of(context);
+    final isActive = widget.currentRoute == '/help-legal';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: theme.colorScheme.outlineVariant.withOpacity(0.45),
+            width: 1,
+          ),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () {
+          _toggleSidebar();
+          Future.delayed(const Duration(milliseconds: 200), () {
+            if (!mounted) return;
+            context.push('/help-legal');
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          child: Row(
+            children: [
+              Icon(
+                Icons.help_outline_rounded,
+                size: 17,
+                color: isActive
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurfaceVariant.withOpacity(0.82),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Help & Legal',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12.5,
+                  color: isActive
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant.withOpacity(0.82),
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

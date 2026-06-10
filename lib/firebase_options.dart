@@ -50,19 +50,19 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAKEycbe7vQcpWLpFXIM1iQ2IIU_y_NtXg',
-    appId: '1:488334531782:android:271ba681b0709a5b3c0bc7',
-    messagingSenderId: '488334531782',
-    projectId: 'hiffi-d003f',
-    storageBucket: 'hiffi-d003f.firebasestorage.app',
+    apiKey: 'AIzaSyDTEB139J7dE_TkGCMxLGABDRBZ7PuBNKI',
+    appId: '1:551101448241:android:346a334b867a75822f9510',
+    messagingSenderId: '551101448241',
+    projectId: 'marketplace-c4413',
+    storageBucket: 'marketplace-c4413.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDLVfZR6QcPFTl1gEloI9uWE4Db3yGO7AM',
-    appId: '1:488334531782:ios:67357f42a4c9ee8d3c0bc7',
-    messagingSenderId: '488334531782',
-    projectId: 'hiffi-d003f',
-    storageBucket: 'hiffi-d003f.firebasestorage.app',
+    apiKey: 'AIzaSyBbiSyVa10lD43MZZIMyfJNR3cFUfIwDDk',
+    appId: '1:551101448241:ios:bd6b1f13dd545b662f9510',
+    messagingSenderId: '551101448241',
+    projectId: 'marketplace-c4413',
+    storageBucket: 'marketplace-c4413.firebasestorage.app',
     iosBundleId: 'com.hiffi.app',
   );
 

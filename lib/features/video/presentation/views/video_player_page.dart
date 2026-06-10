@@ -18,9 +18,13 @@ import '../../../user/data/user_repository.dart';
 import '../../../user/domain/models/user_model.dart';
 import 'package:hiffi/features/video/presentation/controllers/video_comments_controller.dart';
 import 'package:hiffi/features/video/presentation/widgets/video_comments_section.dart';
-import '../../../../core/utils/image_utils.dart';
+import '../../../../core/connectivity/connectivity_controller.dart';
+import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/utils/fullscreen_manager.dart';
+import '../../../../core/utils/error_toast_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/widgets/network_page_shell.dart';
+import '../../../../core/widgets/offline_empty_state.dart';
 import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/services/pip_service.dart';
 import '../../../../core/widgets/hiffi_image.dart';
@@ -34,6 +38,7 @@ import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../playlist/presentation/widgets/add_to_playlist_sheet.dart';
 import '../../../liked/presentation/viewmodels/liked_videos_view_model.dart';
+import '../../../flags/presentation/widgets/report_flag_sheet.dart';
 import '../widgets/hls_video_player.dart';
 import '../controllers/hls_player_controller.dart';
 
@@ -227,6 +232,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   @override
+  void didUpdateWidget(VideoPlayerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.playlistSession != oldWidget.playlistSession &&
+        widget.playlistSession != null) {
+      _playlistSession = widget.playlistSession;
+      _syncPlaylistSessionForCurrentVideo();
+      _primePlaylistQueueMetadata();
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   void activate() {
     super.activate();
     // Route is visible again (e.g. popped a screen that was on top of the player).
@@ -243,7 +260,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // On iOS, background transitions also trigger deactivate(), and pausing here
     // breaks background playback.
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
-    final isForegroundRouteTransition = lifecycleState == AppLifecycleState.resumed;
+    final isForegroundRouteTransition =
+        lifecycleState == AppLifecycleState.resumed;
     if (!PipService.isInPipMode.value &&
         !PipService.pipUiHeldUntilReconnect.value &&
         !PipService.isTransitioningFromPip &&
@@ -822,6 +840,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _playPlaylistItem(String videoId, int index) async {
     final session = _playlistSession;
     if (session == null) return;
+    if (videoId != _video.videoId && !await _isDeviceOnline()) {
+      if (mounted) {
+        showCatchToast(
+          context,
+          NoInternetException(),
+          fallback: offlineUserMessage,
+        );
+      }
+      return;
+    }
     final nextSession = session.copyWith(currentIndex: index);
     setState(() {
       _playlistSession = nextSession;
@@ -874,6 +902,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     await PlaylistSessionStorage().clear();
   }
 
+  bool _playlistQueueEntryNeedsFetch(String id) {
+    final cached = _playlistQueueVideoCache[id];
+    if (cached == null) return true;
+    final title = cached.videoTitle.trim();
+    if (title.isEmpty || title.toLowerCase() == 'video') return true;
+    if (cached.videoThumbnail.trim().isEmpty) return true;
+    return false;
+  }
+
   Future<void> _primePlaylistQueueMetadata() async {
     final session = _playlistSession;
     if (session == null || session.videoIds.isEmpty) return;
@@ -881,7 +918,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     final repo = context.read<VideoRepository>();
     var changed = false;
     for (final id in session.videoIds) {
-      if (_playlistQueueVideoCache.containsKey(id)) continue;
+      if (!_playlistQueueEntryNeedsFetch(id)) continue;
       try {
         final info = await repo.getVideoInfo(id);
         final video = info.video;
@@ -931,13 +968,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _isFollowing = wasFollowing;
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to ${wasFollowing ? 'unfollow' : 'follow'}: ${e.toString()}',
-            ),
-            backgroundColor: Colors.red,
-          ),
+        showCatchToast(
+          context,
+          e,
+          fallback: wasFollowing
+              ? 'Could not unfollow. Please try again.'
+              : 'Could not follow. Please try again.',
         );
       }
     }
@@ -1234,59 +1270,36 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _isDownvoted = wasDownvoted;
           _downvoteCount = previousDownvoteCount;
         });
-        final message = isOfflineError(e)
-            ? offlineUserMessage
-            : 'Could not update like. Please try again.';
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(message),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+        showCatchToast(
+          context,
+          e,
+          fallback: 'Could not update like. Please try again.',
+        );
       }
     } finally {
       _isLikeActionInFlight = false;
     }
   }
 
-  /// Taste / feedback (same API as legacy downvote) — kept out of the main chrome.
-  Future<void> _toggleNotForMeFeedback() async {
+  Future<void> _reportCurrentVideo() async {
     final authRepository = context.read<AuthRepository>();
     if (authRepository.currentUser == null) {
-      _showSignInRequiredDialog();
+      await _showSignInRequiredDialog();
       return;
     }
-    final wasDownvoted = _isDownvoted;
-    final previousDownvoteCount = _downvoteCount;
-    final wasUpvoted = _isUpvoted;
-    final previousUpvoteCount = _upvoteCount;
-    setState(() {
-      if (_isDownvoted) {
-        _isDownvoted = false;
-        _downvoteCount--;
-      } else {
-        if (_isUpvoted) {
-          _isUpvoted = false;
-          _upvoteCount--;
-        }
-        _isDownvoted = true;
-        _downvoteCount++;
-      }
-    });
-    try {
-      await context.read<VideoRepository>().downvoteVideo(_video.videoId);
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _isDownvoted = wasDownvoted;
-          _downvoteCount = previousDownvoteCount;
-          _isUpvoted = wasUpvoted;
-          _upvoteCount = previousUpvoteCount;
-        });
-      }
-    }
+    if (!mounted) return;
+    await ReportFlagSheet.show(
+      context,
+      title: 'video',
+      reportType: 'video',
+      targetId: _video.videoId,
+      targetType: 'video',
+      metadata: {
+        'video_title': _video.videoTitle,
+        'thumbnail_url': _video.videoThumbnail,
+        'username': _video.userUsername,
+      },
+    );
   }
 
   Future<void> _showVideoOptionsBottomSheet() async {
@@ -1493,33 +1506,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         ),
                       ],
                       const Divider(height: 28),
-                      Text(
-                        'Feedback',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey[900],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Separate from saving to your library.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 8),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(
-                          Icons.visibility_off_outlined,
+                          Icons.flag_outlined,
                           color: Colors.grey[800],
                         ),
-                        title: const Text('Not for me'),
-                        subtitle: const Text('Fewer recommendations like this'),
+                        title: const Text('Report video'),
+                        subtitle: const Text(
+                          'Report harmful or inappropriate content',
+                        ),
                         onTap: () {
                           Navigator.of(context).pop();
                           Future.microtask(() {
                             if (!mounted) return;
-                            _toggleNotForMeFeedback();
+                            _reportCurrentVideo();
                           });
                         },
                       ),
@@ -1634,6 +1635,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
+  Future<void> _refreshAfterReconnect() async {
+    if (!mounted) return;
+    await _fetchAndInitializePlayer();
+    if (!mounted) return;
+    await Future.wait([
+      _loadSuggestedVideosForPlayer(useNewSeed: true),
+      _commentsController.fetchLatestComment(),
+      _refreshVoteStateIfAuthenticated(),
+      _primePlaylistQueueMetadata(),
+    ]);
+  }
+
   Future<void> _fetchAndInitializePlayer() async {
     if (!await _isDeviceOnline()) {
       if (mounted) {
@@ -1645,11 +1658,21 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
       return;
     }
+
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _hasError = false;
+        _isNoInternet = false;
+      });
+    }
+
     try {
       final videoRepository = context.read<VideoRepository>();
       final videoInfo = await videoRepository.getVideoInfo(_video.videoId);
-      if (videoInfo.videoUrl.isEmpty)
+      if (videoInfo.videoUrl.isEmpty) {
         throw Exception('Failed to get video URL from API');
+      }
       _videoUrlFromApi = videoInfo.videoUrl;
       if (mounted) {
         setState(() {
@@ -1666,6 +1689,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _isDownvoted = videoInfo.downvoted;
           _isFollowing = videoInfo.following;
           _isLoading = false;
+          _hasError = false;
           _isNoInternet = false;
         });
       }
@@ -1685,7 +1709,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (authRepository.currentUser == null) return;
     if (!await _isDeviceOnline()) return;
     try {
-      final info = await context.read<VideoRepository>().getVideoInfo(_video.videoId);
+      final info = await context.read<VideoRepository>().getVideoInfo(
+        _video.videoId,
+      );
       if (!mounted) return;
       setState(() {
         _isUpvoted = info.upvoted;
@@ -1818,14 +1844,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _isLoading = true;
-                  _hasError = false;
-                  _isNoInternet = false;
-                });
-                _fetchAndInitializePlayer();
-              },
+              onPressed: _refreshAfterReconnect,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFED1C2F),
                 foregroundColor: Colors.white,
@@ -1957,12 +1976,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       statusBarBrightness: Brightness.dark,
                     ),
                   ),
-            body: SafeArea(
-              top: false,
-              left: false,
-              right: false,
-              bottom: false,
-              child: CustomScrollView(
+            body: NetworkPageShell(
+              hasCachedContent: _video.videoId.isNotEmpty,
+              isLoading: _isLoading && !_hasError,
+              emptyDescription:
+                  'Connect to the internet to load this video.',
+              onRetry: _refreshAfterReconnect,
+              child: SafeArea(
+                top: false,
+                left: false,
+                right: false,
+                bottom: false,
+                child: CustomScrollView(
                 physics: isLandscape
                     ? const NeverScrollableScrollPhysics()
                     : const BouncingScrollPhysics(),
@@ -2324,6 +2349,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                     session: _playlistSession!,
                                     currentVideoId: _video.videoId,
                                     videoLookup: _playlistQueueVideoCache,
+                                    isOffline: context
+                                        .watch<ConnectivityController>()
+                                        .isOffline,
                                     onTapItem: (videoId, index) {
                                       _playPlaylistItem(videoId, index);
                                     },
@@ -2396,6 +2424,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                 ],
               ),
             ),
+            ),
           ),
         );
       },
@@ -2467,37 +2496,15 @@ class _SuggestedVideosSection extends StatelessWidget {
     if (hasError) {
       return Container(
         color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isNoInternet ? Icons.wifi_off_rounded : Icons.error_outline,
-              color: const Color(0xFF6B6B6B),
-              size: 40,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              isNoInternet
-                  ? offlineUserMessage
-                  : 'Failed to load suggested videos',
-              style: const TextStyle(
-                color: Color(0xFF1A1A1A),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            TextButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry'),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFED1C2F),
-              ),
-            ),
-          ],
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: OfflineEmptyState(
+          variant: OfflineEmptyVariant.section,
+          title: isNoInternet ? "You're Offline" : 'Could not load suggestions',
+          description: isNoInternet
+              ? 'Connect to the internet to see suggested videos.'
+              : 'Please try again.',
+          actionLabel: 'Try Again',
+          onTryAgain: onRetry,
         ),
       );
     }
@@ -2547,15 +2554,26 @@ class _PlaylistQueueModule extends StatelessWidget {
     required this.currentVideoId,
     required this.videoLookup,
     required this.onTapItem,
+    this.isOffline = false,
   });
 
   final PlaylistSession session;
   final String currentVideoId;
   final Map<String, VideoModel> videoLookup;
   final void Function(String videoId, int index) onTapItem;
+  final bool isOffline;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedCurrentIndex = session.videoIds.indexOf(currentVideoId);
+    final activeIndex = resolvedCurrentIndex >= 0
+        ? resolvedCurrentIndex
+        : session.currentIndex.clamp(0, session.videoIds.length - 1);
+
+    if (isOffline) {
+      return _buildOfflineQueue(context, activeIndex);
+    }
+
     final mediaQuery = MediaQuery.of(context);
     final shortestSide = mediaQuery.size.shortestSide;
     final textScale = MediaQuery.textScalerOf(
@@ -2570,15 +2588,12 @@ class _PlaylistQueueModule extends StatelessWidget {
     );
     final rowGap = shortestSide < 360 ? 4.0 : _kActivePlaylistRowGapBase;
 
-    final resolvedCurrentIndex = session.videoIds.indexOf(currentVideoId);
-    final activeIndex = resolvedCurrentIndex >= 0
-        ? resolvedCurrentIndex
-        : session.currentIndex.clamp(0, session.videoIds.length - 1);
     final queueEntries = session.videoIds.asMap().entries.toList();
     final visibleRows = queueEntries.length < visibleItemsCap
         ? queueEntries.length
         : visibleItemsCap;
-    final queueHeight = (visibleRows * rowHeight) + ((visibleRows - 1) * rowGap);
+    final queueHeight =
+        (visibleRows * rowHeight) + ((visibleRows - 1) * rowGap);
 
     return Container(
       color: Colors.white,
@@ -2606,7 +2621,10 @@ class _PlaylistQueueModule extends StatelessWidget {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(999),
@@ -2719,6 +2737,152 @@ class _PlaylistQueueModule extends StatelessWidget {
     );
   }
 
+  Widget _buildOfflineQueue(BuildContext context, int activeIndex) {
+    final total = session.videoIds.length;
+    final remaining = total > 1 ? total - 1 : 0;
+    final title = _queueTitle(currentVideoId);
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: const Color(0xFFFFF8F9),
+          border: Border.all(color: const Color(0xFFF4C8CE)),
+        ),
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'ACTIVE PLAYLIST',
+                  style: TextStyle(
+                    color: Color(0xFFED1C2F),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFE6E6EB)),
+                  ),
+                  child: Text(
+                    '${activeIndex + 1} of $total',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF6B6B6B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              session.title ?? 'Playlist',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFEEF1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFF2B2BC)),
+              ),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: SizedBox(
+                      width: 56,
+                      height: 32,
+                      child: _queueThumb(currentVideoId),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Now playing',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFB54558),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (remaining > 0) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE6E6EB)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.wifi_off_rounded,
+                      size: 16,
+                      color: Colors.grey.shade600,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        remaining == 1
+                            ? '1 more video in this playlist will appear when you\'re back online.'
+                            : '$remaining more videos in this playlist will appear when you\'re back online.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _queueThumb(String id) {
     return HiffiVideoThumbnail(
       thumbnailPath: videoLookup[id]?.videoThumbnail,
@@ -2729,12 +2893,19 @@ class _PlaylistQueueModule extends StatelessWidget {
 
   String _queueTitle(String id) {
     final title = videoLookup[id]?.videoTitle ?? '';
-    return title.trim().isNotEmpty ? title : id;
+    final trimmed = title.trim();
+    if (trimmed.isNotEmpty && trimmed.toLowerCase() != 'video') {
+      return trimmed;
+    }
+    return 'Loading…';
   }
 }
 
 class _VideoHistoryEntry {
-  const _VideoHistoryEntry({required this.video, required this.playlistSession});
+  const _VideoHistoryEntry({
+    required this.video,
+    required this.playlistSession,
+  });
 
   final VideoModel video;
   final PlaylistSession? playlistSession;

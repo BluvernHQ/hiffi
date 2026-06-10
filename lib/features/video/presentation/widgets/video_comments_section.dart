@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'dart:async';
 import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
+import '../../../flags/presentation/widgets/report_flag_sheet.dart';
 
 /// Username for a new comment/reply: [AuthRepository] can lag behind [UserViewModel].
 String resolvedCommentPosterUsername(
@@ -182,8 +183,7 @@ class LatestCommentPreview extends StatelessWidget {
                     HiffiAvatar(
                       imageUrl: controller.latestComment!.profilePicture,
                       size: 32,
-                      fallbackText:
-                          controller.latestComment!.commentByUsername,
+                      fallbackText: controller.latestComment!.commentByUsername,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -392,18 +392,21 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
                         child: InkWell(
                           onTap: () {
                             unawaited(
-                              context.read<FirstPartyAnalyticsService>().capture(
-                                r'$click',
-                                elementUiName: 'opened-comments',
-                                screenName: 'watch',
-                                videoId: controller.videoId,
-                                properties: {
-                                  'source': 'watch',
-                                  'source_path': '/watch/${controller.videoId}',
-                                  'path': '/watch/${controller.videoId}',
-                                  'video_id': controller.videoId,
-                                },
-                              ),
+                              context
+                                  .read<FirstPartyAnalyticsService>()
+                                  .capture(
+                                    r'$click',
+                                    elementUiName: 'opened-comments',
+                                    screenName: 'watch',
+                                    videoId: controller.videoId,
+                                    properties: {
+                                      'source': 'watch',
+                                      'source_path':
+                                          '/watch/${controller.videoId}',
+                                      'path': '/watch/${controller.videoId}',
+                                      'video_id': controller.videoId,
+                                    },
+                                  ),
                             );
                             onOpenSheet();
                           },
@@ -496,10 +499,7 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
 
 /// Signed-out comments block matching [VideoPlayerCommentsPanel] chrome.
 class VideoPlayerCommentsSignedOutPanel extends StatelessWidget {
-  const VideoPlayerCommentsSignedOutPanel({
-    super.key,
-    required this.onSignIn,
-  });
+  const VideoPlayerCommentsSignedOutPanel({super.key, required this.onSignIn});
 
   final VoidCallback onSignIn;
 
@@ -875,27 +875,50 @@ class _CommentTileState extends State<CommentTile> {
                             constraints: const BoxConstraints(),
                             onPressed: () {
                               unawaited(
-                                context
-                                    .read<FirstPartyAnalyticsService>()
-                                    .capture(
-                                      r'$click',
-                                      elementUiName:
-                                          'video-comment-delete-prompt-button',
-                                      screenName: 'comments',
-                                      videoId: widget.controller.videoId,
-                                      properties: {
-                                        'source': 'watch',
-                                        'source_path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'video_id': widget.controller.videoId,
-                                        'comment_id': widget.comment.commentId,
-                                      },
-                                    ),
+                                context.read<FirstPartyAnalyticsService>().capture(
+                                  r'$click',
+                                  elementUiName:
+                                      'video-comment-delete-prompt-button',
+                                  screenName: 'comments',
+                                  videoId: widget.controller.videoId,
+                                  properties: {
+                                    'source': 'watch',
+                                    'source_path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'video_id': widget.controller.videoId,
+                                    'comment_id': widget.comment.commentId,
+                                  },
+                                ),
                               );
                               _showDeleteConfirmation(context);
                             },
+                          )
+                        else
+                          PopupMenuButton<String>(
+                            icon: const Icon(
+                              Icons.more_horiz_rounded,
+                              size: 18,
+                              color: Color(0xFF6B6B6B),
+                            ),
+                            onSelected: (value) {
+                              if (value == 'report') {
+                                _reportComment(context);
+                              }
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem<String>(
+                                value: 'report',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.flag_outlined, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Report comment'),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                       ],
                     ),
@@ -1195,25 +1218,22 @@ class _CommentTileState extends State<CommentTile> {
                             onPressed: () {
                               if (_replyController.text.trim().isNotEmpty) {
                                 unawaited(
-                                  context
-                                      .read<FirstPartyAnalyticsService>()
-                                      .capture(
-                                        r'$click',
-                                        elementUiName:
-                                            'video-comment-reply-submit-button',
-                                        screenName: 'comments',
-                                        videoId: widget.controller.videoId,
-                                        properties: {
-                                          'source': 'watch',
-                                          'source_path':
-                                              '/watch/${widget.controller.videoId}',
-                                          'path':
-                                              '/watch/${widget.controller.videoId}',
-                                          'video_id': widget.controller.videoId,
-                                          'comment_id':
-                                              widget.comment.commentId,
-                                        },
-                                      ),
+                                  context.read<FirstPartyAnalyticsService>().capture(
+                                    r'$click',
+                                    elementUiName:
+                                        'video-comment-reply-submit-button',
+                                    screenName: 'comments',
+                                    videoId: widget.controller.videoId,
+                                    properties: {
+                                      'source': 'watch',
+                                      'source_path':
+                                          '/watch/${widget.controller.videoId}',
+                                      'path':
+                                          '/watch/${widget.controller.videoId}',
+                                      'video_id': widget.controller.videoId,
+                                      'comment_id': widget.comment.commentId,
+                                    },
+                                  ),
                                 );
                                 _postReply(_replyController.text.trim());
                               }
@@ -1229,24 +1249,22 @@ class _CommentTileState extends State<CommentTile> {
                             ),
                             onPressed: () {
                               unawaited(
-                                context
-                                    .read<FirstPartyAnalyticsService>()
-                                    .capture(
-                                      r'$click',
-                                      elementUiName:
-                                          'video-comment-reply-cancel-button',
-                                      screenName: 'comments',
-                                      videoId: widget.controller.videoId,
-                                      properties: {
-                                        'source': 'watch',
-                                        'source_path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'video_id': widget.controller.videoId,
-                                        'comment_id': widget.comment.commentId,
-                                      },
-                                    ),
+                                context.read<FirstPartyAnalyticsService>().capture(
+                                  r'$click',
+                                  elementUiName:
+                                      'video-comment-reply-cancel-button',
+                                  screenName: 'comments',
+                                  videoId: widget.controller.videoId,
+                                  properties: {
+                                    'source': 'watch',
+                                    'source_path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'video_id': widget.controller.videoId,
+                                    'comment_id': widget.comment.commentId,
+                                  },
+                                ),
                               );
                               setState(() {
                                 _isReplying = false;
@@ -1349,7 +1367,8 @@ class _CommentTileState extends State<CommentTile> {
                             videoId: widget.controller.videoId,
                             properties: {
                               'source': 'watch',
-                              'source_path': '/watch/${widget.controller.videoId}',
+                              'source_path':
+                                  '/watch/${widget.controller.videoId}',
                               'path': '/watch/${widget.controller.videoId}',
                               'video_id': widget.controller.videoId,
                               'comment_id': widget.comment.commentId,
@@ -1377,7 +1396,8 @@ class _CommentTileState extends State<CommentTile> {
                           videoId: widget.controller.videoId,
                           properties: {
                             'source': 'watch',
-                            'source_path': '/watch/${widget.controller.videoId}',
+                            'source_path':
+                                '/watch/${widget.controller.videoId}',
                             'path': '/watch/${widget.controller.videoId}',
                             'video_id': widget.controller.videoId,
                             'comment_id': widget.comment.commentId,
@@ -1427,6 +1447,26 @@ class _CommentTileState extends State<CommentTile> {
     } catch (e) {
       // Error handling is done in the controller
     }
+  }
+
+  Future<void> _reportComment(BuildContext context) async {
+    final auth = context.read<AuthRepository>();
+    if (auth.currentUser == null) {
+      context.push('/login');
+      return;
+    }
+    await ReportFlagSheet.show(
+      context,
+      title: 'comment',
+      reportType: 'comment',
+      targetId: widget.comment.commentId,
+      targetType: 'comment',
+      metadata: {
+        'message_text': widget.comment.comment,
+        'video_id': widget.controller.videoId,
+        'username': widget.comment.commentByUsername,
+      },
+    );
   }
 
   Future<void> _showDeleteConfirmation(BuildContext context) async {
@@ -1632,7 +1672,8 @@ class _CommentComposerState extends State<CommentComposer> {
                           unawaited(
                             context.read<FirstPartyAnalyticsService>().capture(
                               r'$click',
-                              elementUiName: 'video-comment-reply-cancel-button',
+                              elementUiName:
+                                  'video-comment-reply-cancel-button',
                               screenName: 'comments',
                               videoId: widget.controller.videoId,
                               properties: {
@@ -1735,24 +1776,22 @@ class _CommentComposerState extends State<CommentComposer> {
 
                             if (isReplying) {
                               unawaited(
-                                context
-                                    .read<FirstPartyAnalyticsService>()
-                                    .capture(
-                                      r'$click',
-                                      elementUiName:
-                                          'video-comment-reply-submit-button',
-                                      screenName: 'comments',
-                                      videoId: widget.controller.videoId,
-                                      properties: {
-                                        'source': 'watch',
-                                        'source_path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'video_id': widget.controller.videoId,
-                                        'comment_id': replyTarget.commentId,
-                                      },
-                                    ),
+                                context.read<FirstPartyAnalyticsService>().capture(
+                                  r'$click',
+                                  elementUiName:
+                                      'video-comment-reply-submit-button',
+                                  screenName: 'comments',
+                                  videoId: widget.controller.videoId,
+                                  properties: {
+                                    'source': 'watch',
+                                    'source_path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'video_id': widget.controller.videoId,
+                                    'comment_id': replyTarget.commentId,
+                                  },
+                                ),
                               );
                               widget.controller.postReply(
                                 commentId: replyTarget.commentId,
@@ -1763,22 +1802,20 @@ class _CommentComposerState extends State<CommentComposer> {
                               );
                             } else {
                               unawaited(
-                                context
-                                    .read<FirstPartyAnalyticsService>()
-                                    .capture(
-                                      r'$click',
-                                      elementUiName: 'video-comment-submit-button',
-                                      screenName: 'comments',
-                                      videoId: widget.controller.videoId,
-                                      properties: {
-                                        'source': 'watch',
-                                        'source_path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'path':
-                                            '/watch/${widget.controller.videoId}',
-                                        'video_id': widget.controller.videoId,
-                                      },
-                                    ),
+                                context.read<FirstPartyAnalyticsService>().capture(
+                                  r'$click',
+                                  elementUiName: 'video-comment-submit-button',
+                                  screenName: 'comments',
+                                  videoId: widget.controller.videoId,
+                                  properties: {
+                                    'source': 'watch',
+                                    'source_path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'path':
+                                        '/watch/${widget.controller.videoId}',
+                                    'video_id': widget.controller.videoId,
+                                  },
+                                ),
                               );
                               widget.controller.postComment(
                                 text: text,

@@ -41,13 +41,14 @@ class UserModel {
     // Handle nested response structure: {"success": true, "user": {...}}
     final userData = json['user'] as Map<String, dynamic>? ?? json;
 
-    // Parse status if present
+    // Parse live-stream status when API returns an object; ignore account
+    // status strings such as "ACTIVE".
     UserStatus? status;
-    if (userData['status'] != null) {
-      final statusData = userData['status'] as Map<String, dynamic>;
+    final rawStatus = userData['status'];
+    if (rawStatus is Map<String, dynamic>) {
       status = UserStatus(
-        isLive: statusData['is_live'] as bool? ?? false,
-        sessionId: statusData['session_id'] as String? ?? '',
+        isLive: rawStatus['is_live'] as bool? ?? false,
+        sessionId: rawStatus['session_id'] as String? ?? '',
       );
     }
 

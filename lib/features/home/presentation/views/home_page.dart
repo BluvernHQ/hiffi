@@ -13,7 +13,7 @@ import '../../../auth/data/auth_repository.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/hiffi_image.dart';
-import '../../../../core/widgets/offline_info_state.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
@@ -289,19 +289,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
     }
 
-    // If we got a 401 error, sign out to clear auth state and prevent infinite loops
-    if (userViewModel.hasUnauthorizedError && isAuthenticated) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        homeViewModel.signOut();
-      });
-    }
-
     // Load user data if authenticated and not already loaded
-    // Don't retry if there's a 401 error (unauthorized) to prevent infinite loops
-    if (isAuthenticated &&
-        user == null &&
-        !userViewModel.isLoading &&
-        !userViewModel.hasUnauthorizedError) {
+    if (isAuthenticated && user == null && !userViewModel.isLoading) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         userViewModel.loadCurrentUser();
       });
@@ -455,10 +444,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
           ],
         ),
-        child: SafeArea(
-          child: userViewModel.isLoading && user == null
-              ? VideoListShimmer(itemCount: 6)
-              : Stack(
+        child: NetworkPageShell(
+          hasCachedContent:
+              videoViewModel.videos.isNotEmpty || user != null,
+          isLoading:
+              (userViewModel.isLoading && user == null) ||
+              (videoViewModel.isLoading && videoViewModel.videos.isEmpty),
+          emptyDescription:
+              'Connect to the internet and try again to load your feed.',
+          onRetry: () async {
+            await context.read<VideoViewModel>().refresh();
+            await context.read<PlaylistViewModel>().loadCuratedPlaylists(
+              silent: true,
+              force: true,
+            );
+          },
+          child: SafeArea(
+            child: userViewModel.isLoading && user == null
+                ? VideoListShimmer(itemCount: 6)
+                : Stack(
                   children: [
                     RefreshIndicator(
                       onRefresh: () async {
@@ -568,14 +572,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   final offline = isOfflineErrorMessage(
                                     videoViewModel.errorMessage,
                                   );
-                                  if (offline) {
-                                    return OfflineInfoState(
-                                      message:
-                                          'Connect to the internet and try again to load your feed.',
-                                      actionLabel: 'Try Again',
-                                      onAction: () => videoViewModel.refresh(),
-                                    );
-                                  }
                                   return Center(
                                     child: Padding(
                                       padding: const EdgeInsets.all(24.0),
@@ -799,6 +795,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ),
                   ],
                 ),
+          ),
         ),
       ),
     );

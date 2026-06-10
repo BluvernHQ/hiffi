@@ -15,6 +15,16 @@ import '../services/notification_service.dart';
 const String videoUploadTaskName = 'video_upload_task';
 const String videoUploadPortName = 'video_upload_port';
 
+Future<void> _ensureFirebaseInitialized() async {
+  if (Firebase.apps.isNotEmpty) return;
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  } on FirebaseException catch (e) {
+    if (e.code != 'duplicate-app') rethrow;
+    Firebase.app();
+  }
+}
+
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
@@ -28,9 +38,7 @@ void callbackDispatcher() {
 
     try {
       WidgetsFlutterBinding.ensureInitialized();
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
+      await _ensureFirebaseInitialized();
       print('✅ Firebase initialized in worker');
 
       // Initialize notification service - this may fail in background workers
@@ -102,9 +110,11 @@ void callbackDispatcher() {
           }
 
           print('📊 Stage update: $stage - $statusText');
-          
+
           // Notify main isolate
-          final sendPort = ui.IsolateNameServer.lookupPortByName(videoUploadPortName);
+          final sendPort = ui.IsolateNameServer.lookupPortByName(
+            videoUploadPortName,
+          );
           if (sendPort != null) {
             sendPort.send({
               'taskId': payload.taskId,
@@ -115,7 +125,7 @@ void callbackDispatcher() {
         },
         onVideoProgress: (sent, total) async {
           final percent = total > 0 ? ((sent / total) * 100).toInt() : 0;
-          
+
           // Update notification
           await notificationService?.showProgress(
             taskId: payload.taskId,
@@ -126,7 +136,9 @@ void callbackDispatcher() {
           );
 
           // Notify main isolate
-          final sendPort = ui.IsolateNameServer.lookupPortByName(videoUploadPortName);
+          final sendPort = ui.IsolateNameServer.lookupPortByName(
+            videoUploadPortName,
+          );
           if (sendPort != null) {
             sendPort.send({
               'taskId': payload.taskId,
@@ -138,8 +150,10 @@ void callbackDispatcher() {
       );
 
       // Prevent duplicate uploads by treating success if video was uploaded but ack failed
-      final acknowledgeFailed = result.message.contains('acknowledge') && !result.success;
-      final shouldReturnSuccess = result.success || (videoUploadStageReached && acknowledgeFailed);
+      final acknowledgeFailed =
+          result.message.contains('acknowledge') && !result.success;
+      final shouldReturnSuccess =
+          result.success || (videoUploadStageReached && acknowledgeFailed);
 
       print('✅ Upload service completed: success=${result.success}');
 
@@ -153,7 +167,9 @@ void callbackDispatcher() {
       );
 
       // Send final result to main isolate
-      final sendPort = ui.IsolateNameServer.lookupPortByName(videoUploadPortName);
+      final sendPort = ui.IsolateNameServer.lookupPortByName(
+        videoUploadPortName,
+      );
       if (sendPort != null) {
         sendPort.send({
           'taskId': payload.taskId,

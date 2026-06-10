@@ -10,7 +10,7 @@ import 'core/di/app_providers.dart';
 import 'core/routes/app_router.dart';
 import 'core/analytics/first_party_analytics_service.dart';
 import 'core/services/in_app_notification_service.dart';
-import 'core/widgets/global_upload_overlay.dart';
+import 'core/widgets/app_connectivity_overlay.dart';
 
 class HiffiApp extends StatefulWidget {
   const HiffiApp({super.key});
@@ -202,12 +202,7 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
                 ),
                 routerConfig: appRouter.router,
                 builder: (context, child) {
-                  return Stack(
-                    children: [
-                      if (child != null) child,
-                      const GlobalUploadOverlay(),
-                    ],
-                  );
+                  return AppConnectivityOverlay(child: child);
                 },
               );
             },

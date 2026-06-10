@@ -8,15 +8,37 @@ import 'package:http/io_client.dart';
 import '../constants/api_constants.dart';
 import '../exceptions/api_exception.dart';
 import 'network_connectivity_service.dart';
+import 'session_expiry_handler.dart';
 import 'token_storage_service.dart';
 
 class ApiClient {
-  ApiClient({NetworkConnectivityService? connectivityService})
-    : _connectivityService = connectivityService;
+  ApiClient({
+    NetworkConnectivityService? connectivityService,
+    SessionExpiryHandler? sessionExpiryHandler,
+  }) : _connectivityService = connectivityService,
+       _sessionExpiryHandler = sessionExpiryHandler;
 
   final NetworkConnectivityService? _connectivityService;
+  SessionExpiryHandler? _sessionExpiryHandler;
   final http.Client _client = http.Client();
+
+  void attachSessionExpiryHandler(SessionExpiryHandler handler) {
+    _sessionExpiryHandler = handler;
+  }
   static DateTime? _lastOfflineLogAt;
+
+  Future<http.Response> _finalizeResponse(
+    http.Response response, {
+    required String endpoint,
+    required bool requiresAuth,
+  }) async {
+    await _sessionExpiryHandler?.handleIfNeeded(
+      statusCode: response.statusCode,
+      requiresAuth: requiresAuth,
+      endpoint: endpoint,
+    );
+    return response;
+  }
 
   Future<void> _checkConnectivity() async {
     if (_connectivityService != null) {
@@ -147,14 +169,11 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, token might be expired - user needs to login again
-      if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Token may be expired');
-        print('   💡 User needs to login again to get a new token');
-      }
-      // For optional auth, 401 is acceptable - endpoint may require auth but we tried without it
-
-      return response;
+      return _finalizeResponse(
+        response,
+        endpoint: endpoint,
+        requiresAuth: requiresAuth,
+      );
     } catch (error) {
       developer.log('GET $url failed: $error', name: 'hiffi.api', error: error);
       print('   ❌ Error: $error');
@@ -223,13 +242,11 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, token might be expired - user needs to login again
-      if (response.statusCode == 401 && requiresAuth && idToken == null) {
-        print('   ⚠️ 401 Unauthorized - Token may be expired');
-        print('   💡 User needs to login again to get a new token');
-      }
-
-      return response;
+      return _finalizeResponse(
+        response,
+        endpoint: endpoint,
+        requiresAuth: requiresAuth,
+      );
     } catch (error) {
       developer.log(
         'POST $url failed: $error',
@@ -297,13 +314,11 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, token might be expired - user needs to login again
-      if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Token may be expired');
-        print('   💡 User needs to login again to get a new token');
-      }
-
-      return response;
+      return _finalizeResponse(
+        response,
+        endpoint: endpoint,
+        requiresAuth: requiresAuth,
+      );
     } catch (error) {
       developer.log('PUT $url failed: $error', name: 'hiffi.api', error: error);
       print('   ❌ Error: $error');
@@ -361,13 +376,11 @@ class ApiClient {
         print('   📄 Body: ${response.body}');
       }
 
-      // If 401, token might be expired - user needs to login again
-      if (response.statusCode == 401 && requiresAuth) {
-        print('   ⚠️ 401 Unauthorized - Token may be expired');
-        print('   💡 User needs to login again to get a new token');
-      }
-
-      return response;
+      return _finalizeResponse(
+        response,
+        endpoint: endpoint,
+        requiresAuth: requiresAuth,
+      );
     } catch (error) {
       developer.log(
         'DELETE $url failed: $error',

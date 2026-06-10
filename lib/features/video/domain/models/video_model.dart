@@ -41,6 +41,32 @@ class VideoModel {
   final String? originalProfile; // e.g., '720p'
   final List<String> profiles; // e.g., ['240p', '480p']
 
+  /// Lightweight model for offline navigation (e.g. from playlist items).
+  factory VideoModel.preview({
+    required String videoId,
+    String title = '',
+    String thumbnail = '',
+    String username = '',
+  }) {
+    final now = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    return VideoModel(
+      videoId: videoId,
+      videoUrl: '',
+      videoThumbnail: thumbnail,
+      videoTitle: title.isNotEmpty ? title : 'Video',
+      videoDescription: '',
+      videoTags: const [],
+      videoViews: 0,
+      videoUpvotes: 0,
+      videoDownvotes: 0,
+      videoComments: 0,
+      userUid: '',
+      userUsername: username,
+      createdAt: now,
+      updatedAt: now,
+    );
+  }
+
   factory VideoModel.fromJson(Map<String, dynamic> json) {
     // Some API endpoints return user info in a nested 'user' object
     final userData = json['user'] as Map<String, dynamic>?;

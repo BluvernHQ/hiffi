@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/widgets/offline_info_state.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/utils/responsive.dart';
@@ -94,33 +94,33 @@ class _SearchResultsPageState extends State<SearchResultsPage>
           ],
         ),
       ),
-      body: searchViewModel.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : searchViewModel.error != null
-          ? _buildErrorState(searchViewModel)
-          : searchViewModel.hasNoResults
-          ? _buildEmptyState()
-          : TabBarView(
-              controller: _tabController,
-              children: [
-                _buildAllResults(searchViewModel),
-                _buildVideoResults(searchViewModel),
-                _buildUserResults(searchViewModel),
-              ],
-            ),
+      body: NetworkPageShell(
+        hasCachedContent: searchViewModel.hasResults,
+        isLoading: searchViewModel.isLoading && !searchViewModel.hasResults,
+        emptyDescription:
+            'Connect to the internet and try again to search on Hiffi.',
+        onRetry: () => searchViewModel.search(widget.query),
+        child: searchViewModel.isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : searchViewModel.error != null
+            ? _buildErrorState(searchViewModel)
+            : searchViewModel.hasNoResults
+            ? _buildEmptyState()
+            : TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildAllResults(searchViewModel),
+                  _buildVideoResults(searchViewModel),
+                  _buildUserResults(searchViewModel),
+                ],
+              ),
+      ),
     );
   }
 
   Widget _buildErrorState(SearchViewModel viewModel) {
     final error = viewModel.error ?? '';
     final isNoInternet = isOfflineErrorMessage(error);
-    if (isNoInternet) {
-      return OfflineInfoState(
-        message: 'Connect to the internet and try again to search on Hiffi.',
-        actionLabel: 'Try Again',
-        onAction: () => viewModel.search(widget.query),
-      );
-    }
 
     return Center(
       child: Padding(

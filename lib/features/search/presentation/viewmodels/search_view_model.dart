@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../../core/utils/network_error_utils.dart';
 import '../../data/search_repository.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../user/data/user_repository.dart';
@@ -94,7 +95,10 @@ class SearchViewModel extends ChangeNotifier {
       _hasMoreVideos = videoResult.videos.length >= _videoPageLimit;
       _error = null;
     } catch (e) {
-      _error = 'Failed to search: ${e.toString()}';
+      _error = userFriendlyErrorMessage(
+        e,
+        fallback: 'Could not complete search. Please try again.',
+      );
       _userResults = [];
       _videoResults = [];
       _userCount = 0;
@@ -140,7 +144,10 @@ class SearchViewModel extends ChangeNotifier {
       _hasMoreUsers = updatedUsers.length >= _userPageLimit;
       _error = null;
     } catch (e) {
-      _error = 'Failed to search users: ${e.toString()}';
+      _error = userFriendlyErrorMessage(
+        e,
+        fallback: 'Could not search users. Please try again.',
+      );
       _userResults = [];
       _userCount = 0;
     } finally {
@@ -176,7 +183,10 @@ class SearchViewModel extends ChangeNotifier {
       _hasMoreVideos = result.videos.length >= _videoPageLimit;
       _error = null;
     } catch (e) {
-      _error = 'Failed to search videos: ${e.toString()}';
+      _error = userFriendlyErrorMessage(
+        e,
+        fallback: 'Could not search videos. Please try again.',
+      );
       _videoResults = [];
       _videoCount = 0;
     } finally {
@@ -250,7 +260,10 @@ class SearchViewModel extends ChangeNotifier {
       _userCount = updatedUsers.length;
       _hasMoreUsers = result.users.length >= _userPageLimit;
     } catch (e) {
-      _error = 'Failed to load more users: ${e.toString()}';
+      _error = userFriendlyErrorMessage(
+        e,
+        fallback: 'Could not load more users. Please try again.',
+      );
     } finally {
       _isLoadingMoreUsers = false;
       notifyListeners();
@@ -283,7 +296,10 @@ class SearchViewModel extends ChangeNotifier {
       _videoCount = _videoResults.length;
       _hasMoreVideos = result.videos.length >= _videoPageLimit;
     } catch (e) {
-      _error = 'Failed to load more videos: ${e.toString()}';
+      _error = userFriendlyErrorMessage(
+        e,
+        fallback: 'Could not load more videos. Please try again.',
+      );
     } finally {
       _isLoadingMoreVideos = false;
       notifyListeners();

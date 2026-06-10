@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../../../core/routes/watch_route_extra.dart';
 import '../../../../core/services/analytics_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/image_utils.dart';
@@ -379,9 +380,26 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         .where((item) => !_optimisticallyRemovedItems.contains(_itemRemovalKey(detail.playlistId, item.videoId)))
         .toList();
     if (index < 0 || index >= visibleItems.length) return;
-    final targetId = visibleItems[index].videoId;
+    final item = visibleItems[index];
+    final targetId = item.videoId;
+    final vm = context.read<PlaylistViewModel>();
+    final video =
+        vm.cachedVideo(targetId) ??
+        VideoModel.preview(
+          videoId: targetId,
+          title: item.videoTitle ?? '',
+          thumbnail: item.videoThumbnail ?? '',
+        );
+    final session = PlaylistSession(
+      playlistId: detail.playlistId,
+      title: detail.title,
+      videoIds: visibleItems.map((e) => e.videoId).toList(),
+      currentIndex: index,
+      autoplay: true,
+    );
     context.go(
       '/watch/$targetId?playlist=${detail.playlistId}&pindex=$index',
+      extra: WatchRouteExtra(video: video, playlistSession: session),
     );
   }
 

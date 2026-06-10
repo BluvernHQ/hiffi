@@ -23,12 +23,34 @@ import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
 import 'video_player_route_extra.dart';
+import 'watch_route_extra.dart';
 import '../../features/video/presentation/views/watch_screen.dart';
 import '../../features/search/presentation/views/search_results_page.dart';
+import '../../features/playlist/domain/models/playlist_models.dart';
 import '../../features/playlist/presentation/views/playlists_page.dart';
 import '../../features/playlist/presentation/views/playlist_detail_page.dart';
+import '../../features/content/presentation/views/content_webview_page.dart';
+import '../../features/content/presentation/views/help_legal_page.dart';
+import '../../features/flags/presentation/views/my_reports_page.dart';
+import '../../features/flags/presentation/views/my_report_detail_page.dart';
 
 class AppRouter {
+  static const String webBaseUrl = 'https://www.hiffi.com';
+
+  static const Map<String, ({String title, String path})> contentPages = {
+    'terms-of-use': (title: 'Terms of Use', path: '/terms-of-use'),
+    'payment-terms': (title: 'Payment Terms', path: '/payment-terms'),
+    'privacy-policy': (title: 'Privacy Policy', path: '/privacy-policy'),
+    'faq': (title: 'FAQ', path: '/faq'),
+    'support': (title: 'Support', path: '/support'),
+  };
+
+  static Uri? contentUriForSlug(String slug) {
+    final config = contentPages[slug];
+    if (config == null) return null;
+    return Uri.parse('$webBaseUrl${config.path}');
+  }
+
   /// For [RouteAware] on [VideoPlayerPage] (PiP eligibility when another route covers the player).
   final RouteObserver<ModalRoute<void>> routeObserver =
       RouteObserver<ModalRoute<void>>();
@@ -191,11 +213,25 @@ class AppRouter {
               return const SizedBox.shrink();
             }
 
+            final extra = state.extra;
+            VideoModel? initialVideo;
+            PlaylistSession? initialPlaylistSession;
+            if (extra is WatchRouteExtra) {
+              initialVideo = extra.video;
+              initialPlaylistSession = extra.playlistSession;
+            } else if (extra is VideoPlayerRouteExtra) {
+              initialVideo = extra.video;
+            } else if (extra is VideoModel) {
+              initialVideo = extra;
+            }
+
             return WatchScreen(
               videoId: videoId,
               playlistId: playlistId,
               playlistIndex: pindex,
               isCuratedPlaylist: isCurated,
+              initialVideo: initialVideo,
+              initialPlaylistSession: initialPlaylistSession,
             );
           },
         ),
@@ -218,6 +254,44 @@ class AppRouter {
           builder: (context, state) {
             final query = state.uri.queryParameters['q'] ?? '';
             return SearchResultsPage(query: query);
+          },
+        ),
+        GoRoute(
+          path: '/content/:slug',
+          name: 'content_page',
+          builder: (context, state) {
+            final slug = state.pathParameters['slug'] ?? '';
+            final config = contentPages[slug];
+            if (config == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (context.mounted) context.go('/home');
+              });
+              return const SizedBox.shrink();
+            }
+            return ContentWebViewPage(
+              title: config.title,
+              url: '$webBaseUrl${config.path}',
+            );
+          },
+        ),
+        GoRoute(
+          path: '/help-legal',
+          name: 'help_legal',
+          builder: (context, state) => const HelpLegalPage(),
+        ),
+        GoRoute(
+          path: '/my-reports',
+          name: 'my_reports',
+          builder: (context, state) => const MyReportsPage(),
+        ),
+        GoRoute(
+          path: '/my-reports/:referenceId',
+          name: 'my_report_detail',
+          builder: (context, state) {
+            final referenceId = Uri.decodeComponent(
+              state.pathParameters['referenceId'] ?? '',
+            );
+            return MyReportDetailPage(referenceId: referenceId);
           },
         ),
       ],
@@ -243,6 +317,10 @@ class AppRouter {
         final onSearch = state.uri.path == '/search';
         final onPlaylists = state.uri.path.startsWith('/playlists');
         final onReferral = state.uri.path.startsWith('/r/');
+        final onContentPage = state.uri.path.startsWith('/content/');
+        final onHelpLegal = state.uri.path == '/help-legal';
+        final onMyReports = state.uri.path == '/my-reports';
+        final onMyReportsDetail = state.uri.path.startsWith('/my-reports/');
 
         if (!isLoggedIn) {
           if (onPlaylists) {
@@ -255,6 +333,12 @@ class AppRouter {
           final onWatchHistory = state.uri.path == '/watch-history';
           if (onWatchHistory) {
             return '/login?returnTo=/watch-history';
+          }
+          if (onMyReports) {
+            return '/login?returnTo=/my-reports';
+          }
+          if (onMyReportsDetail) {
+            return '/login?returnTo=${Uri.encodeComponent(state.uri.toString())}';
           }
           // Allow access to home, video player, upload pages, and auth pages without authentication
           // Profile pages require authentication - redirect to home (login is optional)
@@ -271,6 +355,8 @@ class AppRouter {
               onWatch ||
               onSearch ||
               onReferral ||
+              onContentPage ||
+              onHelpLegal ||
               onPlaylists) {
             return null;
           }

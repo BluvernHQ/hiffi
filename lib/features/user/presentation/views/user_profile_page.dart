@@ -13,6 +13,7 @@ import '../../data/user_repository.dart';
 import '../../domain/models/user_model.dart';
 import '../viewmodels/user_view_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
+import '../../../flags/presentation/widgets/report_flag_sheet.dart';
 import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/utils/file_validation_utils.dart';
@@ -20,7 +21,9 @@ import '../../../../core/exceptions/api_exception.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
+import '../../../../core/utils/error_toast_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key, required this.username});
@@ -148,45 +151,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
     return UserModel(username: username, name: displayName);
   }
 
-  Widget _buildProfileOfflineBanner(
-    BuildContext context, {
-    required VoidCallback onRetry,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF3F3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFF4C7C7)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.wifi_off_rounded,
-            color: Color(0xFFED1C2F),
-            size: 22,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              offlineUserMessage,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF5A5A60),
-                height: 1.35,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   void dispose() {
     _nameController.dispose();
@@ -297,6 +261,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 onPressed: () =>
                     _showEditProfileDialog(context, user, viewModel),
               ),
+            if (!isOwnProfile && user != null && !isOffline)
+              IconButton(
+                icon: const Icon(Icons.flag_outlined, color: Colors.white),
+                tooltip: 'Report user',
+                onPressed: () => _reportUser(user),
+              ),
           ],
         ),
         body: !isAuthenticated
@@ -310,18 +280,30 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ],
                 ),
               )
-            : ((!_hasAttemptedLoad && user == null) ||
-                  (user == null && viewModel.isLoading && !isOffline))
-            ? const ProfileShimmer()
-            : user == null && viewModel.errorMessage != null && !isOffline
-            ? Center(
+            : NetworkPageShell(
+                hasCachedContent: user != null,
+                isLoading:
+                    (user == null && viewModel.isLoading) ||
+                    (!_hasAttemptedLoad && user == null),
+                emptyDescription:
+                    'Connect to the internet to view this profile.',
+                onRetry: () => viewModel.loadUser(widget.username),
+                child: ((!_hasAttemptedLoad && user == null) ||
+                        (user == null && viewModel.isLoading && !isOffline))
+                    ? const ProfileShimmer()
+                    : user == null &&
+                          viewModel.errorMessage != null &&
+                          !isOffline
+                    ? Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        viewModel.errorMessage!.toLowerCase().contains('not found')
+                        viewModel.errorMessage!.toLowerCase().contains(
+                              'not found',
+                            )
                             ? Icons.person_off
                             : Icons.error_outline_rounded,
                         size: 64,
@@ -329,7 +311,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        viewModel.errorMessage!.toLowerCase().contains('not found')
+                        viewModel.errorMessage!.toLowerCase().contains(
+                              'not found',
+                            )
                             ? 'User not found'
                             : 'Something went wrong',
                         style: Theme.of(context).textTheme.titleMedium,
@@ -379,12 +363,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
                           const SizedBox(height: 32),
-                          if (isOffline)
-                            _buildProfileOfflineBanner(
-                              context,
-                              onRetry: () => viewModel.loadUser(widget.username),
-                            ),
-                          if (isOffline) const SizedBox(height: 16),
                           _buildAboutCard(
                             context,
                             displayUser,
@@ -416,6 +394,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     ),
                   ],
                 ),
+              ),
               ),
       ),
     );
@@ -633,13 +612,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       }
                     }
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Failed to ${user.isFollowing == true ? 'unfollow' : 'follow'}: ${e.toString()}',
-                          ),
-                          backgroundColor: Colors.red,
-                        ),
+                      showCatchToast(
+                        context,
+                        e,
+                        fallback: user.isFollowing == true
+                            ? 'Could not unfollow. Please try again.'
+                            : 'Could not follow. Please try again.',
                       );
                     }
                   }
@@ -766,7 +744,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
                         );
                       },
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.copy_rounded, size: 18),
                     ),
@@ -1366,6 +1347,25 @@ class _UserProfilePageState extends State<UserProfilePage> {
         }
       }
     }
+  }
+
+  Future<void> _reportUser(UserModel user) async {
+    final authRepository = context.read<AuthRepository>();
+    if (authRepository.currentUser == null) {
+      final currentRoute = '/users/${widget.username}';
+      if (!mounted) return;
+      context.push('/login?returnTo=${Uri.encodeComponent(currentRoute)}');
+      return;
+    }
+    if (!mounted) return;
+    await ReportFlagSheet.show(
+      context,
+      title: 'user',
+      reportType: user.role == 'creator' ? 'creator' : 'user',
+      targetId: user.uid ?? user.username,
+      targetType: user.role == 'creator' ? 'creator' : 'user',
+      metadata: {'username': user.username, 'display_name': user.name},
+    );
   }
 
   void _showEditProfileDialog(
@@ -2575,7 +2575,10 @@ class _VideoGridItem extends StatelessWidget {
               right: 8,
               child: IgnorePointer(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.7),
                     borderRadius: BorderRadius.circular(4),

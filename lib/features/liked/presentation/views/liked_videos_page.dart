@@ -4,17 +4,14 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 
-import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
-import '../../../../core/widgets/offline_info_state.dart';
+import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/analytics/first_party_analytics_service.dart';
-import '../../../auth/data/auth_repository.dart';
-import '../../../auth/presentation/viewmodels/auth_view_model.dart';
 import '../../../video/domain/models/liked_video_item.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/liked_videos_view_model.dart';
@@ -38,22 +35,6 @@ class _LikedVideosPageState extends State<LikedVideosPage> {
   @override
   Widget build(BuildContext context) {
     final likedVm = context.watch<LikedVideosViewModel>();
-
-    if (likedVm.unauthorized) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        final likedViewModel = context.read<LikedVideosViewModel>();
-        final authRepository = context.read<AuthRepository>();
-        final authViewModel = context.read<AuthViewModel>();
-        final router = GoRouter.of(context);
-        likedViewModel.clearUnauthorizedFlag();
-        await authRepository.signOut();
-        if (!mounted) return;
-        authViewModel.reset();
-        if (!mounted) return;
-        router.go('/login?returnTo=/liked');
-      });
-    }
 
     return PopScope(
       canPop: false,
@@ -82,25 +63,25 @@ class _LikedVideosPageState extends State<LikedVideosPage> {
           ),
           title: const Text('Liked videos'),
         ),
-        child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: () async {
-              await context.read<LikedVideosViewModel>().refresh();
-            },
-            child: CustomScrollView(
-              slivers: [
-                if (likedVm.isLoading && likedVm.items.isEmpty)
-                  SliverFillRemaining(child: VideoListShimmer(itemCount: 6))
-                else if (likedVm.errorMessage != null && likedVm.items.isEmpty)
-                  SliverFillRemaining(
-                    child: isOfflineErrorMessage(likedVm.errorMessage)
-                        ? OfflineInfoState(
-                            message:
-                                'Connect to the internet to view your liked videos.',
-                            actionLabel: 'Try Again',
-                            onAction: () => likedVm.refresh(),
-                          )
-                        : Center(
+        child: NetworkPageShell(
+          hasCachedContent: likedVm.items.isNotEmpty,
+          isLoading: likedVm.isLoading && likedVm.items.isEmpty,
+          emptyDescription:
+              'Connect to the internet to view your liked videos.',
+          onRetry: () => likedVm.refresh(),
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await context.read<LikedVideosViewModel>().refresh();
+              },
+              child: CustomScrollView(
+                slivers: [
+                  if (likedVm.isLoading && likedVm.items.isEmpty)
+                    SliverFillRemaining(child: VideoListShimmer(itemCount: 6))
+                  else if (likedVm.errorMessage != null &&
+                      likedVm.items.isEmpty)
+                    SliverFillRemaining(
+                      child: Center(
                             child: Padding(
                               padding: const EdgeInsets.all(24.0),
                               child: Column(
@@ -225,6 +206,7 @@ class _LikedVideosPageState extends State<LikedVideosPage> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );
