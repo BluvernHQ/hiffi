@@ -211,9 +211,10 @@ class _AppSidebarState extends State<AppSidebar>
                                   horizontal: 16,
                                 ),
                                 children: [
+                                  const _SidebarSectionHeader(label: 'EXPLORE'),
                                   _SidebarItem(
-                                    icon: Icons.home_rounded,
-                                    activeIcon: Icons.home_rounded,
+                                    icon: Icons.home_outlined,
+                                    activeIcon: Icons.home_outlined,
                                     label: 'Home',
                                     isActive: widget.currentRoute == '/home',
                                     onTap: () {
@@ -238,141 +239,6 @@ class _AppSidebarState extends State<AppSidebar>
                                       }
                                     },
                                   ),
-                                  if (widget.isAuthenticated)
-                                    _SidebarItem(
-                                      icon: Icons.history_rounded,
-                                      activeIcon: Icons.history_rounded,
-                                      label: 'History',
-                                      isActive:
-                                          widget.currentRoute ==
-                                          '/watch-history',
-                                      onTap: () {
-                                        unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-history-link',
-                                                screenName: 'sidebar',
-                                              ),
-                                        );
-                                        _toggleSidebar();
-                                        if (widget.currentRoute !=
-                                            '/watch-history') {
-                                          Future.delayed(
-                                            const Duration(milliseconds: 200),
-                                            () {
-                                              if (mounted) {
-                                                context.go('/watch-history');
-                                              }
-                                            },
-                                          );
-                                        }
-                                      },
-                                    ),
-                                  if (widget.isAuthenticated)
-                                    _SidebarItem(
-                                      icon: Icons.thumb_up_alt_outlined,
-                                      activeIcon: Icons.thumb_up_alt_rounded,
-                                      label: 'Liked videos',
-                                      isActive: widget.currentRoute == '/liked',
-                                      onTap: () {
-                                        unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-liked-videos-link',
-                                                screenName: 'sidebar',
-                                              ),
-                                        );
-                                        _toggleSidebar();
-                                        if (widget.currentRoute != '/liked') {
-                                          Future.delayed(
-                                            const Duration(milliseconds: 200),
-                                            () {
-                                              if (mounted) {
-                                                context.go('/liked');
-                                              }
-                                            },
-                                          );
-                                        }
-                                      },
-                                    ),
-                                  if (widget.isAuthenticated)
-                                    _SidebarItem(
-                                      icon: Icons.queue_music_outlined,
-                                      activeIcon: Icons.queue_music_rounded,
-                                      label: 'My playlists',
-                                      isActive:
-                                          widget.currentRoute == '/playlists',
-                                      onTap: () {
-                                        unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-playlists-link',
-                                                screenName: 'sidebar',
-                                              ),
-                                        );
-                                        _toggleSidebar();
-                                        if (widget.currentRoute !=
-                                            '/playlists') {
-                                          Future.delayed(
-                                            const Duration(milliseconds: 200),
-                                            () {
-                                              if (mounted) {
-                                                context.go('/playlists');
-                                              }
-                                            },
-                                          );
-                                        }
-                                      },
-                                    ),
-                                  if (widget.isAuthenticated)
-                                    _SidebarItem(
-                                      icon: Icons.favorite_outline_rounded,
-                                      activeIcon: Icons.favorite_rounded,
-                                      label: 'Following',
-                                      isActive:
-                                          widget.currentRoute == '/following',
-                                      onTap: () {
-                                        unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-following-link',
-                                                screenName: 'sidebar',
-                                              ),
-                                        );
-                                        _toggleSidebar();
-                                        if (widget.currentRoute !=
-                                            '/following') {
-                                          Future.delayed(
-                                            const Duration(milliseconds: 200),
-                                            () {
-                                              if (mounted) {
-                                                context.go('/following');
-                                              }
-                                            },
-                                          );
-                                        }
-                                      },
-                                    ),
                                   _CuratedPlaylistsSection(
                                     playlists:
                                         playlistViewModel.curatedPlaylists,
@@ -430,6 +296,142 @@ class _AppSidebarState extends State<AppSidebar>
                                       }
                                     },
                                   ),
+                                  if (widget.isAuthenticated) ...[
+                                    const _SidebarSectionHeader(
+                                      label: 'YOUR ACTIVITY',
+                                    ),
+                                    _SidebarItem(
+                                      icon: Icons.history_rounded,
+                                      activeIcon: Icons.history_rounded,
+                                      label: 'History',
+                                      isActive:
+                                          widget.currentRoute ==
+                                          '/watch-history',
+                                      onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-history-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
+                                        _toggleSidebar();
+                                        if (widget.currentRoute !=
+                                            '/watch-history') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/watch-history');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                    _SidebarItem(
+                                      icon: Icons.thumb_up_outlined,
+                                      activeIcon: Icons.thumb_up_outlined,
+                                      label: 'Liked Videos',
+                                      isActive: widget.currentRoute == '/liked',
+                                      onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-liked-videos-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
+                                        _toggleSidebar();
+                                        if (widget.currentRoute != '/liked') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/liked');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                    _SidebarItem(
+                                      icon: Icons.queue_music_outlined,
+                                      activeIcon: Icons.queue_music_outlined,
+                                      label: 'Playlists',
+                                      isActive:
+                                          widget.currentRoute == '/playlists',
+                                      onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-playlists-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
+                                        _toggleSidebar();
+                                        if (widget.currentRoute !=
+                                            '/playlists') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/playlists');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                    _SidebarItem(
+                                      icon: Icons.person_outline_rounded,
+                                      activeIcon: Icons.person_outline_rounded,
+                                      label: 'Following',
+                                      isActive:
+                                          widget.currentRoute == '/following',
+                                      onTap: () {
+                                        unawaited(
+                                          context
+                                              .read<
+                                                FirstPartyAnalyticsService
+                                              >()
+                                              .capture(
+                                                r'$click',
+                                                elementUiName:
+                                                    'sidebar-following-link',
+                                                screenName: 'sidebar',
+                                              ),
+                                        );
+                                        _toggleSidebar();
+                                        if (widget.currentRoute !=
+                                            '/following') {
+                                          Future.delayed(
+                                            const Duration(milliseconds: 200),
+                                            () {
+                                              if (mounted) {
+                                                context.go('/following');
+                                              }
+                                            },
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -678,6 +680,30 @@ class _AppSidebarState extends State<AppSidebar>
   }
 }
 
+class _SidebarSectionHeader extends StatelessWidget {
+  const _SidebarSectionHeader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          letterSpacing: 1.2,
+          color: theme.colorScheme.onSurfaceVariant.withOpacity(0.65),
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+}
+
 class _CuratedPlaylistsSection extends StatelessWidget {
   const _CuratedPlaylistsSection({
     required this.playlists,
@@ -687,74 +713,61 @@ class _CuratedPlaylistsSection extends StatelessWidget {
   final List<PlaylistSummary> playlists;
   final void Function(String playlistId) onTapPlaylist;
 
+  static const _sparkleColor = Color(0xFFE57373);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (playlists.isEmpty) return const SizedBox.shrink();
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Text(
-              'CURATED MIX',
-              style: theme.textTheme.labelMedium?.copyWith(
-                letterSpacing: 1.5,
-                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          ...playlists.take(4).map((playlist) {
-            return Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () => onTapPlaylist(playlist.playlistId),
-                child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.auto_awesome_rounded,
-                        size: 16,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          playlist.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SidebarSectionHeader(label: 'CURATED MIX'),
+        ...playlists.take(4).map((playlist) {
+          return Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => onTapPlaylist(playlist.playlistId),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome_outlined,
+                      size: 20,
+                      color: _sparkleColor,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        playlist.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: theme.colorScheme.onSurface,
                         ),
                       ),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 18,
-                        color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant.withOpacity(
+                        0.55,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          }),
-        ],
-      ),
+            ),
+          );
+        }),
+      ],
     );
   }
 }
@@ -784,33 +797,33 @@ class _SidebarItem extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 4),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
             decoration: BoxDecoration(
               color: isActive
-                  ? theme.colorScheme.primary.withOpacity(0.1)
+                  ? theme.colorScheme.surfaceContainerHighest.withOpacity(0.75)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               children: [
                 Icon(
                   isActive ? (activeIcon ?? icon) : icon,
-                  color: isActive
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.onSurfaceVariant,
-                  size: 24,
+                  color: theme.colorScheme.onSurface.withOpacity(
+                    isActive ? 0.95 : 0.72,
+                  ),
+                  size: 22,
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 14),
                 Text(
                   label,
                   style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                    color: isActive
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface,
+                    fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: theme.colorScheme.onSurface.withOpacity(
+                      isActive ? 0.95 : 0.88,
+                    ),
                   ),
                 ),
               ],
