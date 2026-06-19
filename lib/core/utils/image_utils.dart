@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 /// Utility functions for handling image URLs, especially profile pictures
 class ImageUtils {
-  // Base URL for profile images
+  // // Base URL for profile images
   // static const String profileImageBaseUrl = 'https://prod.hiffi.workers.dev';
 
   // /// Base URL for video and thumbnail media (Workers).

@@ -1050,14 +1050,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       case _SignInPromptResult.signIn:
         {
           VideoPlayerPage.cacheVideo(_video.videoId, _video);
-          final currentRoute = '/video/${_video.videoId}';
+          final currentRoute = '/watch/${_video.videoId}';
           if (!mounted) return;
           context.go('/login?returnTo=${Uri.encodeComponent(currentRoute)}');
         }
       case _SignInPromptResult.signUp:
         {
           VideoPlayerPage.cacheVideo(_video.videoId, _video);
-          final currentRoute = '/video/${_video.videoId}';
+          final currentRoute = '/watch/${_video.videoId}';
           if (!mounted) return;
           context.go('/signup?returnTo=${Uri.encodeComponent(currentRoute)}');
         }
@@ -1118,28 +1118,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) =>
-          CommentsBottomSheet(controller: _commentsController),
+      builder: (context) => CommentsBottomSheet(
+        controller: _commentsController,
+        onSignInRequired: _showSignInRequiredDialog,
+      ),
     );
   }
 
   void _handleCreatorProfileTap() {
     if (_video.userUsername.isEmpty) return;
 
-    final authRepository = context.read<AuthRepository>();
-    if (authRepository.currentUser == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Sign in to view profile'),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      return;
-    }
-
+    // go_router does not preserve `extra` when popping back to /video/:id.
+    VideoPlayerPage.cacheVideo(_video.videoId, _video);
     _pauseVideo();
     context.push('/users/${_video.userUsername}');
   }
@@ -2047,35 +2037,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        children: [
-                                          Text(
-                                            '${_formatCount(_video.videoViews)} views',
-                                            style: const TextStyle(
-                                              color: Color(0xFF6B6B6B),
-                                              fontSize: 13,
-                                            ),
+                                      if (_video.videoViews >= 10000) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          '${_formatCount(_video.videoViews)} views',
+                                          style: const TextStyle(
+                                            color: Color(0xFF6B6B6B),
+                                            fontSize: 13,
                                           ),
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            width: 3,
-                                            height: 3,
-                                            decoration: const BoxDecoration(
-                                              color: Color(0xFF6B6B6B),
-                                              shape: BoxShape.circle,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            _formatDate(_video.createdAt),
-                                            style: const TextStyle(
-                                              color: Color(0xFF6B6B6B),
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -2334,8 +2305,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         color: Colors.white,
                         child: Builder(
                           builder: (context) {
-                            final authRepository = context
-                                .read<AuthRepository>();
                             final hasSuggestedBlock =
                                 _suggestedLoading ||
                                 _suggestedError ||
@@ -2404,16 +2373,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                     height: _kSuggestedToCommentsGap,
                                   ),
                                 ],
-                                if (authRepository.currentUser == null)
-                                  VideoPlayerCommentsSignedOutPanel(
-                                    onSignIn: _showSignInRequiredDialog,
-                                  )
-                                else
-                                  VideoPlayerCommentsPanel(
-                                    controller: _commentsController,
-                                    onOpenSheet: _openCommentsSheet,
-                                    onSignInRequired: _showSignInRequiredDialog,
-                                  ),
+                                VideoPlayerCommentsPanel(
+                                  controller: _commentsController,
+                                  onOpenSheet: _openCommentsSheet,
+                                  onSignInRequired: _showSignInRequiredDialog,
+                                ),
                               ],
                             );
                           },
@@ -2451,14 +2415,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         context,
       ).showSnackBar(const SnackBar(content: Text('Could not open this link')));
     }
-  }
-
-  String _formatDate(DateTime date) {
-    final diff = DateTime.now().difference(date);
-    if (diff.inDays > 0) return '${diff.inDays}d ago';
-    if (diff.inHours > 0) return '${diff.inHours}h ago';
-    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
-    return 'Just now';
   }
 }
 

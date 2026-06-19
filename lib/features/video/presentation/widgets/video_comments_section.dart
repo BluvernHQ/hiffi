@@ -155,7 +155,7 @@ class LatestCommentPreview extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (showHeaderRow) ...[
+              if (showHeaderRow && commentCount > 0) ...[
                 Row(
                   children: [
                     Text(
@@ -240,53 +240,6 @@ class LatestCommentPreview extends StatelessWidget {
                     ),
                   ),
                 ],
-              ] else ...[
-                if (showHeaderRow) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Be the first to comment!',
-                    style: TextStyle(fontSize: 14, color: Color(0xFF6B6B6B)),
-                  ),
-                ] else ...[
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.forum_outlined,
-                          size: 28,
-                          color: Colors.grey[600],
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'No comments yet',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 15,
-                                  color: Color(0xFF1A1A1A),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Be the first to share what you think.',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  height: 1.35,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
               ],
             ],
           ),
@@ -363,29 +316,30 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: const Color(
-                              0xFF1A1A1A,
-                            ).withValues(alpha: 0.08),
+                      if (count > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: const Color(
+                                0xFF1A1A1A,
+                              ).withValues(alpha: 0.08),
+                            ),
+                          ),
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              color: Color(0xFF6B6B6B),
+                            ),
                           ),
                         ),
-                        child: Text(
-                          '$count',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                            color: Color(0xFF6B6B6B),
-                          ),
-                        ),
-                      ),
                       const Spacer(),
                       Material(
                         color: Colors.transparent,
@@ -423,51 +377,52 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    count == 0
-                        ? 'Start the conversation — add a comment below.'
-                        : 'Preview below. Tap to read the full thread.',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF6B6B6B),
-                      height: 1.35,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () {
-                        unawaited(
-                          context.read<FirstPartyAnalyticsService>().capture(
-                            r'$click',
-                            elementUiName: 'opened-comments',
-                            screenName: 'watch',
-                            videoId: controller.videoId,
-                            properties: {
-                              'source': 'watch',
-                              'source_path': '/watch/${controller.videoId}',
-                              'path': '/watch/${controller.videoId}',
-                              'video_id': controller.videoId,
-                            },
-                          ),
-                        );
-                        onOpenSheet();
-                      },
-                      child: LatestCommentPreview(
-                        controller: controller,
-                        onTap: onOpenSheet,
-                        showHeaderRow: false,
-                        absorbTap: false,
-                        padding: const EdgeInsets.all(12),
-                        backgroundColor: Colors.white,
+                  if (count > 0) ...[
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Preview below. Tap to read the full thread.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF6B6B6B),
+                        height: 1.35,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
+                    const SizedBox(height: 12),
+                    Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () {
+                          unawaited(
+                            context.read<FirstPartyAnalyticsService>().capture(
+                              r'$click',
+                              elementUiName: 'opened-comments',
+                              screenName: 'watch',
+                              videoId: controller.videoId,
+                              properties: {
+                                'source': 'watch',
+                                'source_path': '/watch/${controller.videoId}',
+                                'path': '/watch/${controller.videoId}',
+                                'video_id': controller.videoId,
+                              },
+                            ),
+                          );
+                          onOpenSheet();
+                        },
+                        child: LatestCommentPreview(
+                          controller: controller,
+                          onTap: onOpenSheet,
+                          showHeaderRow: false,
+                          absorbTap: false,
+                          padding: const EdgeInsets.all(12),
+                          backgroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ] else
+                    const SizedBox(height: 12),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -497,79 +452,16 @@ class VideoPlayerCommentsPanel extends StatelessWidget {
   }
 }
 
-/// Signed-out comments block matching [VideoPlayerCommentsPanel] chrome.
-class VideoPlayerCommentsSignedOutPanel extends StatelessWidget {
-  const VideoPlayerCommentsSignedOutPanel({super.key, required this.onSignIn});
-
-  final VoidCallback onSignIn;
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomSafe = MediaQuery.paddingOf(context).bottom;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, 20 + bottomSafe),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFF1A1A1A).withValues(alpha: 0.06),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline_rounded,
-                    size: 22,
-                    color: const Color(0xFFED1C2F).withValues(alpha: 0.95),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Comments',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A1A),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Sign in to read comments and join the discussion.',
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.4,
-                  color: Colors.grey[800],
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: onSignIn,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFED1C2F),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: const Text('Sign in to comment'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 3️⃣ Primary Bottom Sheet
 class CommentsBottomSheet extends StatefulWidget {
   final VideoCommentsController controller;
+  final VoidCallback? onSignInRequired;
 
-  const CommentsBottomSheet({super.key, required this.controller});
+  const CommentsBottomSheet({
+    super.key,
+    required this.controller,
+    this.onSignInRequired,
+  });
 
   @override
   State<CommentsBottomSheet> createState() => _CommentsBottomSheetState();
@@ -675,35 +567,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
                     }
 
                     if (widget.controller.comments.isEmpty) {
-                      return Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.comment_outlined,
-                              size: 64,
-                              color: Colors.grey[300],
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'No comments yet',
-                              style: TextStyle(
-                                color: Color(0xFF6B6B6B),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Be the first to comment!',
-                              style: TextStyle(
-                                color: Color(0xFF6B6B6B),
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
+                      return const SizedBox.shrink();
                     }
 
                     return ListView.builder(
@@ -714,6 +578,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
                         return CommentTile(
                           comment: widget.controller.comments[index],
                           controller: widget.controller,
+                          onSignInRequired: widget.onSignInRequired,
                         );
                       },
                     );
@@ -725,6 +590,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
               CommentComposer(
                 controller: widget.controller,
                 focusNode: _focusNode,
+                onSignInRequired: widget.onSignInRequired,
               ),
             ],
           ),
@@ -741,14 +607,17 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
         children: [
           ListenableBuilder(
             listenable: widget.controller,
-            builder: (context, _) => Text(
-              '${widget.controller.totalCommentsCount} Comments',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1A1A1A),
-              ),
-            ),
+            builder: (context, _) {
+              final count = widget.controller.totalCommentsCount;
+              return Text(
+                count > 0 ? '$count Comments' : 'Comments',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A1A),
+                ),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.close, color: Color(0xFF1A1A1A)),
@@ -764,11 +633,13 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
 class CommentTile extends StatefulWidget {
   final CommentModel comment;
   final VideoCommentsController controller;
+  final VoidCallback? onSignInRequired;
 
   const CommentTile({
     super.key,
     required this.comment,
     required this.controller,
+    this.onSignInRequired,
   });
 
   @override
@@ -934,6 +805,15 @@ class _CommentTileState extends State<CommentTile> {
                     const SizedBox(height: 8),
                     GestureDetector(
                       onTap: () {
+                        final auth = context.read<AuthRepository>();
+                        if (auth.currentUser == null) {
+                          if (widget.onSignInRequired != null) {
+                            widget.onSignInRequired!();
+                          } else {
+                            context.push('/login');
+                          }
+                          return;
+                        }
                         unawaited(
                           context.read<FirstPartyAnalyticsService>().capture(
                             r'$click',
@@ -1587,11 +1467,13 @@ class _CommentTileState extends State<CommentTile> {
 class CommentComposer extends StatefulWidget {
   final VideoCommentsController controller;
   final FocusNode focusNode;
+  final VoidCallback? onSignInRequired;
 
   const CommentComposer({
     super.key,
     required this.controller,
     required this.focusNode,
+    this.onSignInRequired,
   });
 
   @override
@@ -1621,23 +1503,85 @@ class _CommentComposerState extends State<CommentComposer> {
 
   @override
   Widget build(BuildContext context) {
+    final authRepository = context.watch<AuthRepository>();
+    final isLoggedIn = authRepository.currentUser != null;
+
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
         final replyTarget = widget.controller.replyTarget;
         final isReplying = replyTarget != null;
 
+        final bottomPadding =
+            8.0 +
+            math.max(
+              MediaQuery.of(context).viewInsets.bottom,
+              MediaQuery.of(context).padding.bottom,
+            );
+
+        if (!isLoggedIn) {
+          return Container(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 8,
+              bottom: bottomPadding,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
+            child: GestureDetector(
+              onTap: () {
+                if (widget.onSignInRequired != null) {
+                  widget.onSignInRequired!();
+                } else {
+                  context.push('/login');
+                }
+              },
+              child: Row(
+                children: [
+                  const HiffiAvatar(imageUrl: null, size: 32),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: const Color(0xFFED1C2F).withOpacity(0.3),
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Sign in to comment...',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
         return Container(
           padding: EdgeInsets.only(
             left: 16,
             right: 16,
             top: 8,
-            bottom:
-                8 +
-                math.max(
-                  MediaQuery.of(context).viewInsets.bottom,
-                  MediaQuery.of(context).padding.bottom,
-                ),
+            bottom: bottomPadding,
           ),
           decoration: BoxDecoration(
             color: Colors.white,

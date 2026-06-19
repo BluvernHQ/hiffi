@@ -9,6 +9,8 @@ import '../../../../core/widgets/network_page_shell.dart';
 import '../../../playlist/data/playlist_repository.dart';
 import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../playlist/presentation/viewmodels/playlist_view_model.dart';
+import '../../../mood/data/mood_playlist_repository.dart';
+import '../../../mood/domain/models/mood_def.dart';
 import '../../domain/models/video_model.dart';
 import '../../domain/repositories/video_repository.dart';
 import 'video_player_page.dart';
@@ -124,6 +126,19 @@ class _WatchScreenState extends State<WatchScreen> {
     if (!await _isDeviceOnline()) return;
 
     try {
+      final moodVibe = moodVibeFromPlaylistId(incomingPlaylistId);
+      if (moodVibe != null) {
+        final moodRepo = context.read<MoodPlaylistRepository>();
+        final page = await moodRepo.getMoodPlaylist(
+          moodVibe,
+          limit: 100,
+          offset: 0,
+        );
+        _applyPlaylistDetail(page.detail);
+        await storage.save(_playlistSession!);
+        return;
+      }
+
       final repo = context.read<PlaylistRepository>();
       final detail = widget.isCuratedPlaylist
           ? await repo.getCuratedPlaylist(incomingPlaylistId)

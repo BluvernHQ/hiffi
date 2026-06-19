@@ -30,10 +30,10 @@ class SearchViewModel extends ChangeNotifier {
   bool _isLoadingMoreUsers = false;
   bool _isLoadingMoreVideos = false;
   String? _error;
-  int _userPage = 1;
-  int _videoPage = 1;
-  static const int _userPageLimit = 50;
-  static const int _videoPageLimit = 30;
+  int _userOffset = 0;
+  int _videoOffset = 0;
+  static const int _userPageLimit = 20;
+  static const int _videoPageLimit = 20;
   bool _hasMoreUsers = true;
   bool _hasMoreVideos = true;
 
@@ -68,10 +68,14 @@ class SearchViewModel extends ChangeNotifier {
     try {
       // Search both users and videos in parallel
       final results = await Future.wait([
-        _searchRepository.searchUsers(_query, page: _userPage, limit: _userPageLimit),
+        _searchRepository.searchUsers(
+          _query,
+          offset: _userOffset,
+          limit: _userPageLimit,
+        ),
         _searchRepository.searchVideos(
           _query,
-          page: _videoPage,
+          offset: _videoOffset,
           limit: _videoPageLimit,
         ),
       ]);
@@ -79,20 +83,27 @@ class SearchViewModel extends ChangeNotifier {
       final userResult = results[0] as UserSearchResult;
       final videoResult = results[1] as VideoSearchResult;
 
-      // Deduplicate users by UID to prevent showing the same user twice
       final uniqueUsers = _deduplicateUsersByUid(userResult.users);
-
-      // Update current user's profile if they appear in search results
       final updatedUsers = await _updateCurrentUserProfile(uniqueUsers);
 
-      // Use the actual deduplicated count, not the API count
-      // This ensures we only show what we actually have
       _userResults = updatedUsers;
       _videoResults = videoResult.videos;
-      _userCount = updatedUsers.length; // Use actual displayed count
+      _userCount = userResult.count;
       _videoCount = videoResult.count;
-      _hasMoreUsers = updatedUsers.length >= _userPageLimit;
-      _hasMoreVideos = videoResult.videos.length >= _videoPageLimit;
+      _userOffset = userResult.offset + userResult.users.length;
+      _videoOffset = videoResult.offset + videoResult.videos.length;
+      _hasMoreUsers = _hasMoreFromPage(
+        returnedCount: userResult.users.length,
+        limit: userResult.limit,
+        loadedCount: _userResults.length,
+        totalCount: userResult.count,
+      );
+      _hasMoreVideos = _hasMoreFromPage(
+        returnedCount: videoResult.videos.length,
+        limit: videoResult.limit,
+        loadedCount: _videoResults.length,
+        totalCount: videoResult.count,
+      );
       _error = null;
     } catch (e) {
       _error = userFriendlyErrorMessage(
@@ -119,7 +130,7 @@ class SearchViewModel extends ChangeNotifier {
     }
 
     _query = query.trim();
-    _userPage = 1;
+    _userOffset = 0;
     _hasMoreUsers = true;
     _isLoading = true;
     _error = null;
@@ -128,20 +139,22 @@ class SearchViewModel extends ChangeNotifier {
     try {
       final result = await _searchRepository.searchUsers(
         _query,
-        page: _userPage,
+        offset: _userOffset,
         limit: _userPageLimit,
       );
 
-      // Deduplicate users by UID to prevent showing the same user twice
       final uniqueUsers = _deduplicateUsersByUid(result.users);
-
-      // Update current user's profile if they appear in search results
       final updatedUsers = await _updateCurrentUserProfile(uniqueUsers);
 
-      // Use the actual deduplicated count, not the API count
       _userResults = updatedUsers;
-      _userCount = updatedUsers.length; // Use actual displayed count
-      _hasMoreUsers = updatedUsers.length >= _userPageLimit;
+      _userCount = result.count;
+      _userOffset = result.offset + result.users.length;
+      _hasMoreUsers = _hasMoreFromPage(
+        returnedCount: result.users.length,
+        limit: result.limit,
+        loadedCount: _userResults.length,
+        totalCount: result.count,
+      );
       _error = null;
     } catch (e) {
       _error = userFriendlyErrorMessage(
@@ -166,7 +179,7 @@ class SearchViewModel extends ChangeNotifier {
     }
 
     _query = query.trim();
-    _videoPage = 1;
+    _videoOffset = 0;
     _hasMoreVideos = true;
     _isLoading = true;
     _error = null;
@@ -175,12 +188,18 @@ class SearchViewModel extends ChangeNotifier {
     try {
       final result = await _searchRepository.searchVideos(
         _query,
-        page: _videoPage,
+        offset: _videoOffset,
         limit: _videoPageLimit,
       );
       _videoResults = result.videos;
       _videoCount = result.count;
-      _hasMoreVideos = result.videos.length >= _videoPageLimit;
+      _videoOffset = result.offset + result.videos.length;
+      _hasMoreVideos = _hasMoreFromPage(
+        returnedCount: result.videos.length,
+        limit: result.limit,
+        loadedCount: _videoResults.length,
+        totalCount: result.count,
+      );
       _error = null;
     } catch (e) {
       _error = userFriendlyErrorMessage(
@@ -204,8 +223,8 @@ class SearchViewModel extends ChangeNotifier {
     try {
       // Get limited results for suggestions (5 users, 5 videos)
       final results = await Future.wait([
-        _searchRepository.searchUsers(query.trim(), page: 1, limit: 5),
-        _searchRepository.searchVideos(query.trim(), page: 1, limit: 5),
+        _searchRepository.searchUsers(query.trim(), offset: 0, limit: 5),
+        _searchRepository.searchVideos(query.trim(), offset: 0, limit: 5),
       ]);
 
       final userResult = results[0] as UserSearchResult;
@@ -245,20 +264,24 @@ class SearchViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final nextPage = _userPage + 1;
       final result = await _searchRepository.searchUsers(
         _query,
-        page: nextPage,
+        offset: _userOffset,
         limit: _userPageLimit,
       );
 
       final merged = _deduplicateUsersByUid([..._userResults, ...result.users]);
       final updatedUsers = await _updateCurrentUserProfile(merged);
 
-      _userPage = nextPage;
       _userResults = updatedUsers;
-      _userCount = updatedUsers.length;
-      _hasMoreUsers = result.users.length >= _userPageLimit;
+      _userCount = result.count;
+      _userOffset = result.offset + result.users.length;
+      _hasMoreUsers = _hasMoreFromPage(
+        returnedCount: result.users.length,
+        limit: result.limit,
+        loadedCount: _userResults.length,
+        totalCount: result.count,
+      );
     } catch (e) {
       _error = userFriendlyErrorMessage(
         e,
@@ -279,10 +302,9 @@ class SearchViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final nextPage = _videoPage + 1;
       final result = await _searchRepository.searchVideos(
         _query,
-        page: nextPage,
+        offset: _videoOffset,
         limit: _videoPageLimit,
       );
 
@@ -291,10 +313,15 @@ class SearchViewModel extends ChangeNotifier {
           .where((video) => !existingVideoIds.contains(video.videoId))
           .toList();
 
-      _videoPage = nextPage;
       _videoResults = [..._videoResults, ...uniqueNewVideos];
-      _videoCount = _videoResults.length;
-      _hasMoreVideos = result.videos.length >= _videoPageLimit;
+      _videoCount = result.count;
+      _videoOffset = result.offset + result.videos.length;
+      _hasMoreVideos = _hasMoreFromPage(
+        returnedCount: result.videos.length,
+        limit: result.limit,
+        loadedCount: _videoResults.length,
+        totalCount: result.count,
+      );
     } catch (e) {
       _error = userFriendlyErrorMessage(
         e,
@@ -307,12 +334,24 @@ class SearchViewModel extends ChangeNotifier {
   }
 
   void _resetPagination() {
-    _userPage = 1;
-    _videoPage = 1;
+    _userOffset = 0;
+    _videoOffset = 0;
     _hasMoreUsers = true;
     _hasMoreVideos = true;
     _isLoadingMoreUsers = false;
     _isLoadingMoreVideos = false;
+  }
+
+  bool _hasMoreFromPage({
+    required int returnedCount,
+    required int limit,
+    required int loadedCount,
+    required int totalCount,
+  }) {
+    if (returnedCount == 0) return false;
+    if (returnedCount < limit) return false;
+    if (totalCount > loadedCount) return true;
+    return returnedCount >= limit;
   }
 
   void clear() {

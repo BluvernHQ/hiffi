@@ -173,18 +173,18 @@ class AppRouter {
             bool returningFromAuth = false;
 
             if (video == null) {
-              // Try to get from VideoPlayerPage cache (e.g., after returning from auth)
+              // Try to get from VideoPlayerPage cache (e.g., after returning from auth
+              // or popping back from a pushed route like a creator profile).
               final cachedVideo = VideoPlayerPage.getCachedVideo(videoId);
               if (cachedVideo != null) {
                 video = cachedVideo;
-                returningFromAuth = true; // Mark that we're returning from auth
-                // Clear cache after use
-                VideoPlayerPage.clearCache();
+                returningFromAuth = true;
               }
             }
             if (video == null) {
-              // If no video provided and not in cache, throw error
-              throw Exception('VideoModel is required');
+              // Deep links and back navigation do not preserve go_router `extra`.
+              // Hydrate by video id instead of crashing.
+              return WatchScreen(videoId: videoId);
             }
             return VideoPlayerPage(
               video: video,
@@ -341,9 +341,8 @@ class AppRouter {
             return '/login?returnTo=${Uri.encodeComponent(state.uri.toString())}';
           }
           // Allow access to home, video player, upload pages, and auth pages without authentication
-          // Profile pages require authentication - redirect to home (login is optional)
           if (onProfile) {
-            return '/home';
+            return null;
           }
           // Allow access to these pages without authentication
           if (loggingIn ||

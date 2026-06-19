@@ -183,7 +183,7 @@ class ApiUserRepository implements UserRepository {
     try {
       final response = await _apiClient.get(
         ApiConstants.getUser(username),
-        requiresAuth: true,
+        optionalAuth: true,
       );
 
       developer.log(

@@ -10,7 +10,6 @@ import 'package:provider/provider.dart';
 import 'package:in_app_update/in_app_update.dart';
 
 import '../../../auth/data/auth_repository.dart';
-import '../../../../core/utils/image_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/network_page_shell.dart';
@@ -20,7 +19,13 @@ import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
 import '../../../search/presentation/widgets/search_overlay.dart';
+import '../../../../core/routes/watch_route_extra.dart';
 import '../../../playlist/presentation/viewmodels/playlist_view_model.dart';
+import '../../../mood/domain/models/mood_def.dart';
+import '../../../mood/presentation/viewmodels/mood_feed_view_model.dart';
+import '../../../mood/presentation/widgets/active_mood_bar.dart';
+import '../../../mood/presentation/widgets/mood_picker_card.dart';
+import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
@@ -52,6 +57,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _loadData(clearViewedUser: true);
       _setupAuthListener();
       _checkForInAppUpdate();
+      context.read<MoodFeedViewModel>().restoreFromStorage();
     });
   }
 
@@ -273,10 +279,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final userViewModel = context.watch<UserViewModel>();
     final videoViewModel = context.watch<VideoViewModel>();
     final playlistViewModel = context.watch<PlaylistViewModel>();
-    final feedVideos = _buildPrioritizedFeed(
-      videoViewModel.videos,
-      playlistViewModel,
-    );
+    final moodFeedViewModel = context.watch<MoodFeedViewModel>();
+    final isMoodFeed = moodFeedViewModel.isMoodActive;
+    final feedVideos = isMoodFeed
+        ? moodFeedViewModel.videos
+        : _buildPrioritizedFeed(
+            videoViewModel.videos,
+            playlistViewModel,
+          );
+    final feedHasMore =
+        isMoodFeed ? moodFeedViewModel.hasMore : videoViewModel.hasMore;
+    final feedIsLoadingMore = isMoodFeed
+        ? moodFeedViewModel.isLoadingMore
+        : videoViewModel.isLoading;
 
     final authRepository = context.watch<AuthRepository>();
     final isAuthenticated = authRepository.currentUser != null;
@@ -446,18 +461,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ),
         child: NetworkPageShell(
           hasCachedContent:
-              videoViewModel.videos.isNotEmpty || user != null,
-          isLoading:
-              (userViewModel.isLoading && user == null) ||
-              (videoViewModel.isLoading && videoViewModel.videos.isEmpty),
-          emptyDescription:
-              'Connect to the internet and try again to load your feed.',
+              feedVideos.isNotEmpty || user != null,
+          isLoading: isMoodFeed
+              ? (moodFeedViewModel.isLoading && feedVideos.isEmpty)
+              : ((userViewModel.isLoading && user == null) ||
+                    (videoViewModel.isLoading && videoViewModel.videos.isEmpty)),
+          emptyDescription: isMoodFeed
+              ? 'Connect to the internet to load this mix.'
+              : 'Connect to the internet and try again to load your feed.',
           onRetry: () async {
-            await context.read<VideoViewModel>().refresh();
-            await context.read<PlaylistViewModel>().loadCuratedPlaylists(
-              silent: true,
-              force: true,
-            );
+            if (isMoodFeed) {
+              await context.read<MoodFeedViewModel>().refreshActiveMood();
+            } else {
+              await context.read<VideoViewModel>().refresh();
+              await context.read<PlaylistViewModel>().loadCuratedPlaylists(
+                silent: true,
+                force: true,
+              );
+            }
           },
           child: SafeArea(
             child: userViewModel.isLoading && user == null
@@ -466,6 +487,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   children: [
                     RefreshIndicator(
                       onRefresh: () async {
+                        if (moodFeedViewModel.isMoodActive) {
+                          await moodFeedViewModel.refreshActiveMood();
+                          return;
+                        }
                         await context.read<UserViewModel>().loadCurrentUser();
                         await context.read<VideoViewModel>().refresh();
                         await context.read<PlaylistViewModel>().loadCuratedPlaylists(
@@ -484,10 +509,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           // Compact Profile Section or Sign In Button
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                               child: user != null
                                   ? _CompactProfileSection(
                                       user: user,
@@ -524,6 +546,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     ),
                             ),
                           ),
+                          if (!_isSearchActive && !isMoodFeed && moodFeedViewModel.pickerOpen)
+                            SliverToBoxAdapter(
+                              child: MoodPickerCard(
+                                onMoodSelected: (query) {
+                                  context.read<MoodFeedViewModel>().applyMood(query);
+                                },
+                              ),
+                            ),
+                          if (!_isSearchActive &&
+                              isMoodFeed &&
+                              moodFeedViewModel.activeMood != null)
+                            SliverPersistentHeader(
+                              pinned: true,
+                              delegate: _ActiveMoodBarHeader(
+                                mood: moodFeedViewModel.activeMood!,
+                                onBack: () {
+                                  context.read<MoodFeedViewModel>().clearActiveMood();
+                                },
+                                onPlay: () => _playMoodFromStart(context),
+                              ),
+                            ),
                           // Search indicator
                           if (_isSearchActive &&
                               videoViewModel.searchQuery != null)
@@ -559,125 +602,132 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ),
                             ),
                           // Video Feed
-                          if (videoViewModel.isLoading &&
+                          if (isMoodFeed &&
+                              moodFeedViewModel.isLoading &&
+                              feedVideos.isEmpty)
+                            const SliverFillRemaining(
+                              child: VideoListShimmer(itemCount: 6),
+                            )
+                          else if (!isMoodFeed &&
+                              videoViewModel.isLoading &&
                               videoViewModel.videos.isEmpty)
                             SliverFillRemaining(
                               child: VideoListShimmer(itemCount: 6),
                             )
-                          else if (videoViewModel.errorMessage != null &&
+                          else if (isMoodFeed &&
+                              moodFeedViewModel.errorMessage != null &&
+                              feedVideos.isEmpty)
+                            SliverFillRemaining(
+                              hasScrollBody: false,
+                              child: _buildScrollableSliverFill(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isOfflineErrorMessage(
+                                            moodFeedViewModel.errorMessage,
+                                          )
+                                          ? Icons.wifi_off_rounded
+                                          : Icons.error_outline_rounded,
+                                      size: 48,
+                                      color: isOfflineErrorMessage(
+                                            moodFeedViewModel.errorMessage,
+                                          )
+                                          ? Theme.of(context).colorScheme.primary
+                                          : Theme.of(context).colorScheme.error,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      moodFeedViewModel.errorMessage!,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: 20),
+                                    FilledButton(
+                                      onPressed: moodFeedViewModel
+                                          .refreshActiveMood,
+                                      child: const Text('Try Again'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else if (!isMoodFeed &&
+                              videoViewModel.errorMessage != null &&
                               videoViewModel.videos.isEmpty)
                             SliverFillRemaining(
+                              hasScrollBody: false,
                               child: Builder(
                                 builder: (context) {
                                   final offline = isOfflineErrorMessage(
                                     videoViewModel.errorMessage,
                                   );
-                                  return Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(24.0),
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.all(24),
-                                            decoration: BoxDecoration(
-                                              color: offline
-                                                  ? Theme.of(context)
-                                                      .colorScheme
-                                                      .primaryContainer
-                                                      .withOpacity(0.3)
-                                                  : Theme.of(context)
-                                                      .colorScheme
-                                                      .errorContainer
-                                                      .withOpacity(0.3),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Icon(
-                                              offline
-                                                  ? Icons.wifi_off_rounded
-                                                  : Icons.error_outline_rounded,
-                                              size: 64,
-                                              color: offline
-                                                  ? Theme.of(
-                                                      context,
-                                                    ).colorScheme.primary
-                                                  : Theme.of(
-                                                      context,
-                                                    ).colorScheme.error,
-                                            ),
+                                  return _buildScrollableSliverFill(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(20),
+                                          decoration: BoxDecoration(
+                                            color: offline
+                                                ? Theme.of(context)
+                                                    .colorScheme
+                                                    .primaryContainer
+                                                    .withOpacity(0.3)
+                                                : Theme.of(context)
+                                                    .colorScheme
+                                                    .errorContainer
+                                                    .withOpacity(0.3),
+                                            shape: BoxShape.circle,
                                           ),
-                                          const SizedBox(height: 32),
-                                          Text(
+                                          child: Icon(
                                             offline
-                                                ? 'You are offline right now'
-                                                : 'Oops! Something went wrong',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .headlineSmall
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.bold,
-                                                  letterSpacing: -0.5,
-                                                ),
-                                            textAlign: TextAlign.center,
+                                                ? Icons.wifi_off_rounded
+                                                : Icons.error_outline_rounded,
+                                            size: 48,
+                                            color: offline
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
+                                                : Theme.of(
+                                                    context,
+                                                  ).colorScheme.error,
                                           ),
-                                          const SizedBox(height: 12),
-                                          Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 16,
-                                            ),
-                                            child: Text(
-                                              offline
-                                                  ? 'Please check your connection and try again to enjoy Hiffi.'
-                                                  : 'We encountered an issue while loading your feed. Our team is on it!',
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodyLarge
-                                                  ?.copyWith(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                    height: 1.5,
-                                                  ),
-                                              textAlign: TextAlign.center,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 40),
-                                          ElevatedButton.icon(
-                                            onPressed: () {
-                                              videoViewModel.refresh();
-                                            },
-                                            icon: const Icon(
-                                              Icons.refresh_rounded,
-                                            ),
-                                            label: const Text(
-                                              'Try Again',
-                                              style: TextStyle(
+                                        ),
+                                        const SizedBox(height: 20),
+                                        Text(
+                                          offline
+                                              ? 'You are offline right now'
+                                              : 'Oops! Something went wrong',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
                                                 fontWeight: FontWeight.bold,
-                                                fontSize: 16,
                                               ),
-                                            ),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Theme.of(
-                                                context,
-                                              ).colorScheme.primary,
-                                              foregroundColor: Theme.of(
-                                                context,
-                                              ).colorScheme.onPrimary,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 40,
-                                                vertical: 16,
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          offline
+                                              ? 'Please check your connection and try again.'
+                                              : 'We encountered an issue while loading your feed.',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
                                               ),
-                                              elevation: 0,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 20),
+                                        FilledButton.icon(
+                                          onPressed: videoViewModel.refresh,
+                                          icon: const Icon(Icons.refresh_rounded),
+                                          label: const Text('Try Again'),
+                                        ),
+                                      ],
                                     ),
                                   );
                                 },
@@ -703,6 +753,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                     Text(
                                       _isSearchActive
                                           ? 'No videos found'
+                                          : isMoodFeed
+                                          ? 'No tracks yet'
                                           : 'No videos yet',
                                       style: Theme.of(context)
                                           .textTheme
@@ -738,7 +790,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           else
                             SliverPadding(
                               padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
-                              sliver: SliverGrid(
+                              sliver: SliverOpacity(
+                                opacity: isMoodFeed &&
+                                        moodFeedViewModel.isLoading &&
+                                        feedVideos.isNotEmpty
+                                    ? 0.35
+                                    : 1,
+                                sliver: SliverGrid(
                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: responsiveGridColumns(context),
                                   mainAxisSpacing: 12.h,
@@ -750,15 +808,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                 delegate: SliverChildBuilderDelegate(
                                   (context, index) {
                                     if (index >= feedVideos.length) {
-                                      // Load more if available (schedule after build to avoid setState during build)
-                                      if (videoViewModel.hasMore &&
-                                          !videoViewModel.isLoading) {
+                                      if (feedHasMore && !feedIsLoadingMore) {
                                         WidgetsBinding.instance
                                             .addPostFrameCallback((_) {
-                                              videoViewModel.loadVideos();
+                                              if (isMoodFeed) {
+                                                moodFeedViewModel.loadMore();
+                                              } else {
+                                                videoViewModel.loadVideos();
+                                              }
                                             });
                                       }
-                                      return videoViewModel.isLoading
+                                      return feedIsLoadingMore
                                           ? const Center(
                                               child: InlineShimmer(
                                                 width: 40,
@@ -768,12 +828,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                           : const SizedBox.shrink();
                                     }
                                     final video = feedVideos[index];
-                                    return _GridVideoCard(video: video);
+                                    return _GridVideoCard(
+                                      video: video,
+                                      isMoodFeed: isMoodFeed,
+                                      moodSessionBuilder: isMoodFeed
+                                          ? () => moodFeedViewModel
+                                                .buildSessionAt(index)
+                                          : null,
+                                    );
                                   },
                                   childCount:
                                       feedVideos.length +
-                                      (videoViewModel.hasMore ? 1 : 0),
+                                      (feedHasMore ? 1 : 0),
                                 ),
+                              ),
                               ),
                             ),
                         ],
@@ -831,6 +899,85 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final rng = Random(_curatedShuffleSeed);
     curatedVideos.shuffle(rng);
     return [...curatedVideos, ...nonCuratedVideos];
+  }
+
+  Future<void> _playMoodFromStart(BuildContext context) async {
+    final moodVm = context.read<MoodFeedViewModel>();
+    final session = moodVm.buildSessionAt(0);
+    if (session == null || moodVm.videos.isEmpty) return;
+
+    final video = moodVm.videos.first;
+    await moodVm.persistSession(session);
+    if (!context.mounted) return;
+
+    unawaited(
+      context.read<FirstPartyAnalyticsService>().capture(
+        r'$click',
+        elementUiName: 'mood-play-button',
+        screenName: 'home',
+        videoId: video.videoId,
+        videoTitle: video.videoTitle,
+      ),
+    );
+
+    context.push(
+      '/watch/${video.videoId}?playlist=${Uri.encodeComponent(session.playlistId)}&pindex=0',
+      extra: WatchRouteExtra(video: video, playlistSession: session),
+    );
+  }
+
+  Widget _buildScrollableSliverFill({required Widget child}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(child: child),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ActiveMoodBarHeader extends SliverPersistentHeaderDelegate {
+  _ActiveMoodBarHeader({
+    required this.mood,
+    required this.onBack,
+    required this.onPlay,
+  });
+
+  final MoodDef mood;
+  final VoidCallback onBack;
+  final VoidCallback onPlay;
+
+  @override
+  double get minExtent => ActiveMoodBar.kHeight;
+
+  @override
+  double get maxExtent => ActiveMoodBar.kHeight;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return SizedBox(
+      height: ActiveMoodBar.kHeight,
+      child: ActiveMoodBar(
+        mood: mood,
+        onBack: onBack,
+        onPlay: onPlay,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _ActiveMoodBarHeader oldDelegate) {
+    return oldDelegate.mood != mood;
   }
 }
 
@@ -1070,16 +1217,52 @@ double _calculateAspectRatio(BuildContext context) {
 
 // Grid video card for feed layout
 class _GridVideoCard extends StatelessWidget {
-  const _GridVideoCard({required this.video});
+  const _GridVideoCard({
+    required this.video,
+    this.isMoodFeed = false,
+    this.moodSessionBuilder,
+  });
 
   final VideoModel video;
+  final bool isMoodFeed;
+  final PlaylistSession? Function()? moodSessionBuilder;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
+        onTap: () async {
+          final moodSession = moodSessionBuilder?.call();
+          if (isMoodFeed && moodSession != null) {
+            unawaited(
+              context.read<FirstPartyAnalyticsService>().capture(
+                r'$click',
+                elementUiName: 'opened-video-from-mood',
+                screenName: 'home',
+                videoId: video.videoId,
+                videoTitle: video.videoTitle,
+                properties: {
+                  'source': 'mood',
+                  'source_path': '/home',
+                  'path': '/home',
+                  'video_id': video.videoId,
+                  'video_title': video.videoTitle,
+                },
+              ),
+            );
+            await context.read<MoodFeedViewModel>().persistSession(moodSession);
+            if (!context.mounted) return;
+            context.push(
+              '/watch/${video.videoId}?playlist=${Uri.encodeComponent(moodSession.playlistId)}&pindex=${moodSession.currentIndex}',
+              extra: WatchRouteExtra(
+                video: video,
+                playlistSession: moodSession,
+              ),
+            );
+            return;
+          }
+
           unawaited(
             context.read<FirstPartyAnalyticsService>().capture(
               r'$click',
@@ -1091,7 +1274,6 @@ class _GridVideoCard extends StatelessWidget {
                 'source': 'home',
                 'source_path': '/home',
                 'path': '/home',
-                // Some downstream UIs expect these inside properties.
                 'video_id': video.videoId,
                 'video_title': video.videoTitle,
               },

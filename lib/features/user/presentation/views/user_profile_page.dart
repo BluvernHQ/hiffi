@@ -59,33 +59,27 @@ class _UserProfilePageState extends State<UserProfilePage> {
       final authRepository = context.read<AuthRepository>();
       final isAuthenticated = authRepository.currentUser != null;
 
-      // Redirect to login if not authenticated
-      if (!isAuthenticated) {
-        if (mounted) {
-          // Pass current route as return route
-          final currentRoute = '/users/${widget.username}';
-          context.push('/login?returnTo=${Uri.encodeComponent(currentRoute)}');
-        }
-        return;
-      }
-
       final viewModel = context.read<UserViewModel>();
       final userRepository = context.read<UserRepository>();
 
       // Mark that we've attempted to load
       _hasAttemptedLoad = true;
 
-      // Load current logged-in user first and store it
-      try {
-        final currentUser = await userRepository.getCurrentUser();
-        setState(() {
-          _currentLoggedInUser = currentUser;
-        });
-      } catch (e) {
-        // Ignore error, might not be logged in
-        debugPrint('Failed to load current user: $e');
+      if (isAuthenticated) {
+        // Load current logged-in user for own-profile / follow UI
+        try {
+          final currentUser = await userRepository.getCurrentUser();
+          if (mounted) {
+            setState(() {
+              _currentLoggedInUser = currentUser;
+            });
+          }
+        } catch (e) {
+          debugPrint('Failed to load current user: $e');
+        }
       }
-      // Load the profile user
+
+      // Load the profile user (public read)
       await viewModel.loadUser(widget.username);
 
       // Load user videos if user is a creator or has uploaded videos
@@ -166,8 +160,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final isOffline = isOfflineErrorMessage(viewModel.errorMessage);
     final displayUser = user ?? _profileShellUser();
     final isOwnProfile = _currentLoggedInUser?.username == widget.username;
-    final authRepository = context.read<AuthRepository>();
-    final isAuthenticated = authRepository.currentUser != null;
 
     // Debug: Log current state
     debugPrint(
@@ -269,18 +261,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
               ),
           ],
         ),
-        body: !isAuthenticated
-            ? const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.lock_outline, size: 64),
-                    SizedBox(height: 16),
-                    Text('Please sign in to view profiles'),
-                  ],
-                ),
-              )
-            : NetworkPageShell(
+        body: NetworkPageShell(
                 hasCachedContent: user != null,
                 isLoading:
                     (user == null && viewModel.isLoading) ||
@@ -363,13 +344,15 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
                           const SizedBox(height: 32),
-                          _buildAboutCard(
-                            context,
-                            displayUser,
-                            isOwnProfile && user != null,
-                            viewModel,
-                          ),
-                          const SizedBox(height: 24),
+                          if (user != null) ...[
+                            _buildAboutCard(
+                              context,
+                              user,
+                              isOwnProfile,
+                              viewModel,
+                            ),
+                            const SizedBox(height: 24),
+                          ],
                           if (!isOwnProfile &&
                               _currentLoggedInUser != null &&
                               user != null)
@@ -650,6 +633,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
     bool isOwnProfile,
     UserViewModel viewModel,
   ) {
+    final hasBio = user.bio != null && user.bio!.trim().isNotEmpty;
+    final hasOwnProfileDetails =
+        isOwnProfile && user.email != null && user.email!.isNotEmpty;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -659,22 +646,23 @@ class _UserProfilePageState extends State<UserProfilePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // About Section
-          Text(
-            'About',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          // Bio
-          if (user.bio != null && user.bio!.isNotEmpty)
-            Text(user.bio!, style: Theme.of(context).textTheme.bodyMedium),
-          // Email (own profile only)
-          if (isOwnProfile && user.email != null && user.email!.isNotEmpty) ...[
+          if (hasBio) ...[
+            Text(
+              'About',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 12),
+            Text(user.bio!.trim(), style: Theme.of(context).textTheme.bodyMedium),
+          ],
+          // Email (own profile only)
+          if (hasOwnProfileDetails) ...[
+            if (hasBio) ...[
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 12),
+            ],
             Text(
               'Email',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -758,7 +746,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
           ],
           // Stats Section - Only show if user is a creator
           if (user.role == 'creator') ...[
-            const SizedBox(height: 24),
+            if (hasBio || hasOwnProfileDetails) const SizedBox(height: 24),
             Text(
               'Stats',
               style: Theme.of(
@@ -798,7 +786,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
             ),
           ] else ...[
             // Show only followers and following for non-creators
-            const SizedBox(height: 24),
+            if (hasBio || hasOwnProfileDetails) const SizedBox(height: 24),
             Text(
               'Stats',
               style: Theme.of(

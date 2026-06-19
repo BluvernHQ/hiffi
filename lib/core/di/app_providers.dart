@@ -16,6 +16,8 @@ import '../../features/playlist/data/playlist_repository.dart';
 import '../../features/playlist/presentation/viewmodels/playlist_view_model.dart';
 import '../../features/search/data/search_repository.dart';
 import '../../features/search/presentation/viewmodels/search_view_model.dart';
+import '../../features/mood/data/mood_playlist_repository.dart';
+import '../../features/mood/presentation/viewmodels/mood_feed_view_model.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
 import '../../features/liked/presentation/viewmodels/liked_videos_view_model.dart';
 import '../../features/watch_history/presentation/viewmodels/watch_history_view_model.dart';
@@ -67,6 +69,10 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<SearchRepository>(
       create: (context) =>
           ApiSearchRepository(apiClient: context.read<ApiClient>()),
+    ),
+    Provider<MoodPlaylistRepository>(
+      create: (context) =>
+          MoodPlaylistRepositoryImpl(apiClient: context.read<ApiClient>()),
     ),
     Provider<AppRouter>(
       create: (context) =>
@@ -156,6 +162,12 @@ List<SingleChildWidget> buildAppProviders() {
         searchRepository: context.read<SearchRepository>(),
         userRepository: context.read<UserRepository>(),
         authRepository: context.read<AuthRepository>(),
+      ),
+    ),
+    ChangeNotifierProvider<MoodFeedViewModel>(
+      create: (context) => MoodFeedViewModel(
+        moodPlaylistRepository: context.read<MoodPlaylistRepository>(),
+        connectivityService: context.read<NetworkConnectivityService>(),
       ),
     ),
     ChangeNotifierProvider<FollowingViewModel>(

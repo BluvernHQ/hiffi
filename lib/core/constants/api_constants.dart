@@ -1,6 +1,6 @@
 class ApiConstants {
   static const String baseUrl = 'https://api.dev.hiffi.com';
-  //   static const String baseUrl = 'https://api.hiffi.com';
+    // static const String baseUrl = 'https://api.hiffi.com';
   // Auth endpoints
   static const String authRegister = '/auth/register';
   static const String authLogin = '/auth/login';
@@ -55,11 +55,26 @@ class ApiConstants {
   static String unfollowUser(String username) =>
       '/social/users/unfollow/$username';
 
-  // Search endpoints
-  static String searchUsers(String query, {int page = 1, int limit = 50}) =>
-      '/search/users/${Uri.encodeComponent(query)}?page=$page&limit=$limit';
-  static String searchVideos(String query, {int page = 1, int limit = 100}) =>
-      '/search/videos/${Uri.encodeComponent(query)}?page=$page&limit=$limit';
+  // Search endpoints (public, limit/offset pagination)
+  static String searchUsers(
+    String query, {
+    int limit = 20,
+    int offset = 0,
+  }) {
+    final cappedLimit = limit.clamp(1, 100);
+    return '/search/users/${Uri.encodeComponent(query)}'
+        '?limit=$cappedLimit&offset=$offset';
+  }
+
+  static String searchVideos(
+    String query, {
+    int limit = 20,
+    int offset = 0,
+  }) {
+    final cappedLimit = limit.clamp(1, 100);
+    return '/search/videos/${Uri.encodeComponent(query)}'
+        '?limit=$cappedLimit&offset=$offset';
+  }
 
   // Flags / moderation endpoints
   static const String flagsConfig = '/flags/config';
@@ -84,4 +99,15 @@ class ApiConstants {
       '/playlists/$playlistId/items/$videoId';
   static String playlistReorderItems(String playlistId) =>
       '/playlists/$playlistId/items/reorder';
+
+  /// Public mood mix playlists (`GET /playlist/mood/{vibe}`).
+  static String moodPlaylist(
+    String vibe, {
+    int limit = 20,
+    int offset = 0,
+  }) {
+    final cappedLimit = limit.clamp(1, 100);
+    return '/playlist/mood/${Uri.encodeComponent(vibe)}'
+        '?limit=$cappedLimit&offset=$offset';
+  }
 }
