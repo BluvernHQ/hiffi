@@ -10,6 +10,7 @@ class UserModel {
   final DateTime? updatedAt;
   final String? role;
   final String? profilePicture;
+  final String? coverUrl;
   final int followers;
   final int following;
   final int totalStreams;
@@ -29,6 +30,7 @@ class UserModel {
     this.updatedAt,
     this.role,
     this.profilePicture,
+    this.coverUrl,
     this.followers = 0,
     this.following = 0,
     this.totalStreams = 0,
@@ -86,6 +88,11 @@ class UserModel {
       // Support both avatarUrl and profile_picture, but filter invalid URLs
       avatarUrl: filterInvalidUrl(rawAvatarUrl),
       profilePicture: filterInvalidUrl(rawProfilePicture),
+      coverUrl: filterInvalidUrl(
+        userData['cover_url'] as String? ??
+            userData['coverUrl'] as String? ??
+            userData['profile_cover'] as String?,
+      ),
       docId: userData['DocID'] as String?,
       // Support both UID and uid
       uid: userData['uid'] as String? ?? userData['UID'] as String?,
@@ -113,6 +120,7 @@ class UserModel {
       if (bio != null) 'bio': bio,
       if (avatarUrl != null) 'avatarUrl': avatarUrl,
       if (profilePicture != null) 'profile_picture': profilePicture,
+      if (coverUrl != null) 'cover_url': coverUrl,
       if (docId != null) 'DocID': docId,
       if (uid != null) 'uid': uid,
       if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
@@ -140,6 +148,7 @@ class UserModel {
     DateTime? updatedAt,
     String? role,
     String? profilePicture,
+    String? coverUrl,
     int? followers,
     int? following,
     int? totalStreams,
@@ -159,6 +168,7 @@ class UserModel {
       updatedAt: updatedAt ?? this.updatedAt,
       role: role ?? this.role,
       profilePicture: profilePicture ?? this.profilePicture,
+      coverUrl: coverUrl ?? this.coverUrl,
       followers: followers ?? this.followers,
       following: following ?? this.following,
       totalStreams: totalStreams ?? this.totalStreams,

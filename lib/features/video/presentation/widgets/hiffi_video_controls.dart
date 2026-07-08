@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
+import 'package:hiffi/core/analytics/analytics_capture.dart';
+import 'package:hiffi/core/analytics/analytics_tags.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 
@@ -19,6 +21,8 @@ import 'package:chewie/src/notifiers/player_notifier.dart';
 class HiffiVideoControls extends StatefulWidget {
   const HiffiVideoControls({
     this.showPlayButton = true,
+    this.analyticsVideoId,
+    this.analyticsScreenName = 'watch',
     this.fullscreenUiListenable,
     this.onToggleInAppFullscreen,
     this.onPipExpandToApp,
@@ -27,6 +31,8 @@ class HiffiVideoControls extends StatefulWidget {
   });
 
   final bool showPlayButton;
+  final String? analyticsVideoId;
+  final String analyticsScreenName;
 
   /// Syncs toolbar fullscreen icon when using [onToggleInAppFullscreen].
   final ValueNotifier<bool>? fullscreenUiListenable;
@@ -275,6 +281,20 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
   }
 
   void _onExpandCollapse() {
+    final videoId = widget.analyticsVideoId;
+    if (videoId != null) {
+      final entering = widget.fullscreenUiListenable?.value != true;
+      unawaited(
+        AnalyticsCapture.click(
+          context,
+          elementUiName: entering
+              ? AnalyticsTags.enteredFullscreen
+              : AnalyticsTags.exitedFullscreen,
+          screenName: widget.analyticsScreenName,
+          videoId: videoId,
+        ),
+      );
+    }
     setState(() {
       notifier.hideStuff = true;
       if (widget.onToggleInAppFullscreen != null) {
@@ -591,11 +611,25 @@ class _HiffiVideoControlsState extends State<HiffiVideoControls> {
     return GestureDetector(
       onTap: () {
         _cancelAndRestartTimer();
+        final videoId = widget.analyticsVideoId;
+        final wasMuted = _latestValue.volume == 0;
         if (_latestValue.volume == 0) {
           c.setVolume(_latestVolume ?? 0.5);
         } else {
           _latestVolume = c.value.volume;
           c.setVolume(0.0);
+        }
+        if (videoId != null) {
+          unawaited(
+            AnalyticsCapture.click(
+              context,
+              elementUiName: wasMuted
+                  ? AnalyticsTags.unmutedVideo
+                  : AnalyticsTags.mutedVideo,
+              screenName: widget.analyticsScreenName,
+              videoId: videoId,
+            ),
+          );
         }
         setState(() {});
       },

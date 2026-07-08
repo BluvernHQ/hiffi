@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../../core/services/api_client.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../data/flag_repository.dart';
@@ -174,6 +178,19 @@ class _ReportFlagSheetState extends State<ReportFlagSheet> {
         metadata: widget.metadata,
       );
       if (!mounted) return;
+      unawaited(
+        AnalyticsCapture.click(
+          context,
+          elementUiName: AnalyticsTags.reportSubmitted(widget.reportType),
+          screenName: 'report',
+          properties: {
+            'report_type': widget.reportType,
+            'target_type': widget.targetType,
+            'target_id': widget.targetId,
+            'reason': reason,
+          },
+        ),
+      );
       Navigator.of(context).pop(result);
     } catch (e) {
       if (!mounted) return;

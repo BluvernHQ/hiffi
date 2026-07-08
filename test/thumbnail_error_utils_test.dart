@@ -5,7 +5,7 @@ import 'package:hiffi/core/utils/thumbnail_error_utils.dart';
 
 void main() {
   const thumbUri =
-      'https://prod.hiffi.workers.dev/thumbnails/videos/abc.jpg';
+      'https://dev.hiffi.workers.dev/thumbnails/videos/abc.jpg';
 
   test('detects 404 thumbnail errors', () {
     expect(

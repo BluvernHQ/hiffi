@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/services/referral_storage_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/auth_repository.dart';
 import '../viewmodels/auth_view_model.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
+import '../../../../core/widgets/otp_code_input.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
 import '../../../../core/analytics/first_party_analytics_service.dart';
@@ -74,7 +76,6 @@ class _AuthPageState extends State<AuthPage> {
   // Create form keys locally to avoid GlobalKey conflicts
   final _signInFormKey = GlobalKey<FormState>();
   final _signUpFormKey = GlobalKey<FormState>();
-  final _otpFormKey = GlobalKey<FormState>();
   final _forgotPasswordFormKey = GlobalKey<FormState>();
   final _resetPasswordFormKey = GlobalKey<FormState>();
   StreamSubscription? _authSubscription;
@@ -93,13 +94,19 @@ class _AuthPageState extends State<AuthPage> {
       if (mounted) {
         final authViewModel = context.read<AuthViewModel>();
         authViewModel.setMode(widget.initialMode);
-        // Clear all form fields when entering the auth flow
         authViewModel.reset();
-        // Clear availability message when switching pages
         context.read<UserViewModel>().clearUsernameAvailability();
+        _persistReferralFromRoute();
         _setupAuthListener();
       }
     });
+  }
+
+  Future<void> _persistReferralFromRoute() async {
+    if (widget.initialMode != AuthMode.signUp) return;
+    final ref = GoRouterState.of(context).uri.queryParameters['ref']?.trim();
+    if (ref == null || ref.isEmpty) return;
+    await ReferralStorageService.saveReferral(username: ref);
   }
 
   @override
@@ -110,16 +117,19 @@ class _AuthPageState extends State<AuthPage> {
 
   void _setupAuthListener() {
     final authRepository = context.read<AuthRepository>();
-    _authSubscription = authRepository.authStateChanges().listen((user) {
-      if (mounted && user != null) {
-        // User just logged in, navigate to return route or home
-        Future.delayed(const Duration(milliseconds: 100), () {
-          if (mounted) {
-            final route = widget.returnRoute ?? '/home';
-            context.go(route);
-          }
-        });
-      }
+    _authSubscription = authRepository.authStateChanges().listen((user) async {
+      if (!mounted || user == null) return;
+
+      final authViewModel = context.read<AuthViewModel>();
+      final userViewModel = context.read<UserViewModel>();
+      await userViewModel.loadCurrentUser();
+
+      if (!mounted) return;
+      final route =
+          authViewModel.consumePostAuthRoute() ??
+          widget.returnRoute ??
+          '/home';
+      context.go(route);
     });
   }
 
@@ -153,27 +163,17 @@ class _AuthPageState extends State<AuthPage> {
     final theme = Theme.of(context);
     final isSignIn = viewModel.mode == AuthMode.signIn;
     final isSignUp = viewModel.mode == AuthMode.signUp;
-    final isVerifyOtp = viewModel.mode == AuthMode.verifyOtp;
     final isForgotPassword = viewModel.mode == AuthMode.forgotPassword;
     final isResetPassword = viewModel.mode == AuthMode.resetPassword;
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: !isVerifyOtp && !isResetPassword,
-        leading: isVerifyOtp || isResetPassword || isForgotPassword
+        automaticallyImplyLeading: !isResetPassword,
+        leading: isResetPassword || isForgotPassword
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
-                  if (isVerifyOtp) {
-                    unawaited(
-                      context.read<FirstPartyAnalyticsService>().capture(
-                        r'$click',
-                        elementUiName: 'signup-back-to-registration-button',
-                        screenName: 'signup',
-                      ),
-                    );
-                    viewModel.setMode(AuthMode.signUp);
-                  } else if (isResetPassword) {
+                  if (isResetPassword) {
                     viewModel.setMode(AuthMode.forgotPassword);
                   } else {
                     viewModel.setMode(AuthMode.signIn);
@@ -182,7 +182,7 @@ class _AuthPageState extends State<AuthPage> {
               )
             : null,
         actions: [
-          if (!isVerifyOtp && !isResetPassword && !isForgotPassword)
+          if (!isResetPassword && !isForgotPassword)
             TextButton(
               onPressed: viewModel.isLoading
                   ? null
@@ -211,8 +211,6 @@ class _AuthPageState extends State<AuthPage> {
                           ? 'Sign in with your username or email.'
                           : isSignUp
                           ? 'Create an account to start using Hiffi.'
-                          : isVerifyOtp
-                          ? 'Enter the verification code sent to your email.'
                           : isForgotPassword
                           ? 'Enter your email to reset your password.'
                           : 'Enter the verification code and your new password.',
@@ -247,8 +245,6 @@ class _AuthPageState extends State<AuthPage> {
                           ? _signInFormKey
                           : isSignUp
                           ? _signUpFormKey
-                          : isVerifyOtp
-                          ? _otpFormKey
                           : isForgotPassword
                           ? _forgotPasswordFormKey
                           : _resetPasswordFormKey,
@@ -391,8 +387,8 @@ class _AuthPageState extends State<AuthPage> {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Please enter your name.';
                                 }
-                                if (value.trim().length >= 30) {
-                                  return 'Name must be less than 30 characters.';
+                                if (value.trim().length > 30) {
+                                  return 'Name must be 30 characters or less.';
                                 }
                                 if (!RegExp(
                                   r'^[a-zA-Z\s]+$',
@@ -488,56 +484,6 @@ class _AuthPageState extends State<AuthPage> {
                                 return null;
                               },
                             ),
-                          ] else if (isVerifyOtp) ...[
-                            const SizedBox(height: 32),
-                            _OtpInput(
-                              controller: viewModel.otpController,
-                              isLoading: viewModel.isLoading,
-                              onSubmitted: () {
-                                if (!viewModel.isLoading) {
-                                  viewModel.submit(formKey: _otpFormKey);
-                                }
-                              },
-                            ),
-                            const SizedBox(height: 32),
-                            Center(
-                              child: Column(
-                                children: [
-                                  Text(
-                                    "Didn't receive the code?",
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed:
-                                        !viewModel.canResendOtp ||
-                                            viewModel.isLoading
-                                        ? null
-                                        : () {
-                                            unawaited(
-                                              context
-                                                  .read<
-                                                    FirstPartyAnalyticsService
-                                                  >()
-                                                  .capture(
-                                                    r'$click',
-                                                    elementUiName:
-                                                        'signup-resend-otp-button',
-                                                    screenName: 'signup',
-                                                  ),
-                                            );
-                                            viewModel.resendOtp();
-                                          },
-                                    child: Text(
-                                      viewModel.canResendOtp
-                                          ? 'Resend code'
-                                          : 'Resend in ${viewModel.resendTimer}s',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
                           ] else if (isForgotPassword) ...[
                             TextFormField(
                               controller: viewModel.emailController,
@@ -573,12 +519,10 @@ class _AuthPageState extends State<AuthPage> {
                             ),
                           ] else if (isResetPassword) ...[
                             const SizedBox(height: 32),
-                            _OtpInput(
+                            OtpCodeInput(
                               controller: viewModel.otpController,
-                              isLoading: viewModel.isLoading,
-                              onSubmitted: () {
-                                // Don't submit automatically, wait for password
-                              },
+                              enabled: !viewModel.isLoading,
+                              autofocus: true,
                             ),
                             const SizedBox(height: 32),
                             TextFormField(
@@ -743,21 +687,11 @@ class _AuthPageState extends State<AuthPage> {
                                       screenName: 'signup',
                                     ),
                                   );
-                                } else if (isVerifyOtp) {
-                                  unawaited(
-                                    firstParty.capture(
-                                      r'$click',
-                                      elementUiName: 'signup-verify-otp-button',
-                                      screenName: 'signup',
-                                    ),
-                                  );
                                 }
                                 final formKey = isSignIn
                                     ? _signInFormKey
                                     : isSignUp
                                     ? _signUpFormKey
-                                    : isVerifyOtp
-                                    ? _otpFormKey
                                     : isForgotPassword
                                     ? _forgotPasswordFormKey
                                     : _resetPasswordFormKey;
@@ -777,7 +711,7 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    if (!isVerifyOtp && !isResetPassword)
+                    if (!isResetPassword)
                       Center(
                         child: TextButton(
                           onPressed: viewModel.isLoading
@@ -822,132 +756,6 @@ class _AuthPageState extends State<AuthPage> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _OtpInput extends StatefulWidget {
-  const _OtpInput({
-    required this.controller,
-    required this.isLoading,
-    this.onSubmitted,
-  });
-
-  final TextEditingController controller;
-  final bool isLoading;
-  final VoidCallback? onSubmitted;
-
-  @override
-  State<_OtpInput> createState() => _OtpInputState();
-}
-
-class _OtpInputState extends State<_OtpInput> {
-  final FocusNode _focusNode = FocusNode();
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      children: [
-        GestureDetector(
-          onTap: () {
-            // Ensure keyboard appears even after it's been dismissed
-            // Unfocus first if already focused to reset the state
-            if (_focusNode.hasFocus) {
-              _focusNode.unfocus();
-            }
-            // Use a small delay to ensure unfocus completes before requesting focus
-            Future.delayed(const Duration(milliseconds: 50), () {
-              if (mounted) {
-                _focusNode.requestFocus();
-              }
-            });
-          },
-          behavior: HitTestBehavior.opaque,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(6, (index) {
-              final text = widget.controller.text;
-              final len = text.length;
-              final hasDigit = index < len;
-              // Slot where the next digit will go (0–5); none when all 6 entered
-              final isActive = index == len && len < 6;
-
-              final scheme = theme.colorScheme;
-              late final Color bg;
-              late final Color borderColor;
-              late final double borderWidth;
-
-              if (hasDigit) {
-                bg = scheme.primaryContainer.withOpacity(0.35);
-                borderColor = scheme.primary.withOpacity(0.55);
-                borderWidth = 1.5;
-              } else if (isActive) {
-                bg = scheme.primary.withOpacity(0.14);
-                borderColor = scheme.primary;
-                borderWidth = 2;
-              } else {
-                // Pending / not-yet-filled: always visible vs active & filled
-                bg = scheme.surfaceContainerHighest.withOpacity(0.85);
-                borderColor = scheme.outlineVariant;
-                borderWidth = 1;
-              }
-
-              return Container(
-                width: 45,
-                height: 55,
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: borderColor,
-                    width: borderWidth,
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    hasDigit ? text[index] : '',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: hasDigit
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant.withOpacity(0.35),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-        // Hidden text field to capture input
-        Opacity(
-          opacity: 0,
-          child: SizedBox(
-            height: 0,
-            child: TextFormField(
-              controller: widget.controller,
-              focusNode: _focusNode,
-              enabled: !widget.isLoading,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              onChanged: (value) {
-                setState(() {});
-                if (value.length == 6 && widget.onSubmitted != null) {
-                  widget.onSubmitted!();
-                }
-              },
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

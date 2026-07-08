@@ -11,7 +11,8 @@ import '../../features/playlist/domain/models/playlist_models.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/user/presentation/viewmodels/user_view_model.dart';
 import '../../features/user/domain/models/user_model.dart';
-import '../analytics/first_party_analytics_service.dart';
+import '../analytics/analytics_capture.dart';
+import '../analytics/analytics_tags.dart';
 import '../routes/watch_route_extra.dart';
 import 'hiffi_image.dart';
 import 'hiffi_logo.dart';
@@ -219,14 +220,12 @@ class _AppSidebarState extends State<AppSidebar>
                                     isActive: widget.currentRoute == '/home',
                                     onTap: () {
                                       unawaited(
-                                        context
-                                            .read<FirstPartyAnalyticsService>()
-                                            .capture(
-                                              r'$click',
-                                              elementUiName:
-                                                  'sidebar-home-button',
-                                              screenName: 'sidebar',
-                                            ),
+                                        AnalyticsCapture.click(
+                                          context,
+                                          elementUiName:
+                                              AnalyticsTags.sidebarHomeButton,
+                                          screenName: 'sidebar',
+                                        ),
                                       );
                                       _toggleSidebar();
                                       if (widget.currentRoute != '/home') {
@@ -309,16 +308,12 @@ class _AppSidebarState extends State<AppSidebar>
                                           '/watch-history',
                                       onTap: () {
                                         unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-history-link',
-                                                screenName: 'sidebar',
-                                              ),
+                                          AnalyticsCapture.click(
+                                            context,
+                                            elementUiName:
+                                                AnalyticsTags.sidebarHistoryLink,
+                                            screenName: 'sidebar',
+                                          ),
                                         );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=
@@ -341,16 +336,12 @@ class _AppSidebarState extends State<AppSidebar>
                                       isActive: widget.currentRoute == '/liked',
                                       onTap: () {
                                         unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-liked-videos-link',
-                                                screenName: 'sidebar',
-                                              ),
+                                          AnalyticsCapture.click(
+                                            context,
+                                            elementUiName: AnalyticsTags
+                                                .sidebarLikedVideosLink,
+                                            screenName: 'sidebar',
+                                          ),
                                         );
                                         _toggleSidebar();
                                         if (widget.currentRoute != '/liked') {
@@ -373,16 +364,12 @@ class _AppSidebarState extends State<AppSidebar>
                                           widget.currentRoute == '/playlists',
                                       onTap: () {
                                         unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-playlists-link',
-                                                screenName: 'sidebar',
-                                              ),
+                                          AnalyticsCapture.click(
+                                            context,
+                                            elementUiName:
+                                                AnalyticsTags.sidebarPlaylistsLink,
+                                            screenName: 'sidebar',
+                                          ),
                                         );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=
@@ -406,16 +393,12 @@ class _AppSidebarState extends State<AppSidebar>
                                           widget.currentRoute == '/following',
                                       onTap: () {
                                         unawaited(
-                                          context
-                                              .read<
-                                                FirstPartyAnalyticsService
-                                              >()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'sidebar-following-link',
-                                                screenName: 'sidebar',
-                                              ),
+                                          AnalyticsCapture.click(
+                                            context,
+                                            elementUiName:
+                                                AnalyticsTags.sidebarFollowingLink,
+                                            screenName: 'sidebar',
+                                          ),
                                         );
                                         _toggleSidebar();
                                         if (widget.currentRoute !=

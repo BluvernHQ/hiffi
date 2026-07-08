@@ -496,6 +496,7 @@ class HlsPlayerController extends ChangeNotifier {
         allowPlaybackSpeedChanging: true,
         fullScreenByDefault: false,
         customControls: HiffiVideoControls(
+          analyticsVideoId: videoId,
           fullscreenUiListenable: fullscreenUiForControls,
           onToggleInAppFullscreen: () {
             if (_isFullScreen) {

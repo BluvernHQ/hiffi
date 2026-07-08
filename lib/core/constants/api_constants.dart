@@ -4,7 +4,6 @@ class ApiConstants {
   // Auth endpoints
   static const String authRegister = '/auth/register';
   static const String authLogin = '/auth/login';
-  static const String authVerify = '/auth/verify';
   static const String authResetPasswordRequest = '/auth/reset-password/request';
   static const String authResetPasswordVerify = '/auth/reset-password/verify';
 
@@ -18,6 +17,10 @@ class ApiConstants {
   static String deleteUser(String username) => '/users/$username';
   static const String profilePhotoUpload = '/users/profile-photo/upload';
   static const String verifyUserUpdate = '/users/self/verify-update';
+  static const String requestCreatorUpgrade =
+      '/users/self/request-creator-upgrade';
+  static const String verifyCreatorUpgrade =
+      '/users/self/verify-creator-upgrade';
 
   // Video endpoints
   static const String uploadVideo = '/videos/upload';
@@ -110,4 +113,9 @@ class ApiConstants {
     return '/playlist/mood/${Uri.encodeComponent(vibe)}'
         '?limit=$cappedLimit&offset=$offset';
   }
+
+  // Migration requests (YouTube content migration)
+  static const String migrationRequestsConfig = '/migration-requests/config';
+  static const String migrationRequests = '/migration-requests';
+  static const String migrationRequestsStatus = '/migration-requests/status';
 }

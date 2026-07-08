@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -24,22 +23,26 @@ import '../../../../core/utils/fullscreen_manager.dart';
 import '../../../../core/utils/error_toast_utils.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/network_page_shell.dart';
-import '../../../../core/widgets/offline_empty_state.dart';
 import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/services/pip_service.dart';
-import '../../../../core/widgets/hiffi_image.dart';
-import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/services/media/media_sync_service.dart';
 import '../../../../core/routes/app_router.dart';
 import '../../../../core/services/playlist_session_storage.dart';
 import '../../../../core/services/analytics_service.dart';
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../playlist/presentation/widgets/add_to_playlist_sheet.dart';
 import '../../../liked/presentation/viewmodels/liked_videos_view_model.dart';
 import '../../../flags/presentation/widgets/report_flag_sheet.dart';
+import '../coordinators/video_player_coordinator.dart';
+import '../widgets/video_playback_options_sheet.dart';
+import '../widgets/video_player_metadata_section.dart';
 import '../widgets/hls_video_player.dart';
+import '../widgets/video_playlist_queue.dart';
+import '../widgets/video_suggested_section.dart';
 import '../controllers/hls_player_controller.dart';
 
 /// Vertical space above and below the divider between suggested videos and comments.
@@ -47,12 +50,6 @@ const double _kSuggestedToCommentsGap = 12;
 
 /// Result of the sign-in prompt on the video page (guest like/follow/etc.).
 enum _SignInPromptResult { cancelled, signIn, signUp }
-
-/// Horizontal strip height aligned to [_SuggestedVideoCard] (avoids empty space above divider).
-const double _kSuggestedStripHeight = 168;
-const int _kActivePlaylistVisibleItemsDefault = 3;
-const double _kActivePlaylistRowHeightBase = 56;
-const double _kActivePlaylistRowGapBase = 6;
 
 class VideoPlayerPage extends StatefulWidget {
   const VideoPlayerPage({
@@ -143,7 +140,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _isAddToPlaylistSheetOpen = false;
 
   // Previous-video stack: when user taps Next we push current; Previous pops and navigates back
-  final List<_VideoHistoryEntry> _videoHistory = [];
+  final VideoPlayerCoordinator _playerCoordinator = VideoPlayerCoordinator();
   PlaylistSession? _playlistSession;
   final Map<String, VideoModel> _playlistQueueVideoCache = {};
 
@@ -219,7 +216,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     MediaSyncService().registerNavigationCallbacks(
       onNext: () => _playNextVideo(userInitiated: true),
       onPrevious: _playPreviousVideo,
-      hasPreviousVideo: () => _videoHistory.isNotEmpty,
+      hasPreviousVideo: () => _playerCoordinator.hasPrevious,
     );
 
     // 5️⃣ Fetch lightweight preview data
@@ -265,7 +262,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (!PipService.isInPipMode.value &&
         !PipService.pipUiHeldUntilReconnect.value &&
         !PipService.isTransitioningFromPip &&
-        isForegroundRouteTransition) {
+        isForegroundRouteTransition &&
+        !_isNavigatingAway) {
       debugPrint('VideoPlayerPage: deactivate() – pausing (not PiP)');
       _pauseVideo();
     } else {
@@ -346,9 +344,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   void _playNextVideo({required bool userInitiated}) {
     if (userInitiated) {
+      final nextTag = _playlistSession != null
+          ? AnalyticsTags.playerNextPlaylist
+          : AnalyticsTags.playerNextRecommended;
       unawaited(
-        context.read<FirstPartyAnalyticsService>().capture(
-          'conversion_next_clicked',
+        AnalyticsCapture.click(
+          context,
+          elementUiName: nextTag,
+          screenName: 'watch',
+          videoId: _video.videoId,
+          videoTitle: _video.videoTitle,
+        ),
+      );
+      unawaited(
+        AnalyticsCapture.conversion(
+          context,
+          eventName: AnalyticsEvents.conversionNextClicked,
           screenName: 'watch',
           videoId: _video.videoId,
           videoTitle: _video.videoTitle,
@@ -408,11 +419,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         return;
       }
     }
-    if (_videoHistory.isEmpty) {
+    if (!_playerCoordinator.hasPrevious) {
       debugPrint('VideoPlayerPage: No previous video in history');
       return;
     }
-    final previous = _videoHistory.removeLast();
+    final previous = _playerCoordinator.popPrevious();
+    if (previous == null) return;
     debugPrint(
       'VideoPlayerPage: Previous - navigating back to ${previous.video.videoId}',
     );
@@ -447,6 +459,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   void didPushNext() {
     // Another GoRoute was pushed on top (e.g. login) — block PiP from Home until user returns.
     PipService.setVideoPlayerPageSurfaceActive(false);
+    unawaited(_pauseVideo());
   }
 
   @override
@@ -585,72 +598,93 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // when the user actually rotates to portrait.
   }
 
-  Future<void> _pauseVideo({bool updateUiState = true}) async {
-    if (_videoUrlFromApi != null) {
-      debugPrint(
-        'VideoPlayerPage: _pauseVideo() called - pausing player and saving position',
-      );
-      await HlsVideoPlayer.pausePlayer(_video.videoId);
+  Future<void> _pausePlaybackOnly() async {
+    await HlsVideoPlayer.pausePlayer(_video.videoId);
+    final controller = HlsVideoPlayer.getController(_video.videoId);
+    if (controller != null && !controller.isDisposed) {
+      controller.pause();
     }
+  }
 
-    // Best-effort tracking for player pause.
-    if (mounted) {
+  Future<void> _pauseVideo({bool updateUiState = true}) async {
+    _isNavigatingAway = true;
+
+    debugPrint(
+      'VideoPlayerPage: _pauseVideo() called - pausing player and saving position',
+    );
+
+    FirstPartyAnalyticsService? analytics;
+    if (mounted && context.mounted) {
+      analytics = context.read<FirstPartyAnalyticsService>();
+    }
+    final videoId = _video.videoId;
+    final videoTitle = _video.videoTitle;
+
+    await _pausePlaybackOnly();
+
+    if (analytics != null) {
       unawaited(
-        context.read<FirstPartyAnalyticsService>().capture(
-          r'$click',
-          elementUiName: 'paused-video',
+        analytics.capture(
+          AnalyticsEvents.click,
+          elementUiName: AnalyticsTags.pausedVideo,
           screenName: 'watch',
-          videoId: _video.videoId,
-          videoTitle: _video.videoTitle,
+          videoId: videoId,
+          videoTitle: videoTitle,
         ),
       );
     }
 
-    // Avoid setState during teardown (e.g. dispose) and after unmount.
-    if (updateUiState && mounted && !_isNavigatingAway) {
-      setState(() {
-        _isNavigatingAway = true;
-      });
+    if (updateUiState && mounted) {
+      setState(() {});
     }
   }
 
   Future<void> _resumeVideo() async {
     if (_videoUrlFromApi != null) {
       debugPrint('VideoPlayerPage: _resumeVideo() called - resuming player');
-      await HlsVideoPlayer.playPlayer(_video.videoId);
+      FirstPartyAnalyticsService? analytics;
+      final shouldTrackPlayConversion =
+          _playConversionSentForVideoId != _video.videoId;
+      if (mounted && context.mounted) {
+        analytics = context.read<FirstPartyAnalyticsService>();
+      }
+      final videoId = _video.videoId;
+      final videoTitle = _video.videoTitle;
+      final playlistSession = _playlistSession;
 
-      if (_playConversionSentForVideoId != _video.videoId) {
-        _playConversionSentForVideoId = _video.videoId;
-        unawaited(
-          context.read<FirstPartyAnalyticsService>().capture(
-            'conversion_play_started',
-            screenName: 'watch',
-            videoId: _video.videoId,
-            videoTitle: _video.videoTitle,
-            properties: {
-              'source': 'watch',
-              if (_playlistSession != null) 'source_path': 'playlist',
-            },
-          ),
-        );
+      await HlsVideoPlayer.playPlayer(videoId);
+
+      if (shouldTrackPlayConversion) {
+        _playConversionSentForVideoId = videoId;
+        if (analytics != null) {
+          unawaited(
+            analytics.capture(
+              AnalyticsEvents.conversionPlayStarted,
+              screenName: 'watch',
+              videoId: videoId,
+              videoTitle: videoTitle,
+              properties: {
+                'source_path': '/watch/$videoId',
+                'source': 'watch',
+                if (playlistSession != null) 'source_path': 'playlist',
+              },
+            ),
+          );
+        }
       }
 
-      // Best-effort player "played" click (mirrors web tap tracking).
-      if (mounted) {
+      if (analytics != null) {
         unawaited(
-          context.read<FirstPartyAnalyticsService>().capture(
-            r'$click',
-            elementUiName: 'played-video',
+          analytics.capture(
+            AnalyticsEvents.click,
+            elementUiName: AnalyticsTags.playedVideo,
             screenName: 'watch',
-            videoId: _video.videoId,
-            videoTitle: _video.videoTitle,
-            properties: {
-              'source': 'watch',
-              'source_path': '/watch/${_video.videoId}',
-              'path': '/watch/${_video.videoId}',
-              'video_id': _video.videoId,
-              'video_title': _video.videoTitle,
-            },
+            videoId: videoId,
+            videoTitle: videoTitle,
+            properties: AnalyticsCapture.watchProperties(
+              videoId: videoId,
+              source: 'watch',
+            ),
           ),
         );
       }
@@ -713,14 +747,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
 
     if (pushCurrentToHistory) {
-      _videoHistory.add(
-        _VideoHistoryEntry(
-          video: _video,
-          playlistSession: historyPlaylistSessionOverride ?? _playlistSession,
-        ),
+      _playerCoordinator.pushCurrent(
+        video: _video,
+        playlistSession: historyPlaylistSessionOverride ?? _playlistSession,
       );
       debugPrint(
-        'VideoPlayerPage: Pushed current to history (size ${_videoHistory.length})',
+        'VideoPlayerPage: Pushed current to history (size ${_playerCoordinator.historyLength})',
       );
     }
 
@@ -963,6 +995,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       setState(() {
         _isFollowing = _videoOwner?.isFollowing ?? false;
       });
+      unawaited(
+        AnalyticsCapture.click(
+          context,
+          elementUiName: wasFollowing
+              ? AnalyticsTags.unfollowedCreator
+              : AnalyticsTags.followedCreator,
+          screenName: 'watch',
+          videoId: _video.videoId,
+          videoTitle: _video.videoTitle,
+        ),
+      );
     } catch (e) {
       setState(() {
         _isFollowing = wasFollowing;
@@ -982,6 +1025,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _showSignInRequiredDialog() async {
     await _pauseVideo();
     if (!mounted) return;
+    unawaited(
+      AnalyticsCapture.conversion(
+        context,
+        eventName: AnalyticsEvents.conversionAuthPromptShown,
+        screenName: 'watch',
+        videoId: _video.videoId,
+        videoTitle: _video.videoTitle,
+      ),
+    );
     final result = await showDialog<_SignInPromptResult>(
       context: context,
       barrierDismissible: true,
@@ -1063,6 +1115,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         }
       case _SignInPromptResult.cancelled:
       case null:
+        unawaited(
+          AnalyticsCapture.conversion(
+            context,
+            eventName: AnalyticsEvents.conversionAuthPromptDismissed,
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+          ),
+        );
         await _resumeVideo();
     }
   }
@@ -1079,7 +1140,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     PipService.setVideoPlayerPageSurfaceActive(false);
     FullscreenManager.lockToPortrait();
     WidgetsBinding.instance.removeObserver(this);
-    _pauseVideo(updateUiState: false);
+    unawaited(_pausePlaybackOnly());
     _commentsController.dispose();
     // Permanently dispose the HlsPlayerController now that the page is gone.
     // HlsVideoPlayer.dispose() intentionally keeps the controller alive in the
@@ -1101,7 +1162,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(
       context.read<FirstPartyAnalyticsService>().capture(
         r'$click',
-        elementUiName: 'opened-comments',
+        elementUiName: AnalyticsTags.openedComments,
         screenName: 'watch',
         videoId: _video.videoId,
         videoTitle: _video.videoTitle,
@@ -1125,13 +1186,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
-  void _handleCreatorProfileTap() {
+  Future<void> _handleCreatorProfileTap() async {
     if (_video.userUsername.isEmpty) return;
 
     // go_router does not preserve `extra` when popping back to /video/:id.
     VideoPlayerPage.cacheVideo(_video.videoId, _video);
-    _pauseVideo();
-    context.push('/users/${_video.userUsername}');
+    await _pauseVideo();
+    if (!mounted) return;
+    await context.push('/users/${_video.userUsername}');
   }
 
   /// Save to Liked Videos (same API as legacy upvote).
@@ -1204,51 +1266,82 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       final firstParty = context.read<FirstPartyAnalyticsService>();
       if (_isUpvoted) {
         unawaited(
-          firstParty.capture(
-            r'$click',
-            elementUiName: 'liked',
+          AnalyticsCapture.click(
+            context,
+            elementUiName: AnalyticsTags.watchLikeVideo,
             screenName: 'watch',
             videoId: _video.videoId,
             videoTitle: _video.videoTitle,
-            properties: {
-              'path': '/watch/${_video.videoId}',
-              'source_path': '/watch/${_video.videoId}',
-              'source': 'watch',
-              'video_id': _video.videoId,
-              'video_title': _video.videoTitle,
-            },
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
           ),
         );
         unawaited(
           firstParty.capture(
-            'conversion_like_success',
+            r'$click',
+            elementUiName: AnalyticsTags.liked,
             screenName: 'watch',
             videoId: _video.videoId,
             videoTitle: _video.videoTitle,
-            properties: {
-              'path': '/watch/${_video.videoId}',
-              'source_path': '/watch/${_video.videoId}',
-              'source': 'watch',
-              'video_id': _video.videoId,
-              'video_title': _video.videoTitle,
-            },
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
+          ),
+        );
+        unawaited(
+          AnalyticsCapture.conversion(
+            context,
+            eventName: AnalyticsEvents.conversionLikeSuccess,
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
           ),
         );
       } else {
         unawaited(
-          firstParty.capture(
-            r'$click',
-            elementUiName: 'unliked',
+          AnalyticsCapture.click(
+            context,
+            elementUiName: AnalyticsTags.watchUnlikeVideo,
             screenName: 'watch',
             videoId: _video.videoId,
             videoTitle: _video.videoTitle,
-            properties: {
-              'path': '/watch/${_video.videoId}',
-              'source_path': '/watch/${_video.videoId}',
-              'source': 'watch',
-              'video_id': _video.videoId,
-              'video_title': _video.videoTitle,
-            },
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
+          ),
+        );
+        unawaited(
+          firstParty.capture(
+            r'$click',
+            elementUiName: AnalyticsTags.unliked,
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
+          ),
+        );
+        unawaited(
+          AnalyticsCapture.conversion(
+            context,
+            eventName: AnalyticsEvents.conversionUnlikeSuccess,
+            screenName: 'watch',
+            videoId: _video.videoId,
+            videoTitle: _video.videoTitle,
+            properties: AnalyticsCapture.watchProperties(
+              videoId: _video.videoId,
+              source: 'watch',
+            ),
           ),
         );
       }
@@ -1278,6 +1371,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       return;
     }
     if (!mounted) return;
+    unawaited(
+      AnalyticsCapture.click(
+        context,
+        elementUiName: AnalyticsTags.reportVideo,
+        screenName: 'watch',
+        videoId: _video.videoId,
+        videoTitle: _video.videoTitle,
+      ),
+    );
     await ReportFlagSheet.show(
       context,
       title: 'video',
@@ -1295,232 +1397,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _showVideoOptionsBottomSheet() async {
     final controller = HlsVideoPlayer.getController(_video.videoId);
     if (controller == null) return;
-
-    final chewie = controller.chewieController;
-    final playbackSpeeds = chewie?.playbackSpeeds ?? const [0.5, 1.0, 1.5, 2.0];
-    final currentSpeed = controller.controller?.value.playbackSpeed ?? 1.0;
-    // Ensure we don't show duplicate quality entries (e.g. "original" twice).
-    final profiles = controller.availableProfiles.toSet().toList();
-    final currentProfile = controller.currentProfile;
-
     if (!mounted) return;
 
-    await showModalBottomSheet<void>(
+    await showVideoPlaybackOptionsSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        double selectedSpeed = currentSpeed;
-        String selectedProfile = currentProfile;
-
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.12),
-                        blurRadius: 18,
-                        offset: const Offset(0, -4),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 36,
-                          height: 4,
-                          margin: const EdgeInsets.only(bottom: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[400],
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Playback & quality',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.of(context).pop(),
-                            tooltip: 'Close',
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Fine-tune how this video plays.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 16),
-                      // Playback speed row
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Playback speed',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Text(
-                            '${selectedSpeed.toStringAsFixed(2).replaceFirst(RegExp(r"\.00$"), "")}x',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey[700],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: playbackSpeeds.map((speed) {
-                            final isSelected =
-                                (speed - selectedSpeed).abs() < 0.001;
-                            final label = speed
-                                .toStringAsFixed(2)
-                                .replaceFirst(RegExp(r"\.00$"), '');
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: ChoiceChip(
-                                label: Text('${label}x'),
-                                selected: isSelected,
-                                onSelected: (_) {
-                                  setModalState(() {
-                                    selectedSpeed = speed;
-                                  });
-                                  controller.controller?.setPlaybackSpeed(
-                                    speed,
-                                  );
-                                },
-                                selectedColor: const Color(
-                                  0xFFED1C2F,
-                                ).withOpacity(0.1),
-                                labelStyle: TextStyle(
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : null,
-                                  color: isSelected
-                                      ? const Color(0xFFED1C2F)
-                                      : Colors.black87,
-                                ),
-                                backgroundColor: const Color(0xFFF5F5F5),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                      if (profiles.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Quality',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            Text(
-                              selectedProfile == 'original'
-                                  ? 'Original'
-                                  : selectedProfile.toUpperCase(),
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: profiles.map((profile) {
-                              final isSelected = profile == selectedProfile;
-                              final label = profile == 'original'
-                                  ? 'Original'
-                                  : profile.toUpperCase();
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: ChoiceChip(
-                                  label: Text(label),
-                                  selected: isSelected,
-                                  onSelected: (_) {
-                                    setModalState(() {
-                                      selectedProfile = profile;
-                                    });
-                                    controller.setProfile(profile);
-                                  },
-                                  selectedColor: const Color(
-                                    0xFFED1C2F,
-                                  ).withOpacity(0.1),
-                                  labelStyle: TextStyle(
-                                    fontWeight: isSelected
-                                        ? FontWeight.w600
-                                        : null,
-                                    color: isSelected
-                                        ? const Color(0xFFED1C2F)
-                                        : Colors.black87,
-                                  ),
-                                  backgroundColor: const Color(0xFFF5F5F5),
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ],
-                      const Divider(height: 28),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          Icons.flag_outlined,
-                          color: Colors.grey[800],
-                        ),
-                        title: const Text('Report video'),
-                        subtitle: const Text(
-                          'Report harmful or inappropriate content',
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          Future.microtask(() {
-                            if (!mounted) return;
-                            _reportCurrentVideo();
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
+      controller: controller,
+      onReport: () {
+        if (!mounted) return;
+        _reportCurrentVideo();
       },
     );
   }
@@ -1532,7 +1416,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(
       context.read<FirstPartyAnalyticsService>().capture(
         r'$click',
-        elementUiName: 'shared-video',
+        elementUiName: AnalyticsTags.sharedVideo,
         screenName: 'watch',
         videoId: videoId,
         videoTitle: _video.videoTitle,
@@ -1548,7 +1432,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(
       context.read<FirstPartyAnalyticsService>().capture(
         r'$click',
-        elementUiName: 'share-video-native-share-button',
+        elementUiName: AnalyticsTags.shareVideoNativeShareButton,
         screenName: 'watch',
         videoId: videoId,
         videoTitle: _video.videoTitle,
@@ -1598,7 +1482,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(
       context.read<FirstPartyAnalyticsService>().capture(
         r'$click',
-        elementUiName: 'video-card-add-to-playlist-button',
+        elementUiName: AnalyticsTags.videoCardAddToPlaylistButton,
         screenName: 'watch',
         videoId: _video.videoId,
         videoTitle: _video.videoTitle,
@@ -1969,8 +1853,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             body: NetworkPageShell(
               hasCachedContent: _video.videoId.isNotEmpty,
               isLoading: _isLoading && !_hasError,
-              emptyDescription:
-                  'Connect to the internet to load this video.',
+              emptyDescription: 'Connect to the internet to load this video.',
               onRetry: _refreshAfterReconnect,
               child: SafeArea(
                 top: false,
@@ -1978,25 +1861,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                 right: false,
                 bottom: false,
                 child: CustomScrollView(
-                physics: isLandscape
-                    ? const NeverScrollableScrollPhysics()
-                    : const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Container(
-                      color: Colors.black,
-                      child: isLandscape
-                          ? Padding(
-                              padding: videoPadding,
-                              child: Container(
-                                width: videoWidth,
-                                height: videoHeight,
-                                color: Colors.black,
-                                child: _buildVideoChild(),
-                              ),
-                            )
-                          : Center(
-                              child: Padding(
+                  physics: isLandscape
+                      ? const NeverScrollableScrollPhysics()
+                      : const BouncingScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Container(
+                        color: Colors.black,
+                        child: isLandscape
+                            ? Padding(
                                 padding: videoPadding,
                                 child: Container(
                                   width: videoWidth,
@@ -2004,390 +1877,134 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                                   color: Colors.black,
                                   child: _buildVideoChild(),
                                 ),
-                              ),
-                            ),
-                    ),
-                  ),
-                  if (!isLandscape) ...[
-                    // Re-integrating the original rich components
-                    SliverToBoxAdapter(
-                      child: Container(
-                        color: Colors.white,
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _video.videoTitle,
-                                        style: const TextStyle(
-                                          color: Color(0xFF1A1A1A),
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.3,
-                                          letterSpacing: -0.3,
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (_video.videoViews >= 10000) ...[
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          '${_formatCount(_video.videoViews)} views',
-                                          style: const TextStyle(
-                                            color: Color(0xFF6B6B6B),
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: _toggleSaveToLiked,
-                                        borderRadius: BorderRadius.circular(22),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                _isUpvoted
-                                                    ? Icons.favorite
-                                                    : Icons.favorite_border,
-                                                size: 22,
-                                                color: _isUpvoted
-                                                    ? const Color(0xFFED1C2F)
-                                                    : const Color(0xFF6B6B6B),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Text(
-                                                _formatCount(_upvoteCount),
-                                                style: TextStyle(
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: _isUpvoted
-                                                      ? const Color(0xFFED1C2F)
-                                                      : const Color(0xFF6B6B6B),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.bookmark_border),
-                                      color: const Color(0xFF6B6B6B),
-                                      tooltip: 'Save to playlist',
-                                      onPressed: _openAddToPlaylistSheet,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.share_outlined),
-                                      color: const Color(0xFF6B6B6B),
-                                      tooltip: 'Share',
-                                      onPressed: _shareVideo,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Container(
-                        color: Colors.white,
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                        child: Row(
-                          children: [
-                            GestureDetector(
-                              onTap: _handleCreatorProfileTap,
-                              child: HiffiAvatar(
-                                imageUrl: _video.profilePicture,
-                                size: 40,
-                                fallbackText: _video.userUsername,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: GestureDetector(
-                                  onTap: _handleCreatorProfileTap,
-                                  child: Text(
-                                    _video.userUsername.isNotEmpty
-                                        ? _video.userUsername
-                                        : 'Unknown User',
-                                    style: const TextStyle(
-                                      color: Color(0xFF1A1A1A),
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                              )
+                            : Center(
+                                child: Padding(
+                                  padding: videoPadding,
+                                  child: Container(
+                                    width: videoWidth,
+                                    height: videoHeight,
+                                    color: Colors.black,
+                                    child: _buildVideoChild(),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (_video.userUsername.isNotEmpty &&
-                                (_currentUser == null ||
-                                    _currentUser!.username !=
-                                        _video.userUsername))
-                              _isLoadingFollowStatus
-                                  ? const InlineShimmer(width: 16, height: 16)
-                                  : ElevatedButton(
-                                      onPressed: _handleFollowUnfollow,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: _isFollowing
-                                            ? const Color(0xFFF5F5F5)
-                                            : const Color(0xFFED1C2F),
-                                        foregroundColor: _isFollowing
-                                            ? Colors.black87
-                                            : Colors.white,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 8,
-                                        ),
-                                        minimumSize: const Size(0, 36),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            18,
-                                          ),
-                                        ),
-                                        elevation: 0,
-                                      ),
-                                      child: Text(
-                                        _isFollowing ? 'Following' : 'Follow',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                          ],
-                        ),
                       ),
                     ),
-                    if (_video.videoDescription.isNotEmpty ||
-                        _video.videoTags.isNotEmpty)
+                    if (!isLandscape) ...[
+                      SliverToBoxAdapter(
+                        child: VideoPlayerMetadataSection(
+                          video: _video,
+                          isUpvoted: _isUpvoted,
+                          upvoteCount: _upvoteCount,
+                          isFollowing: _isFollowing,
+                          isLoadingFollowStatus: _isLoadingFollowStatus,
+                          showFollowButton: _video.userUsername.isNotEmpty &&
+                              (_currentUser == null ||
+                                  _currentUser!.username != _video.userUsername),
+                          isDescriptionExpanded: _isDescriptionExpanded,
+                          formatCount: _formatCount,
+                          onToggleLike: _toggleSaveToLiked,
+                          onAddToPlaylist: _openAddToPlaylistSheet,
+                          onShare: _shareVideo,
+                          onCreatorTap: _handleCreatorProfileTap,
+                          onFollow: _handleFollowUnfollow,
+                          onToggleDescription: () => setState(
+                            () => _isDescriptionExpanded =
+                                !_isDescriptionExpanded,
+                          ),
+                          onOpenDescriptionLink: _openDescriptionLink,
+                        ),
+                      ),
                       SliverToBoxAdapter(
                         child: Container(
+                          height: 8,
+                          color: const Color(0xFFF5F5F5),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: ColoredBox(
                           color: Colors.white,
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_video.videoDescription.isNotEmpty)
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Linkify(
-                                      text: _video.videoDescription,
-                                      style: const TextStyle(
-                                        color: Color(0xFF1A1A1A),
-                                        fontSize: 14,
-                                        height: 1.5,
-                                      ),
-                                      linkStyle: const TextStyle(
-                                        color: Color(0xFFED1C2F),
-                                        fontSize: 14,
-                                        height: 1.5,
-                                        decoration: TextDecoration.underline,
-                                        decorationColor: Color(0xFFED1C2F),
-                                      ),
-                                      options: LinkifyOptions(
-                                        humanize: false,
-                                        removeWww: false,
-                                      ),
-                                      onOpen: (link) =>
-                                          _openDescriptionLink(link.url),
-                                      maxLines: _isDescriptionExpanded
-                                          ? null
-                                          : 2,
-                                      overflow: _isDescriptionExpanded
-                                          ? null
-                                          : TextOverflow.ellipsis,
+                          child: Builder(
+                            builder: (context) {
+                              final hasSuggestedBlock =
+                                  _suggestedLoading ||
+                                  _suggestedError ||
+                                  _suggestedVideos.isNotEmpty;
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (_playlistSession != null &&
+                                      _playlistSession!.videoIds.isNotEmpty)
+                                    VideoPlaylistQueue(
+                                      session: _playlistSession!,
+                                      currentVideoId: _video.videoId,
+                                      videoLookup: _playlistQueueVideoCache,
+                                      isOffline: context
+                                          .watch<ConnectivityController>()
+                                          .isOffline,
+                                      onTapItem: (videoId, index) {
+                                        _playPlaylistItem(videoId, index);
+                                      },
                                     ),
-                                    if (_video.videoDescription.length > 100)
-                                      TextButton(
-                                        onPressed: () => setState(
-                                          () => _isDescriptionExpanded =
-                                              !_isDescriptionExpanded,
+                                  VideoSuggestedSection(
+                                    videos: _suggestedVideos,
+                                    isLoading: _suggestedLoading,
+                                    hasError: _suggestedError,
+                                    isNoInternet: _suggestedNoInternet,
+                                    onRetry: () =>
+                                        _loadSuggestedVideosForPlayer(),
+                                    onVideoSelected: (video) async {
+                                      unawaited(
+                                        AnalyticsCapture.videoOpened(
+                                          context,
+                                          openUiName: AnalyticsTags
+                                              .openedVideoFromRecommended,
+                                          screenName: 'watch',
+                                          videoId: video.videoId,
+                                          videoTitle: video.videoTitle,
+                                          source: 'suggested',
                                         ),
-                                        style: TextButton.styleFrom(
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: const Size(0, 28),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                        child: Text(
-                                          _isDescriptionExpanded
-                                              ? 'Show less'
-                                              : 'Show more',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                            color: Color(0xFFED1C2F),
-                                          ),
-                                        ),
-                                      ),
+                                      );
+                                      final previousSession = _playlistSession;
+                                      await _clearPlaylistSession();
+                                      await _replaceVideo(
+                                        video,
+                                        pushCurrentToHistory: true,
+                                        historyPlaylistSessionOverride:
+                                            previousSession,
+                                      );
+                                    },
+                                  ),
+                                  if (hasSuggestedBlock) ...[
+                                    const SizedBox(
+                                      height: _kSuggestedToCommentsGap,
+                                    ),
+                                    const Divider(
+                                      height: 1,
+                                      thickness: 1,
+                                      indent: 16,
+                                      endIndent: 16,
+                                    ),
+                                    const SizedBox(
+                                      height: _kSuggestedToCommentsGap,
+                                    ),
                                   ],
-                                ),
-                              if (_video.videoTags.isNotEmpty) ...[
-                                if (_video.videoDescription.isNotEmpty)
-                                  const SizedBox(height: 12),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: _video.videoTags
-                                      .map(
-                                        (tag) => Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 5,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: const Color(
-                                              0xFFED1C2F,
-                                            ).withOpacity(0.1),
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            border: Border.all(
-                                              color: const Color(
-                                                0xFFED1C2F,
-                                              ).withOpacity(0.3),
-                                            ),
-                                          ),
-                                          child: Text(
-                                            '#$tag',
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xFFED1C2F),
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                              ],
-                            ],
+                                  VideoPlayerCommentsPanel(
+                                    controller: _commentsController,
+                                    onOpenSheet: _openCommentsSheet,
+                                    onSignInRequired: _showSignInRequiredDialog,
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                       ),
-                    SliverToBoxAdapter(
-                      child: Container(
-                        height: 8,
-                        color: const Color(0xFFF5F5F5),
-                      ),
-                    ),
-                    SliverToBoxAdapter(
-                      child: ColoredBox(
-                        color: Colors.white,
-                        child: Builder(
-                          builder: (context) {
-                            final hasSuggestedBlock =
-                                _suggestedLoading ||
-                                _suggestedError ||
-                                _suggestedVideos.isNotEmpty;
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (_playlistSession != null &&
-                                    _playlistSession!.videoIds.isNotEmpty)
-                                  _PlaylistQueueModule(
-                                    session: _playlistSession!,
-                                    currentVideoId: _video.videoId,
-                                    videoLookup: _playlistQueueVideoCache,
-                                    isOffline: context
-                                        .watch<ConnectivityController>()
-                                        .isOffline,
-                                    onTapItem: (videoId, index) {
-                                      _playPlaylistItem(videoId, index);
-                                    },
-                                  ),
-                                _SuggestedVideosSection(
-                                  videos: _suggestedVideos,
-                                  isLoading: _suggestedLoading,
-                                  hasError: _suggestedError,
-                                  isNoInternet: _suggestedNoInternet,
-                                  onRetry: () =>
-                                      _loadSuggestedVideosForPlayer(),
-                                  onVideoSelected: (video) async {
-                                    unawaited(
-                                      context
-                                          .read<FirstPartyAnalyticsService>()
-                                          .capture(
-                                            r'$click',
-                                            elementUiName:
-                                                'opened-video-from-recommended',
-                                            screenName: 'watch',
-                                            videoId: video.videoId,
-                                            videoTitle: video.videoTitle,
-                                            properties: {
-                                              'source': 'suggested',
-                                              'source_path': 'watch_suggested',
-                                            },
-                                          ),
-                                    );
-                                    final previousSession = _playlistSession;
-                                    await _clearPlaylistSession();
-                                    await _replaceVideo(
-                                      video,
-                                      pushCurrentToHistory: true,
-                                      historyPlaylistSessionOverride:
-                                          previousSession,
-                                    );
-                                  },
-                                ),
-                                if (hasSuggestedBlock) ...[
-                                  const SizedBox(
-                                    height: _kSuggestedToCommentsGap,
-                                  ),
-                                  const Divider(
-                                    height: 1,
-                                    thickness: 1,
-                                    indent: 16,
-                                    endIndent: 16,
-                                  ),
-                                  const SizedBox(
-                                    height: _kSuggestedToCommentsGap,
-                                  ),
-                                ],
-                                VideoPlayerCommentsPanel(
-                                  controller: _commentsController,
-                                  onOpenSheet: _openCommentsSheet,
-                                  onSignInRequired: _showSignInRequiredDialog,
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
             ),
           ),
         );
@@ -2418,517 +2035,3 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 }
 
-class _SuggestedVideosSection extends StatelessWidget {
-  const _SuggestedVideosSection({
-    required this.videos,
-    required this.isLoading,
-    required this.hasError,
-    required this.isNoInternet,
-    required this.onRetry,
-    required this.onVideoSelected,
-  });
-
-  final List<VideoModel> videos;
-  final bool isLoading;
-  final bool hasError;
-  final bool isNoInternet;
-  final VoidCallback onRetry;
-  final void Function(VideoModel) onVideoSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading) {
-      return Container(
-        color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        child: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [SuggestedVideosStripShimmer()],
-        ),
-      );
-    }
-
-    if (hasError) {
-      return Container(
-        color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        child: OfflineEmptyState(
-          variant: OfflineEmptyVariant.section,
-          title: isNoInternet ? "You're Offline" : 'Could not load suggestions',
-          description: isNoInternet
-              ? 'Connect to the internet to see suggested videos.'
-              : 'Please try again.',
-          actionLabel: 'Try Again',
-          onTryAgain: onRetry,
-        ),
-      );
-    }
-
-    if (videos.isEmpty) return const SizedBox.shrink();
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'Suggested Videos',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1A1A1A),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: _kSuggestedStripHeight,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: videos.length,
-              itemBuilder: (context, index) => Padding(
-                padding: EdgeInsets.only(
-                  right: index == videos.length - 1 ? 0 : 12,
-                ),
-                child: _SuggestedVideoCard(
-                  video: videos[index],
-                  onTap: onVideoSelected,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PlaylistQueueModule extends StatelessWidget {
-  const _PlaylistQueueModule({
-    required this.session,
-    required this.currentVideoId,
-    required this.videoLookup,
-    required this.onTapItem,
-    this.isOffline = false,
-  });
-
-  final PlaylistSession session;
-  final String currentVideoId;
-  final Map<String, VideoModel> videoLookup;
-  final void Function(String videoId, int index) onTapItem;
-  final bool isOffline;
-
-  @override
-  Widget build(BuildContext context) {
-    final resolvedCurrentIndex = session.videoIds.indexOf(currentVideoId);
-    final activeIndex = resolvedCurrentIndex >= 0
-        ? resolvedCurrentIndex
-        : session.currentIndex.clamp(0, session.videoIds.length - 1);
-
-    if (isOffline) {
-      return _buildOfflineQueue(context, activeIndex);
-    }
-
-    final mediaQuery = MediaQuery.of(context);
-    final shortestSide = mediaQuery.size.shortestSide;
-    final textScale = MediaQuery.textScalerOf(
-      context,
-    ).scale(1).clamp(1.0, 1.15).toDouble();
-    final visibleItemsCap = shortestSide < 360
-        ? 2
-        : _kActivePlaylistVisibleItemsDefault;
-    final rowHeight = (_kActivePlaylistRowHeightBase * textScale).clamp(
-      56.0,
-      66.0,
-    );
-    final rowGap = shortestSide < 360 ? 4.0 : _kActivePlaylistRowGapBase;
-
-    final queueEntries = session.videoIds.asMap().entries.toList();
-    final visibleRows = queueEntries.length < visibleItemsCap
-        ? queueEntries.length
-        : visibleItemsCap;
-    final queueHeight =
-        (visibleRows * rowHeight) + ((visibleRows - 1) * rowGap);
-
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: const Color(0xFFFFF8F9),
-          border: Border.all(color: const Color(0xFFF4C8CE)),
-        ),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'ACTIVE PLAYLIST',
-                  style: TextStyle(
-                    color: Color(0xFFED1C2F),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.7,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFFE6E6EB)),
-                  ),
-                  child: Text(
-                    '${activeIndex + 1}/${session.videoIds.length}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF6B6B6B),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              session.title ?? 'Playlist',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: queueHeight,
-              child: ListView.separated(
-                padding: EdgeInsets.zero,
-                primary: false,
-                itemCount: queueEntries.length,
-                physics: queueEntries.length > visibleItemsCap
-                    ? const BouncingScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
-                itemBuilder: (context, rowIndex) {
-                  final index = queueEntries[rowIndex].key;
-                  final id = queueEntries[rowIndex].value;
-                  final isCurrent = id == currentVideoId;
-                  final isImmediateNext = index == activeIndex + 1;
-                  final label = isCurrent
-                      ? 'Now playing'
-                      : isImmediateNext
-                      ? 'Up next'
-                      : '';
-                  return SizedBox(
-                    height: rowHeight,
-                    child: InkWell(
-                      onTap: () => onTapItem(id, index),
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: isCurrent
-                              ? const Color(0xFFFFEEF1)
-                              : const Color(0xFFF3F3F6),
-                          borderRadius: BorderRadius.circular(10),
-                          border: isCurrent
-                              ? Border.all(color: const Color(0xFFF2B2BC))
-                              : null,
-                        ),
-                        child: Row(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(7),
-                              child: SizedBox(
-                                width: 56,
-                                height: 32,
-                                child: _queueThumb(id),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _queueTitle(id),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    label,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: isCurrent
-                                          ? const Color(0xFFB54558)
-                                          : const Color(0xFF6B6B6B),
-                                      fontWeight: isCurrent
-                                          ? FontWeight.w600
-                                          : FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-                separatorBuilder: (_, __) => SizedBox(height: rowGap),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOfflineQueue(BuildContext context, int activeIndex) {
-    final total = session.videoIds.length;
-    final remaining = total > 1 ? total - 1 : 0;
-    final title = _queueTitle(currentVideoId);
-
-    return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: const Color(0xFFFFF8F9),
-          border: Border.all(color: const Color(0xFFF4C8CE)),
-        ),
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'ACTIVE PLAYLIST',
-                  style: TextStyle(
-                    color: Color(0xFFED1C2F),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.7,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFFE6E6EB)),
-                  ),
-                  child: Text(
-                    '${activeIndex + 1} of $total',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF6B6B6B),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              session.title ?? 'Playlist',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFEEF1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFF2B2BC)),
-              ),
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(7),
-                    child: SizedBox(
-                      width: 56,
-                      height: 32,
-                      child: _queueThumb(currentVideoId),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'Now playing',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFFB54558),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (remaining > 0) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE6E6EB)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.wifi_off_rounded,
-                      size: 16,
-                      color: Colors.grey.shade600,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        remaining == 1
-                            ? '1 more video in this playlist will appear when you\'re back online.'
-                            : '$remaining more videos in this playlist will appear when you\'re back online.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade700,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _queueThumb(String id) {
-    return HiffiVideoThumbnail(
-      thumbnailPath: videoLookup[id]?.videoThumbnail,
-      fit: BoxFit.cover,
-      backgroundColor: const Color(0xFFE8E8EB),
-    );
-  }
-
-  String _queueTitle(String id) {
-    final title = videoLookup[id]?.videoTitle ?? '';
-    final trimmed = title.trim();
-    if (trimmed.isNotEmpty && trimmed.toLowerCase() != 'video') {
-      return trimmed;
-    }
-    return 'Loading…';
-  }
-}
-
-class _VideoHistoryEntry {
-  const _VideoHistoryEntry({
-    required this.video,
-    required this.playlistSession,
-  });
-
-  final VideoModel video;
-  final PlaylistSession? playlistSession;
-}
-
-class _SuggestedVideoCard extends StatelessWidget {
-  final VideoModel video;
-  final Function(VideoModel) onTap;
-  const _SuggestedVideoCard({required this.video, required this.onTap});
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () => onTap(video),
-      borderRadius: BorderRadius.circular(8),
-      child: SizedBox(
-        width: 160,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: HiffiVideoThumbnail(
-                  thumbnailPath: video.videoThumbnail,
-                  fit: BoxFit.cover,
-                  backgroundColor: Colors.grey[200],
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              video.videoTitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1A1A1A),
-                height: 1.3,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                HiffiAvatar(
-                  imageUrl: video.profilePicture,
-                  size: 16,
-                  fallbackText: video.userUsername,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    video.userUsername,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF6B6B6B),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

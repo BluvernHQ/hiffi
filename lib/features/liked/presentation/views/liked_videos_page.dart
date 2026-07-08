@@ -11,7 +11,8 @@ import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
-import '../../../../core/analytics/first_party_analytics_service.dart';
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../video/domain/models/liked_video_item.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/liked_videos_view_model.dart';
@@ -246,19 +247,14 @@ class _LikedGridVideoCard extends StatelessWidget {
       child: InkWell(
         onTap: () {
           unawaited(
-            context.read<FirstPartyAnalyticsService>().capture(
-              r'$click',
-              elementUiName: 'opened-video-from-liked',
+            AnalyticsCapture.videoOpened(
+              context,
+              openUiName: AnalyticsTags.openedVideoFromLiked,
               screenName: 'liked',
               videoId: video.videoId,
               videoTitle: video.videoTitle,
-              properties: {
-                'source': 'liked',
-                'source_path': '/liked',
-                'path': '/liked',
-                'video_id': video.videoId,
-                'video_title': video.videoTitle,
-              },
+              source: 'liked',
+              sourcePath: '/liked',
             ),
           );
           context.push('/video/${video.videoId}', extra: video);

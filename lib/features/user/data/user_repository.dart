@@ -39,6 +39,21 @@ abstract class UserRepository {
     required String id,
     required String otp,
   });
+  Future<CreatorUpgradeRequestResult> requestCreatorUpgrade();
+  Future<UserModel> verifyCreatorUpgrade({
+    required String id,
+    required String otp,
+  });
+}
+
+class CreatorUpgradeRequestResult {
+  const CreatorUpgradeRequestResult({
+    required this.id,
+    required this.message,
+  });
+
+  final String id;
+  final String message;
 }
 
 class ApiUserRepository implements UserRepository {
@@ -743,6 +758,73 @@ class ApiUserRepository implements UserRepository {
         rethrow;
       }
       throw ApiException('Failed to verify OTP: $error', null);
+    }
+  }
+
+  @override
+  Future<CreatorUpgradeRequestResult> requestCreatorUpgrade() async {
+    developer.log('Requesting creator upgrade OTP', name: 'hiffi.user');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.requestCreatorUpgrade,
+        const {},
+        requiresAuth: true,
+      );
+      final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200 && responseBody['success'] == true) {
+        final data = responseBody['data'] as Map<String, dynamic>? ?? const {};
+        final id = data['id'] as String?;
+        if (id == null || id.isEmpty) {
+          throw ApiException('Failed to start creator upgrade.', response.statusCode);
+        }
+        return CreatorUpgradeRequestResult(
+          id: id,
+          message: data['message'] as String? ??
+              'OTP sent to your registered email.',
+        );
+      }
+
+      final error = responseBody['error'] as String? ??
+          'Failed to request creator upgrade.';
+      throw ApiException(error, response.statusCode);
+    } catch (error) {
+      if (error is ApiException) rethrow;
+      throw ApiException('Failed to request creator upgrade: $error', null);
+    }
+  }
+
+  @override
+  Future<UserModel> verifyCreatorUpgrade({
+    required String id,
+    required String otp,
+  }) async {
+    developer.log('Verifying creator upgrade OTP', name: 'hiffi.user');
+
+    try {
+      final response = await _apiClient.post(
+        ApiConstants.verifyCreatorUpgrade,
+        {'id': id, 'otp': otp},
+        requiresAuth: true,
+      );
+      final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode == 200 && responseBody['success'] == true) {
+        final data = responseBody['data'] as Map<String, dynamic>?;
+        final userData = data?['user'] as Map<String, dynamic>?;
+        if (userData != null) {
+          return UserModel.fromJson({'user': userData});
+        }
+        throw ApiException('Invalid creator upgrade response.', response.statusCode);
+      }
+
+      final error = responseBody['error'] as String? ??
+          'Failed to verify creator upgrade.';
+      throw ApiException(error, response.statusCode);
+    } catch (error) {
+      if (error is ApiException) rethrow;
+      throw ApiException('Failed to verify creator upgrade: $error', null);
     }
   }
 }

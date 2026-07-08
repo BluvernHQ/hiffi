@@ -520,7 +520,9 @@ class UserViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> becomeCreator() async {
+  String? _creatorUpgradeOtpId;
+
+  Future<CreatorUpgradeRequestResult> requestCreatorUpgrade() async {
     if (_currentUser == null) {
       throw ApiException('User must be logged in to become a creator', 401);
     }
@@ -529,33 +531,64 @@ class UserViewModel extends ChangeNotifier {
     _setError(null);
 
     try {
-      developer.log('Updating user role to creator', name: 'hiffi.user');
-      _currentUser = await _userRepository.updateUser(
-        currentUsername: _currentUser!.username,
-        newUsername: null,
-        name: null,
-        email: null,
-        bio: null,
-        role: 'creator',
-      );
-      // Also update viewedUser if it matches the current user
-      if (_viewedUser?.username == _currentUser?.username) {
-        _viewedUser = _currentUser;
-      }
-      developer.log(
-        'User role updated to creator successfully',
-        name: 'hiffi.user',
-      );
+      final result = await _userRepository.requestCreatorUpgrade();
+      _creatorUpgradeOtpId = result.id;
+      return result;
     } catch (error) {
       developer.log(
-        'Failed to become creator: $error',
+        'Failed to request creator upgrade: $error',
         name: 'hiffi.user',
         error: error,
       );
       if (error is ApiException) {
         _setError(error.message);
       } else {
-        _setError('Failed to become creator: $error');
+        _setError('Failed to request creator upgrade: $error');
+      }
+      rethrow;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<UserModel> verifyCreatorUpgrade({required String otp}) async {
+    if (_currentUser == null) {
+      throw ApiException('User must be logged in to become a creator', 401);
+    }
+    final otpId = _creatorUpgradeOtpId;
+    if (otpId == null || otpId.isEmpty) {
+      throw ApiException(
+        'Creator upgrade session expired. Please request a new code.',
+        400,
+      );
+    }
+
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      final user = await _userRepository.verifyCreatorUpgrade(
+        id: otpId,
+        otp: otp.trim(),
+      );
+      _currentUser = user;
+      if (_viewedUser?.username == user.username) {
+        _viewedUser = user;
+      }
+      _creatorUpgradeOtpId = null;
+      developer.log('Creator upgrade verified successfully', name: 'hiffi.user');
+      notifyListeners();
+      return user;
+    } catch (error) {
+      developer.log(
+        'Failed to verify creator upgrade: $error',
+        name: 'hiffi.user',
+        error: error,
+      );
+      if (error is ApiException) {
+        _setError(error.message);
+      } else {
+        _setError('Failed to verify creator upgrade: $error');
       }
       rethrow;
     } finally {

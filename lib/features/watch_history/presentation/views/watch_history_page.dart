@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../../core/routes/video_player_route_extra.dart';
 import '../../../../core/services/network_connectivity_service.dart';
 import '../../../../core/utils/responsive.dart';
@@ -300,6 +304,17 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
                               item.viewedAt.toLocal(),
                             ),
                             onTap: () {
+                              unawaited(
+                                AnalyticsCapture.videoOpened(
+                                  context,
+                                  openUiName:
+                                      AnalyticsTags.openedVideoFromHistory,
+                                  screenName: 'watch_history',
+                                  videoId: item.video.videoId,
+                                  videoTitle: item.video.videoTitle,
+                                  source: 'history',
+                                ),
+                              );
                               context.push(
                                 '/video/${item.video.videoId}',
                                 extra: VideoPlayerRouteExtra(

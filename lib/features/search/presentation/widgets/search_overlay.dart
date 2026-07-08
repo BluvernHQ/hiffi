@@ -9,7 +9,8 @@ import '../../../../core/widgets/hiffi_video_thumbnail.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../viewmodels/search_view_model.dart';
-import '../../../../core/analytics/first_party_analytics_service.dart';
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 
 /// Search overlay widget that shows real-time suggestions (Twitch-style)
 class SearchOverlay extends StatefulWidget {
@@ -229,9 +230,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
               TextButton(
                 onPressed: () {
                   unawaited(
-                    context.read<FirstPartyAnalyticsService>().capture(
-                      r'$click',
-                      elementUiName: 'search-overlay-view-all-results-button',
+                    AnalyticsCapture.click(
+                      context,
+                      elementUiName:
+                          AnalyticsTags.searchOverlayViewAllResultsButton,
                       screenName: 'search_overlay',
                       properties: {'query': widget.query},
                     ),
@@ -256,22 +258,24 @@ class _SearchOverlayState extends State<SearchOverlay> {
                 searchQuery: widget.query,
                 onTap: () {
                   if (item.isVideo) {
+                    final video = item.video!;
                     unawaited(
-                      context.read<FirstPartyAnalyticsService>().capture(
-                        r'$click',
-                        elementUiName: 'search-overlay-video-result-link',
+                      AnalyticsCapture.videoOpened(
+                        context,
+                        openUiName: AnalyticsTags.openedVideoFromSearch,
                         screenName: 'search_overlay',
-                        videoId: item.video!.videoId,
-                        videoTitle: item.video!.videoTitle,
-                        properties: {'query': widget.query},
+                        videoId: video.videoId,
+                        videoTitle: video.videoTitle,
+                        source: 'search',
+                        extra: {'query': widget.query},
                       ),
                     );
-                    widget.onResultTap(item.video!);
+                    widget.onResultTap(video);
                   } else {
                     unawaited(
-                      context.read<FirstPartyAnalyticsService>().capture(
-                        r'$click',
-                        elementUiName: 'search-overlay-user-result-link',
+                      AnalyticsCapture.click(
+                        context,
+                        elementUiName: AnalyticsTags.searchOverlayUserResultLink,
                         screenName: 'search_overlay',
                         properties: {'query': widget.query},
                       ),
@@ -317,6 +321,7 @@ class _SearchSuggestionTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // Icon or thumbnail
             if (item.isVideo)
@@ -326,21 +331,17 @@ class _SearchSuggestionTile extends StatelessWidget {
             const SizedBox(width: 12),
             // Content
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (item.isVideo)
-                    _buildVideoTitle(context, item.video!)
-                  else
-                    _buildUserName(context, item.user!),
-                  const SizedBox(height: 4),
-                  if (item.isVideo)
-                    _buildVideoMeta(context, item.video!)
-                  else
-                    _buildUserMeta(context, item.user!),
-                ],
-              ),
+              child: item.isVideo
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildVideoTitle(context, item.video!),
+                        const SizedBox(height: 4),
+                        _buildVideoMeta(context, item.video!),
+                      ],
+                    )
+                  : _buildUserLine(context, item.user!),
             ),
             Icon(
               Icons.arrow_forward_ios,
@@ -386,12 +387,45 @@ class _SearchSuggestionTile extends StatelessWidget {
     );
   }
 
-  Widget _buildUserName(BuildContext context, UserModel user) {
-    return Text(
-      user.name,
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-        fontWeight: FontWeight.w600,
-        color: Theme.of(context).colorScheme.onSurface,
+  Widget _buildUserLine(BuildContext context, UserModel user) {
+    final theme = Theme.of(context);
+    final displayName = user.name.trim();
+    final handle = '@${user.username.toLowerCase()}';
+
+    return Text.rich(
+      TextSpan(
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.onSurface,
+        ),
+        children: [
+          if (displayName.isNotEmpty)
+            TextSpan(
+              text: displayName,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          if (displayName.isNotEmpty) const TextSpan(text: '  '),
+          TextSpan(
+            text: handle,
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withOpacity(0.7),
+            ),
+          ),
+          if (user.followers > 0) ...[
+            TextSpan(
+              text: '  ·  ',
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+              ),
+            ),
+            TextSpan(
+              text: _formatCount(user.followers),
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withOpacity(0.7),
+              ),
+            ),
+          ],
+        ],
       ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -407,34 +441,6 @@ class _SearchSuggestionTile extends StatelessWidget {
             color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _buildUserMeta(BuildContext context, UserModel user) {
-    return Row(
-      children: [
-        Text(
-          '@${user.username.toLowerCase()}',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-          ),
-        ),
-        if (user.followers > 0) ...[
-          const SizedBox(width: 8),
-          Icon(
-            Icons.people,
-            size: 12,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            _formatCount(user.followers),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-            ),
-          ),
-        ],
       ],
     );
   }

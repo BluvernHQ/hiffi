@@ -8,7 +8,8 @@ import 'package:shimmer/shimmer.dart';
 
 import '../../../../core/routes/watch_route_extra.dart';
 import '../../../../core/services/analytics_service.dart';
-import '../../../../core/analytics/first_party_analytics_service.dart';
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/widgets/hiffi_image.dart';
@@ -104,14 +105,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                 child: InkWell(
                       onTap: () {
                         unawaited(
-                          context.read<FirstPartyAnalyticsService>().capture(
-                            r'$click',
-                            elementUiName: 'navbar-open-search-button',
+                          AnalyticsCapture.click(
+                            context,
+                            elementUiName: AnalyticsTags.navbarOpenSearchButton,
                             screenName: 'playlists',
                             properties: {
                               'source': 'playlists',
                               'source_path': '/playlists',
-                              'path': '/playlists',
                             },
                           ),
                         );
@@ -161,14 +161,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                 tooltip: 'Your profile',
                 onPressed: () {
                   unawaited(
-                    context.read<FirstPartyAnalyticsService>().capture(
-                      r'$click',
-                      elementUiName: 'navbar-profile-link',
+                    AnalyticsCapture.click(
+                      context,
+                      elementUiName: AnalyticsTags.navbarProfileLink,
                       screenName: 'playlists',
                       properties: {
                         'source': 'playlists',
                         'source_path': '/playlists',
-                        'path': '/playlists',
                       },
                     ),
                   );
@@ -187,14 +186,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             TextButton(
               onPressed: () {
                 unawaited(
-                  context.read<FirstPartyAnalyticsService>().capture(
-                    r'$click',
-                    elementUiName: 'navbar-login-button',
+                  AnalyticsCapture.click(
+                    context,
+                    elementUiName: AnalyticsTags.navbarLoginButton,
                     screenName: 'playlists',
                     properties: {
                       'source': 'playlists',
                       'source_path': '/playlists',
-                      'path': '/playlists',
                     },
                   ),
                 );
@@ -265,6 +263,18 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                       title: item.videoTitle ?? '',
                                       thumbnail: item.videoThumbnail ?? '',
                                     );
+                                unawaited(
+                                  AnalyticsCapture.videoOpened(
+                                    context,
+                                    openUiName:
+                                        AnalyticsTags.openedVideoFromPlaylist,
+                                    screenName: 'playlists',
+                                    videoId: video.videoId,
+                                    videoTitle: video.videoTitle,
+                                    source: 'playlist',
+                                    extra: {'playlist_id': p.playlistId},
+                                  ),
+                                );
                                 final session = PlaylistSession(
                                   playlistId: d.playlistId,
                                   title: d.title,
@@ -385,14 +395,13 @@ class _PlaylistCard extends StatelessWidget {
       child: InkWell(
         onTap: () {
           unawaited(
-            context.read<FirstPartyAnalyticsService>().capture(
-              r'$click',
-              elementUiName: 'opened-video-from-playlist',
+            AnalyticsCapture.click(
+              context,
+              elementUiName: AnalyticsTags.openedVideoFromPlaylist,
               screenName: 'playlists',
               properties: {
                 'source': 'playlists',
                 'source_path': '/playlists',
-                'path': '/playlists',
                 'playlist_id': playlist.playlistId,
               },
             ),

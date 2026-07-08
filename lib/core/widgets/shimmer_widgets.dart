@@ -31,94 +31,158 @@ class ShimmerLoading extends StatelessWidget {
   }
 }
 
-/// Shimmer for user profile page
+/// Shimmer for user profile page — mirrors banner, avatar overlap, stats, and videos.
 class ProfileShimmer extends StatelessWidget {
   const ProfileShimmer({super.key});
 
+  static const _pageBackground = Color(0xFFFAFAFA);
+  static const _avatarRadius = 40.0;
+  static const _bone = Colors.white;
+
+  static double _bannerHeightFor(double width) {
+    if (width >= 1024) return 256;
+    if (width >= 768) return 192;
+    if (width >= 640) return 160;
+    return 128;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey[300]!,
-      highlightColor: Colors.grey[100]!,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Profile picture and basic info
-            Center(
-              child: Column(
-                children: [
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: 150,
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: 100,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 32),
-            // Stats row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(
-                3,
-                (index) => Column(
+    final width = MediaQuery.sizeOf(context).width;
+    final bannerHeight = _bannerHeightFor(width);
+    const avatarSize = _avatarRadius * 2;
+
+    return ColoredBox(
+      color: _pageBackground,
+      child: Shimmer.fromColors(
+        baseColor: const Color(0xFFE6E6E6),
+        highlightColor: const Color(0xFFF8F8F8),
+        period: const Duration(milliseconds: 1100),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: bannerHeight + _avatarRadius,
+                width: double.infinity,
+                child: Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    Container(
-                      width: 40,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: bannerHeight,
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(color: _bone),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Container(
-                      width: 60,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
+                    Positioned(
+                      left: 16,
+                      top: bannerHeight - _avatarRadius,
+                      child: Container(
+                        width: avatarSize,
+                        height: avatarSize,
+                        decoration: BoxDecoration(
+                          color: _bone,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: _pageBackground, width: 3),
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 32),
-            // Bio section
-            Container(
-              width: double.infinity,
-              height: 60,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _boneBox(width: width * 0.55, height: 22, radius: 6),
+                    const SizedBox(height: 10),
+                    _boneBox(width: 108, height: 14, radius: 4),
+                    const SizedBox(height: 10),
+                    _boneBox(width: 132, height: 12, radius: 4),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _boneBox(height: 44, radius: 24),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _boneBox(height: 44, radius: 24),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _boneBox(
+                      width: double.infinity,
+                      height: 76,
+                      radius: 16,
+                      border: const Border.fromBorderSide(
+                        BorderSide(color: Color(0xFFE8E8E8)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _boneBox(
+                      width: double.infinity,
+                      height: 96,
+                      radius: 16,
+                      border: const Border.fromBorderSide(
+                        BorderSide(color: Color(0xFFE8E8E8)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _boneBox(width: 120, height: 16, radius: 4),
+                    const SizedBox(height: 12),
+                    _boneBox(
+                      width: double.infinity,
+                      height: 148,
+                      radius: 16,
+                      border: const Border.fromBorderSide(
+                        BorderSide(color: Color(0xFFE8E8E8)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 112,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: 3,
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemBuilder: (_, __) => _boneBox(
+                          width: 200,
+                          height: 112,
+                          radius: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  static Widget _boneBox({
+    double? width,
+    required double height,
+    double radius = 8,
+    BoxBorder? border,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: _bone,
+        borderRadius: BorderRadius.circular(radius),
+        border: border,
       ),
     );
   }

@@ -22,7 +22,6 @@ class SessionExpiryHandler {
   static const _authEndpoints = <String>{
     ApiConstants.authRegister,
     ApiConstants.authLogin,
-    ApiConstants.authVerify,
     ApiConstants.authResetPasswordRequest,
     ApiConstants.authResetPasswordVerify,
     ApiConstants.userAvailability,

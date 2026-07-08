@@ -10,6 +10,7 @@ import 'core/di/app_providers.dart';
 import 'core/routes/app_router.dart';
 import 'core/analytics/first_party_analytics_service.dart';
 import 'core/services/in_app_notification_service.dart';
+import 'core/services/navigation_state_service.dart';
 import 'core/widgets/app_connectivity_overlay.dart';
 
 class HiffiApp extends StatefulWidget {
@@ -23,6 +24,8 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
   AppLinks? _appLinks;
   StreamSubscription<Uri>? _linkSub;
   bool _deepLinksInitialized = false;
+  bool _routeRestored = false;
+  AppRouter? _appRouter;
   FirstPartyAnalyticsService? _firstPartyAnalytics;
 
   @override
@@ -33,6 +36,10 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _persistCurrentRoute();
+    }
+
     // Best-effort flush when app backgrounds/terminates.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
@@ -49,6 +56,28 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
         }
       });
     }
+  }
+
+  void _persistCurrentRoute() {
+    final router = _appRouter;
+    if (router == null) return;
+    final location =
+        router.router.routeInformationProvider.value.uri.toString();
+    unawaited(NavigationStateService.saveRoute(location));
+  }
+
+  Future<void> _restoreSavedRouteIfNeeded(AppRouter appRouter) async {
+    final savedRoute = await NavigationStateService.getSavedRoute();
+    if (savedRoute == null || !mounted) return;
+
+    final current =
+        appRouter.router.routeInformationProvider.value.uri.toString();
+    if (current == savedRoute) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      appRouter.router.go(savedRoute);
+    });
   }
 
   @override
@@ -116,12 +145,8 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
     final videoId = _extractVideoId(uri);
     final referralUsername = _extractReferralUsername(uri);
 
-    // If the link is not a valid watch URL, send the user to home.
+    // Ignore unrelated URIs — never reset navigation when resuming the app.
     if (videoId == null && referralUsername == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        appRouter.router.go('/home');
-      });
       return;
     }
 
@@ -144,10 +169,15 @@ class _HiffiAppState extends State<HiffiApp> with WidgetsBindingObserver {
       child: Builder(
         builder: (context) {
           final appRouter = context.read<AppRouter>();
+          _appRouter = appRouter;
           _firstPartyAnalytics ??= context.read<FirstPartyAnalyticsService>();
 
           if (!_deepLinksInitialized) {
             _initDeepLinks(appRouter);
+          }
+          if (!_routeRestored) {
+            _routeRestored = true;
+            unawaited(_restoreSavedRouteIfNeeded(appRouter));
           }
 
           return ScreenUtilInit(

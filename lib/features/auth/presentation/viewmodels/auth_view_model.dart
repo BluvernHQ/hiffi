@@ -4,12 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/exceptions/auth_failure.dart';
 import '../../../../core/services/network_connectivity_service.dart';
+import '../../../../core/services/referral_storage_service.dart';
 import '../../../../core/utils/network_error_utils.dart';
 import '../../../../core/analytics/first_party_analytics_service.dart';
 import '../../data/auth_repository.dart';
 import '../../../user/data/user_repository.dart';
 
-enum AuthMode { signIn, signUp, verifyOtp, forgotPassword, resetPassword }
+enum AuthMode { signIn, signUp, forgotPassword, resetPassword }
 
 class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
@@ -40,22 +41,26 @@ class AuthViewModel extends ChangeNotifier {
   AuthMode _mode = AuthMode.signIn;
   bool _isLoading = false;
   String? _errorMessage;
-  bool _postSignUpRedirectPending = false;
   String? _currentUsername;
-  String? _registrationId;
   String? _resetId;
+  String? _pendingPostAuthRoute;
   int _resendTimer = 0;
   Timer? _countdownTimer;
 
   AuthMode get mode => _mode;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
-  bool get isPostSignUpRedirectPending => _postSignUpRedirectPending;
   String? get currentUsername => _currentUsername;
-  String? get registrationId => _registrationId;
   String? get resetId => _resetId;
   int get resendTimer => _resendTimer;
   bool get canResendOtp => _resendTimer == 0;
+
+  /// One-shot destination after sign-in/sign-up (e.g. referral profile).
+  String? consumePostAuthRoute() {
+    final route = _pendingPostAuthRoute;
+    _pendingPostAuthRoute = null;
+    return route;
+  }
 
   String _normalizeEmail(String value) => value.trim().toLowerCase();
 
@@ -99,8 +104,8 @@ class AuthViewModel extends ChangeNotifier {
     confirmResetPasswordController.clear();
     _errorMessage = null;
     _currentUsername = null;
-    _registrationId = null;
     _resetId = null;
+    _pendingPostAuthRoute = null;
     _resendTimer = 0;
     _countdownTimer?.cancel();
     notifyListeners();
@@ -111,7 +116,6 @@ class AuthViewModel extends ChangeNotifier {
       return;
     }
 
-    // Validate form if key is provided
     if (formKey != null && !(formKey.currentState?.validate() ?? false)) {
       return;
     }
@@ -126,87 +130,60 @@ class AuthViewModel extends ChangeNotifier {
           password: signInPasswordController.text,
         );
 
-        // Clear form immediately to allow UI to update
         _clearSignInForm();
 
-        // Update username from auth user
         final currentUser = _authRepository.currentUser;
         if (currentUser?.username != null) {
           _currentUsername = currentUser!.username;
         }
-        // Switch analytics to stable logged-in id.
         await _firstPartyAnalytics?.identify(currentUser?.uid);
 
-        // Notify listeners to trigger router refresh
         notifyListeners();
-
-        // Fetch user profile asynchronously (non-blocking for navigation)
-        // The router will handle navigation based on auth state changes
         _fetchUserProfileAsync();
       } else if (_mode == AuthMode.signUp) {
         final name = nameController.text.trim();
         final email = _normalizeEmail(emailController.text);
         final username = signUpUsernameController.text.trim();
         final password = signUpPasswordController.text;
+        final referralCode = await ReferralStorageService.getReferralCode();
+        final redirectToReferrer = referralCode != null &&
+            referralCode.isNotEmpty &&
+            await ReferralStorageService.isRedirectPending();
 
         developer.log(
           'Creating user account via backend API',
           name: 'hiffi.auth',
         );
 
-        // Register user via backend API (this creates the user and returns a registration ID)
-        final regId = await _authRepository.signUp(
+        await _authRepository.signUp(
           name: name,
           email: email,
           username: username,
           password: password,
+          referralCode: referralCode,
         );
 
-        developer.log(
-          'Registration initiated successfully. ID: $regId',
-          name: 'hiffi.auth',
-        );
-
-        _registrationId = regId;
-        _mode = AuthMode.verifyOtp;
-        _startResendTimer();
-
-        notifyListeners();
-      } else if (_mode == AuthMode.verifyOtp) {
-        if (_registrationId == null) {
-          throw const AuthFailure(
-            'Registration ID missing. Please try signing up again.',
-          );
+        if (redirectToReferrer) {
+          _pendingPostAuthRoute = '/users/$referralCode';
         }
 
-        final otp = otpController.text.trim();
+        await ReferralStorageService.clearReferral();
 
-        developer.log(
-          'Verifying OTP for ID: $_registrationId',
-          name: 'hiffi.auth',
-        );
+        developer.log('Registration completed successfully', name: 'hiffi.auth');
 
-        await _authRepository.verifyOtp(id: _registrationId!, otp: otp);
-
-        developer.log('OTP verified successfully', name: 'hiffi.auth');
-
-        // Update username from auth user
         final currentUser = _authRepository.currentUser;
         if (currentUser?.username != null) {
           _currentUsername = currentUser!.username;
         }
         await _firstPartyAnalytics?.identify(currentUser?.uid);
-        // Conversion event mirroring web usage.
         await _firstPartyAnalytics?.capture(
           'conversion_signup_completed',
           properties: {'source': 'signup', 'source_path': '/signup'},
         );
 
-        notifyListeners();
-
-        // Clear forms
         _clearSignUpForm();
-        _clearOtpForm();
+        notifyListeners();
+        _fetchUserProfileAsync();
       } else if (_mode == AuthMode.forgotPassword) {
         final email = _normalizeEmail(emailController.text);
 
@@ -257,10 +234,8 @@ class AuthViewModel extends ChangeNotifier {
         notifyListeners();
       }
     } on AuthFailure catch (error) {
-      _postSignUpRedirectPending = false;
       _setError(error.message);
     } catch (error) {
-      _postSignUpRedirectPending = false;
       _setError(userFriendlyErrorMessage(error));
     } finally {
       _setLoading(false);
@@ -274,23 +249,7 @@ class AuthViewModel extends ChangeNotifier {
     _setError(null);
 
     try {
-      if (_mode == AuthMode.verifyOtp) {
-        final name = nameController.text.trim();
-        final email = _normalizeEmail(emailController.text);
-        final username = signUpUsernameController.text.trim();
-        final password = signUpPasswordController.text;
-
-        developer.log('Resending registration OTP', name: 'hiffi.auth');
-
-        final regId = await _authRepository.signUp(
-          name: name,
-          email: email,
-          username: username,
-          password: password,
-        );
-
-        _registrationId = regId;
-      } else if (_mode == AuthMode.resetPassword) {
+      if (_mode == AuthMode.resetPassword) {
         final email = _normalizeEmail(emailController.text);
 
         developer.log('Resending password reset OTP', name: 'hiffi.auth');
@@ -342,7 +301,6 @@ class AuthViewModel extends ChangeNotifier {
     confirmResetPasswordController.clear();
   }
 
-  /// Fetch user profile asynchronously (non-blocking for navigation)
   void _fetchUserProfileAsync() {
     Future.microtask(() async {
       try {
@@ -355,15 +313,12 @@ class AuthViewModel extends ChangeNotifier {
           }
         }
 
-        // Wait a bit to ensure token is ready
         await Future.delayed(const Duration(milliseconds: 300));
 
         final currentUser = _authRepository.currentUser;
         if (currentUser != null) {
-          // Try to fetch user profile to get full user info using JWT token
           print('   🔍 Attempting to fetch user profile after sign-in...');
           try {
-            // Fetch current user profile from backend using the JWT token
             final userProfile = await _userRepository.getCurrentUser();
             if (userProfile.username.isNotEmpty) {
               _currentUsername = userProfile.username;
@@ -400,6 +355,9 @@ class AuthViewModel extends ChangeNotifier {
     emailController.dispose();
     signUpUsernameController.dispose();
     signUpPasswordController.dispose();
+    otpController.dispose();
+    resetPasswordController.dispose();
+    confirmResetPasswordController.dispose();
     super.dispose();
   }
 }

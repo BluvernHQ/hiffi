@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,10 +10,8 @@ import 'package:in_app_update/in_app_update.dart';
 
 import '../../../auth/data/auth_repository.dart';
 import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/shimmer_widgets.dart';
-import '../../../user/domain/models/user_model.dart';
 import '../../../user/presentation/viewmodels/user_view_model.dart';
 import '../../../video/domain/models/video_model.dart';
 import '../../../video/presentation/viewmodels/video_view_model.dart';
@@ -23,15 +20,21 @@ import '../../../../core/routes/watch_route_extra.dart';
 import '../../../playlist/presentation/viewmodels/playlist_view_model.dart';
 import '../../../mood/domain/models/mood_def.dart';
 import '../../../mood/presentation/viewmodels/mood_feed_view_model.dart';
-import '../../../mood/presentation/widgets/active_mood_bar.dart';
 import '../../../mood/presentation/widgets/mood_picker_card.dart';
-import '../../../playlist/domain/models/playlist_models.dart';
 import '../../../../core/widgets/main_scaffold.dart';
 import '../../../../core/widgets/app_sidebar.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../../core/widgets/hiffi_logo.dart';
-import '../../../../core/widgets/hiffi_video_thumbnail.dart';
-import '../../../../core/analytics/first_party_analytics_service.dart';
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
+import '../../../../core/analytics/mood_analytics.dart';
+import '../../domain/home_feed_composer.dart';
+import '../../domain/home_grid_layout.dart';
+import '../widgets/home_active_mood_bar_header.dart';
+import '../widgets/home_compact_profile_loading.dart';
+import '../widgets/home_compact_profile_section.dart';
+import '../widgets/home_grid_video_card.dart';
+import '../widgets/home_sign_in_prompt.dart';
 import '../viewmodels/home_view_model.dart';
 
 class HomePage extends StatefulWidget {
@@ -99,9 +102,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final query = _searchController.text.trim();
     if (query.isNotEmpty) {
       unawaited(
-        context.read<FirstPartyAnalyticsService>().capture(
-          r'$click',
-          elementUiName: 'search-overlay-view-all-results-button',
+        AnalyticsCapture.click(
+          context,
+          elementUiName: AnalyticsTags.searchOverlayViewAllResultsButton,
           screenName: 'search_overlay',
           properties: {'query': query},
         ),
@@ -283,9 +286,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final isMoodFeed = moodFeedViewModel.isMoodActive;
     final feedVideos = isMoodFeed
         ? moodFeedViewModel.videos
-        : _buildPrioritizedFeed(
-            videoViewModel.videos,
-            playlistViewModel,
+        : buildPrioritizedFeed(
+            source: videoViewModel.videos,
+            playlistViewModel: playlistViewModel,
+            curatedShuffleSeed: _curatedShuffleSeed,
           );
     final feedHasMore =
         isMoodFeed ? moodFeedViewModel.hasMore : videoViewModel.hasMore;
@@ -384,9 +388,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 icon: const Icon(Icons.search),
                 onPressed: () {
                   unawaited(
-                    context.read<FirstPartyAnalyticsService>().capture(
-                      r'$click',
-                      elementUiName: 'navbar-open-search-button',
+                    AnalyticsCapture.click(
+                      context,
+                      elementUiName: AnalyticsTags.navbarOpenSearchButton,
                       screenName: 'home',
                     ),
                   );
@@ -413,9 +417,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               IconButton(
                 onPressed: () async {
                   unawaited(
-                    context.read<FirstPartyAnalyticsService>().capture(
-                      r'$click',
-                      elementUiName: 'navbar-logout-confirm-button',
+                    AnalyticsCapture.click(
+                      context,
+                      elementUiName: AnalyticsTags.navbarLogoutConfirmButton,
                       screenName: 'home',
                     ),
                   );
@@ -447,9 +451,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               TextButton(
                 onPressed: () {
                   unawaited(
-                    context.read<FirstPartyAnalyticsService>().capture(
-                      r'$click',
-                      elementUiName: 'navbar-login-button',
+                    AnalyticsCapture.click(
+                      context,
+                      elementUiName: AnalyticsTags.navbarSignupButton,
                       screenName: 'home',
                     ),
                   );
@@ -509,33 +513,40 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           // Compact Profile Section or Sign In Button
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
                               child: user != null
-                                  ? _CompactProfileSection(
+                                  ? HomeCompactProfileSection(
                                       user: user,
                                       onProfileTap: () {
                                         unawaited(
-                                          context
-                                              .read<FirstPartyAnalyticsService>()
-                                              .capture(
-                                                r'$click',
-                                                elementUiName:
-                                                    'navbar-profile-link',
-                                                screenName: 'home',
-                                              ),
+                                          AnalyticsCapture.click(
+                                            context,
+                                            elementUiName:
+                                                AnalyticsTags.navbarProfileLink,
+                                            screenName: 'home',
+                                          ),
                                         );
                                         context.push('/users/${user.username}');
                                       },
                                       onUploadTap: () {
-                                        // Redirect to become creator if not a creator
                                         if (user.role != 'creator') {
                                           context.push('/become-creator');
                                         } else {
-                                          context.push('/upload/video');
+                                          unawaited(
+                                            AnalyticsCapture.click(
+                                              context,
+                                              elementUiName: AnalyticsTags
+                                                  .navbarOpenHiffiStudioButton,
+                                              screenName: 'home',
+                                            ),
+                                          );
+                                          context.push('/studio');
                                         }
                                       },
                                     )
-                                  : _SignInPrompt(
+                                  : isAuthenticated
+                                  ? const HomeCompactProfileLoading()
+                                  : HomeSignInPrompt(
                                       onSignInTap: () {
                                         // Pass current route as return route
                                         const currentRoute = '/home';
@@ -550,6 +561,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                             SliverToBoxAdapter(
                               child: MoodPickerCard(
                                 onMoodSelected: (query) {
+                                  final mood = moodByQuery(query);
+                                  if (mood != null) {
+                                    unawaited(
+                                      AnalyticsCapture.click(
+                                        context,
+                                        elementUiName: AnalyticsTags.moodMixSelect(
+                                          moodAnalyticsSlug(mood.label),
+                                        ),
+                                        screenName: 'home',
+                                      ),
+                                    );
+                                  }
                                   context.read<MoodFeedViewModel>().applyMood(query);
                                 },
                               ),
@@ -559,9 +582,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               moodFeedViewModel.activeMood != null)
                             SliverPersistentHeader(
                               pinned: true,
-                              delegate: _ActiveMoodBarHeader(
+                              delegate: HomeActiveMoodBarHeader(
                                 mood: moodFeedViewModel.activeMood!,
                                 onBack: () {
+                                  final mood = moodFeedViewModel.activeMood;
+                                  if (mood != null) {
+                                    unawaited(
+                                      AnalyticsCapture.click(
+                                        context,
+                                        elementUiName:
+                                            AnalyticsTags.moodMixSwitchVibe,
+                                        screenName: 'home',
+                                      ),
+                                    );
+                                  }
                                   context.read<MoodFeedViewModel>().clearActiveMood();
                                 },
                                 onPlay: () => _playMoodFromStart(context),
@@ -801,7 +835,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                   crossAxisCount: responsiveGridColumns(context),
                                   mainAxisSpacing: 12.h,
                                   crossAxisSpacing: 12.w,
-                                  childAspectRatio: _calculateAspectRatio(
+                                  childAspectRatio: calculateHomeGridAspectRatio(
                                     context,
                                   ),
                                 ),
@@ -828,13 +862,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                                           : const SizedBox.shrink();
                                     }
                                     final video = feedVideos[index];
-                                    return _GridVideoCard(
+                                    return HomeGridVideoCard(
                                       video: video,
                                       isMoodFeed: isMoodFeed,
                                       moodSessionBuilder: isMoodFeed
                                           ? () => moodFeedViewModel
                                                 .buildSessionAt(index)
                                           : null,
+                                      onMoodVideoTap: (session) async {
+                                        unawaited(
+                                          AnalyticsCapture.videoOpened(
+                                            context,
+                                            openUiName:
+                                                AnalyticsTags.openedVideoFromMood,
+                                            screenName: 'home',
+                                            videoId: video.videoId,
+                                            videoTitle: video.videoTitle,
+                                            source: 'mood',
+                                          ),
+                                        );
+                                        await moodFeedViewModel.persistSession(
+                                          session,
+                                        );
+                                        if (!context.mounted) return;
+                                        context.push(
+                                          '/watch/${video.videoId}?playlist=${Uri.encodeComponent(session.playlistId)}&pindex=${session.currentIndex}',
+                                          extra: WatchRouteExtra(
+                                            video: video,
+                                            playlistSession: session,
+                                          ),
+                                        );
+                                      },
+                                      onVideoTap: () {
+                                        unawaited(
+                                          AnalyticsCapture.videoOpened(
+                                            context,
+                                            openUiName:
+                                                AnalyticsTags.openedVideoFromHome,
+                                            screenName: 'home',
+                                            videoId: video.videoId,
+                                            videoTitle: video.videoTitle,
+                                            source: 'home',
+                                            sourcePath: '/home',
+                                          ),
+                                        );
+                                        context.push(
+                                          '/video/${video.videoId}',
+                                          extra: video,
+                                        );
+                                      },
                                     );
                                   },
                                   childCount:
@@ -869,56 +945,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  List<VideoModel> _buildPrioritizedFeed(
-    List<VideoModel> source,
-    PlaylistViewModel playlistViewModel,
-  ) {
-    if (source.isEmpty) return const [];
-
-    final curatedIds = <String>{};
-    for (final curated in playlistViewModel.curatedPlaylists) {
-      final detail = playlistViewModel.curatedDetail(curated.playlistId);
-      if (detail == null) continue;
-      for (final item in detail.items) {
-        if (item.videoId.isNotEmpty) curatedIds.add(item.videoId);
-      }
-    }
-    if (curatedIds.isEmpty) return source;
-
-    final curatedVideos = <VideoModel>[];
-    final nonCuratedVideos = <VideoModel>[];
-    for (final video in source) {
-      if (curatedIds.contains(video.videoId)) {
-        curatedVideos.add(video);
-      } else {
-        nonCuratedVideos.add(video);
-      }
-    }
-
-    // Keep curated-first behavior while rotating order per refresh/session.
-    final rng = Random(_curatedShuffleSeed);
-    curatedVideos.shuffle(rng);
-    return [...curatedVideos, ...nonCuratedVideos];
-  }
-
   Future<void> _playMoodFromStart(BuildContext context) async {
     final moodVm = context.read<MoodFeedViewModel>();
     final session = moodVm.buildSessionAt(0);
     if (session == null || moodVm.videos.isEmpty) return;
 
     final video = moodVm.videos.first;
+    final mood = moodVm.activeMood;
     await moodVm.persistSession(session);
     if (!context.mounted) return;
 
-    unawaited(
-      context.read<FirstPartyAnalyticsService>().capture(
-        r'$click',
-        elementUiName: 'mood-play-button',
-        screenName: 'home',
-        videoId: video.videoId,
-        videoTitle: video.videoTitle,
-      ),
-    );
+    if (mood != null) {
+      unawaited(
+        AnalyticsCapture.click(
+          context,
+          elementUiName: AnalyticsTags.moodMixRun(
+            moodAnalyticsSlug(mood.label),
+          ),
+          screenName: 'home',
+          videoId: video.videoId,
+          videoTitle: video.videoTitle,
+        ),
+      );
+    }
 
     context.push(
       '/watch/${video.videoId}?playlist=${Uri.encodeComponent(session.playlistId)}&pindex=0',
@@ -927,492 +976,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget _buildScrollableSliverFill({required Widget child}) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          physics: const ClampingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Center(child: child),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ActiveMoodBarHeader extends SliverPersistentHeaderDelegate {
-  _ActiveMoodBarHeader({
-    required this.mood,
-    required this.onBack,
-    required this.onPlay,
-  });
-
-  final MoodDef mood;
-  final VoidCallback onBack;
-  final VoidCallback onPlay;
-
-  @override
-  double get minExtent => ActiveMoodBar.kHeight;
-
-  @override
-  double get maxExtent => ActiveMoodBar.kHeight;
-
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) {
-    return SizedBox(
-      height: ActiveMoodBar.kHeight,
-      child: ActiveMoodBar(
-        mood: mood,
-        onBack: onBack,
-        onPlay: onPlay,
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(covariant _ActiveMoodBarHeader oldDelegate) {
-    return oldDelegate.mood != mood;
-  }
-}
-
-class _CompactProfileSection extends StatelessWidget {
-  const _CompactProfileSection({
-    required this.user,
-    required this.onProfileTap,
-    required this.onUploadTap,
-  });
-
-  final UserModel user;
-  final VoidCallback onProfileTap;
-  final VoidCallback onUploadTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        // Profile Avatar - Compact
-        GestureDetector(
-          onTap: onProfileTap,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              HiffiAvatar(
-                imageUrl: user.profilePicture ?? user.avatarUrl,
-                size: 56,
-                fallbackText: user.name,
-                cacheBust: user.updatedAt?.millisecondsSinceEpoch,
-              ),
-              if (user.status?.isLive == true)
-                Positioned(
-                  right: -2,
-                  bottom: -2,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Theme.of(context).colorScheme.surface,
-                        width: 2,
-                      ),
-                    ),
-                    child: const Icon(
-                      Icons.circle,
-                      color: Colors.white,
-                      size: 10,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        // User Info - Compact
-        Expanded(
-          child: GestureDetector(
-            onTap: onProfileTap,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        user.name.isNotEmpty
-                            ? user.name
-                            : user.username.toLowerCase(),
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (user.status?.isLive == true) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.circle, color: Colors.white, size: 6),
-                            SizedBox(width: 3),
-                            Text(
-                              'LIVE',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 9,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '@${user.username.toLowerCase()}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // Upload Button - Compact FAB (role-based icon)
-        Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Theme.of(context).colorScheme.primary,
-                Theme.of(context).colorScheme.primary.withOpacity(0.8),
-              ],
-            ),
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onUploadTap,
-              borderRadius: BorderRadius.circular(28),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                child: Icon(Icons.bolt, color: Colors.white, size: 24),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SignInPrompt extends StatelessWidget {
-  const _SignInPrompt({required this.onSignInTap});
-
-  final VoidCallback onSignInTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isTablet = isTabletOrLarger(context);
-    return Container(
-      padding: EdgeInsets.all(isTablet ? 20 : 16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: isTablet ? 28 : 24,
-            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-            child: Icon(
-              Icons.person_outline,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-              size: isTablet ? 28 : 24,
-            ),
-          ),
-          SizedBox(width: isTablet ? 16 : 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Sign in to access your profile',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: isTablet ? 14 : null,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Upload videos and manage your account',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant
-                        .withOpacity(0.7),
-                    fontSize: isTablet ? 13 : null,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(onPressed: onSignInTap, child: const Text('Sign In')),
-        ],
-      ),
-    );
-  }
-}
-
-// Calculate aspect ratio based on screen width and content height
-double _calculateAspectRatio(BuildContext context) {
-  final screenWidth = MediaQuery.of(context).size.width;
-  final columns = responsiveGridColumns(context).toDouble();
-  // Card width: (screen width - left padding - right padding - (columns-1)*spacing) / columns
-  final horizontalPadding = 12.w * 2;
-  final spacing = 12.w;
-  final cardWidth =
-      (screenWidth - horizontalPadding - spacing * (columns - 1)) / columns;
-
-  // Thumbnail maintains 16:9 aspect ratio
-  final thumbnailHeight = cardWidth * (9 / 16);
-
-  // Text section height: responsive so cards stay balanced on tablet
-  final textSectionHeight =
-      responsiveGridTextSectionHeight(context) + 8.h;
-
-  // Total card height
-  final totalHeight = thumbnailHeight + textSectionHeight;
-
-  return cardWidth / totalHeight;
-}
-
-// Grid video card for feed layout
-class _GridVideoCard extends StatelessWidget {
-  const _GridVideoCard({
-    required this.video,
-    this.isMoodFeed = false,
-    this.moodSessionBuilder,
-  });
-
-  final VideoModel video;
-  final bool isMoodFeed;
-  final PlaylistSession? Function()? moodSessionBuilder;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () async {
-          final moodSession = moodSessionBuilder?.call();
-          if (isMoodFeed && moodSession != null) {
-            unawaited(
-              context.read<FirstPartyAnalyticsService>().capture(
-                r'$click',
-                elementUiName: 'opened-video-from-mood',
-                screenName: 'home',
-                videoId: video.videoId,
-                videoTitle: video.videoTitle,
-                properties: {
-                  'source': 'mood',
-                  'source_path': '/home',
-                  'path': '/home',
-                  'video_id': video.videoId,
-                  'video_title': video.videoTitle,
-                },
-              ),
-            );
-            await context.read<MoodFeedViewModel>().persistSession(moodSession);
-            if (!context.mounted) return;
-            context.push(
-              '/watch/${video.videoId}?playlist=${Uri.encodeComponent(moodSession.playlistId)}&pindex=${moodSession.currentIndex}',
-              extra: WatchRouteExtra(
-                video: video,
-                playlistSession: moodSession,
-              ),
-            );
-            return;
-          }
-
-          unawaited(
-            context.read<FirstPartyAnalyticsService>().capture(
-              r'$click',
-              elementUiName: 'opened-video-from-home',
-              screenName: 'home',
-              videoId: video.videoId,
-              videoTitle: video.videoTitle,
-              properties: {
-                'source': 'home',
-                'source_path': '/home',
-                'path': '/home',
-                'video_id': video.videoId,
-                'video_title': video.videoTitle,
-              },
-            ),
-          );
-          context.push('/video/${video.videoId}', extra: video);
-        },
-        borderRadius: BorderRadius.circular(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Thumbnail
-            Expanded(
-              flex: 3,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          HiffiVideoThumbnail(
-                            thumbnailPath: video.videoThumbnail,
-                            fit: BoxFit.cover,
-                          ),
-                          // Processing indicator overlay (top right) – only when processing
-                          if (video.status == 'temp')
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.7),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '• ',
-                                      style: TextStyle(
-                                        color: Colors.redAccent,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      'processing',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          // Processing Overlay
-                          if (video.status == 'temp')
-                            IgnorePointer(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.3),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Center(
-                                  child: Icon(
-                                    Icons.sync,
-                                    color: Colors.white70,
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-              ),
-            ),
-            SizedBox(height: 8.h),
-            // Title and User section – responsive font sizes for tablet (YouTube-style: 2 lines + ellipsis)
-            SizedBox(
-              height: responsiveGridTextSectionHeight(context),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        video.videoTitle,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                          fontSize: responsiveGridTitleFontSize(context),
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  SizedBox(height: 6.h),
-                  Row(
-                    children: [
-                      HiffiAvatar(
-                        imageUrl: video.profilePicture,
-                        size: responsiveGridAvatarSize(context),
-                        fallbackText: video.userUsername,
-                        cacheBust: video.updatedAt.millisecondsSinceEpoch,
-                      ),
-                      SizedBox(width: 6.w),
-                      Flexible(
-                        child: Text(
-                          video.userUsername.isNotEmpty
-                              ? video.userUsername.toLowerCase()
-                              : 'Unknown',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant.withOpacity(0.8),
-                                fontSize: responsiveGridSubtitleFontSize(context),
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+    return Center(
+      child: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: child,
       ),
     );
   }

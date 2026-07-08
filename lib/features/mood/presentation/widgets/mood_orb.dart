@@ -10,6 +10,7 @@ class MoodOrb extends StatelessWidget {
     required this.onTap,
     this.size = 72,
     this.showLabel = true,
+    this.compact = false,
   });
 
   final MoodDef mood;
@@ -17,15 +18,24 @@ class MoodOrb extends StatelessWidget {
   final VoidCallback onTap;
   final double size;
   final bool showLabel;
+  final bool compact;
 
   static const double _labelFontSize = 11;
+  static const double _labelFontSizeCompact = 9;
   static const double _labelHeight = 1.2;
   static const double _labelGap = 8;
+  static const double _labelGapCompact = 4;
 
   /// Orb diameter + single-line label block (matches picker row height).
-  static double heightFor(double orbSize, {bool withLabel = true}) {
+  static double heightFor(
+    double orbSize, {
+    bool withLabel = true,
+    bool compact = false,
+  }) {
     if (!withLabel) return orbSize;
-    return orbSize + _labelGap + (_labelFontSize * _labelHeight);
+    final fontSize = compact ? _labelFontSizeCompact : _labelFontSize;
+    final gap = compact ? _labelGapCompact : _labelGap;
+    return orbSize + gap + (fontSize * _labelHeight);
   }
 
   @override
@@ -33,7 +43,11 @@ class MoodOrb extends StatelessWidget {
     final theme = Theme.of(context);
     final labelColor = selected
         ? theme.colorScheme.onSurface
-        : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.75);
+        : theme.colorScheme.onSurfaceVariant.withValues(
+            alpha: compact ? 0.65 : 0.75,
+          );
+    final labelFontSize = compact ? _labelFontSizeCompact : _labelFontSize;
+    final labelGap = compact ? _labelGapCompact : _labelGap;
 
     return GestureDetector(
       onTap: onTap,
@@ -54,13 +68,15 @@ class MoodOrb extends StatelessWidget {
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: selected
-                        ? theme.colorScheme.primary
+                        ? theme.colorScheme.primary.withValues(
+                            alpha: compact ? 0.85 : 1,
+                          )
                         : theme.colorScheme.outlineVariant.withValues(
-                            alpha: 0.6,
+                            alpha: compact ? 0.45 : 0.6,
                           ),
-                    width: selected ? 2 : 1,
+                    width: selected ? (compact ? 1.5 : 2) : 1,
                   ),
-                  boxShadow: selected
+                  boxShadow: selected && !compact
                       ? [
                           BoxShadow(
                             color: theme.colorScheme.primary.withValues(
@@ -125,18 +141,18 @@ class MoodOrb extends StatelessWidget {
               ),
             ),
             if (showLabel) ...[
-              const SizedBox(height: _labelGap),
+              SizedBox(height: labelGap),
               SizedBox(
-                height: _labelFontSize * _labelHeight,
+                height: labelFontSize * _labelHeight,
                 child: Text(
                   mood.label.toUpperCase(),
                   textAlign: TextAlign.center,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.labelMedium?.copyWith(
-                    fontSize: _labelFontSize,
+                    fontSize: labelFontSize,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4,
+                    letterSpacing: compact ? 0.2 : 0.4,
                     color: labelColor,
                     height: _labelHeight,
                   ),

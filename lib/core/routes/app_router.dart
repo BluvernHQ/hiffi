@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_analytics/observer.dart';
 import 'package:flutter_estatisticas/umami_navigation_observer.dart';
 import 'package:flutter_estatisticas/umami_service.dart';
 
+import '../services/referral_storage_service.dart';
 import '../../features/auth/data/auth_repository.dart';
 import '../../features/auth/presentation/viewmodels/auth_view_model.dart';
 import '../../features/auth/presentation/views/auth_page.dart';
@@ -19,6 +19,8 @@ import '../../features/watch_history/presentation/views/watch_history_page.dart'
 
 import '../../features/upload/presentation/views/video_upload_page.dart';
 import '../../features/user/presentation/views/become_creator_page.dart';
+import '../../features/user/presentation/views/hiffi_studio_page.dart';
+import '../../features/migration/presentation/views/migrate_content_page.dart';
 import '../../features/user/presentation/views/user_profile_page.dart';
 import '../../features/video/domain/models/video_model.dart';
 import '../../features/video/presentation/views/video_player_page.dart';
@@ -100,8 +102,11 @@ class AppRouter {
           path: '/signup',
           name: 'signup',
           builder: (context, state) {
-            // Get return route from query parameters
             final returnRoute = state.uri.queryParameters['returnTo'];
+            final ref = state.uri.queryParameters['ref']?.trim();
+            if (ref != null && ref.isNotEmpty) {
+              ReferralStorageService.saveReferral(username: ref);
+            }
             return AuthPage(
               initialMode: AuthMode.signUp,
               returnRoute: returnRoute,
@@ -146,6 +151,22 @@ class AppRouter {
           path: '/become-creator',
           name: 'become_creator',
           builder: (context, state) => const BecomeCreatorPage(),
+        ),
+        GoRoute(
+          path: '/studio',
+          name: 'hiffi_studio',
+          builder: (context, state) => const HiffiStudioPage(),
+          routes: [
+            GoRoute(
+              path: 'migrate',
+              name: 'studio_migrate',
+              builder: (context, state) {
+                final scrollToStatus =
+                    state.uri.queryParameters['status'] == '1';
+                return MigrateContentPage(scrollToStatusOnLoad: scrollToStatus);
+              },
+            ),
+          ],
         ),
         GoRoute(
           path: '/users/:username',
@@ -296,14 +317,6 @@ class AppRouter {
         ),
       ],
       redirect: (context, state) {
-        final authViewModel = _readAuthViewModel(context);
-        final isPostSignUpPending =
-            authViewModel?.isPostSignUpRedirectPending ?? false;
-
-        if (isPostSignUpPending) {
-          return state.uri.path == '/login' ? null : '/login';
-        }
-
         final isLoggedIn = _authRepository.currentUser != null;
         final loggingIn = state.uri.path == '/login';
         final signingUp = state.uri.path == '/signup';
@@ -321,6 +334,8 @@ class AppRouter {
         final onHelpLegal = state.uri.path == '/help-legal';
         final onMyReports = state.uri.path == '/my-reports';
         final onMyReportsDetail = state.uri.path.startsWith('/my-reports/');
+        final onStudio = state.uri.path == '/studio' ||
+            state.uri.path.startsWith('/studio/');
 
         if (!isLoggedIn) {
           if (onPlaylists) {
@@ -338,6 +353,9 @@ class AppRouter {
             return '/login?returnTo=/my-reports';
           }
           if (onMyReportsDetail) {
+            return '/login?returnTo=${Uri.encodeComponent(state.uri.toString())}';
+          }
+          if (onStudio) {
             return '/login?returnTo=${Uri.encodeComponent(state.uri.toString())}';
           }
           // Allow access to home, video player, upload pages, and auth pages without authentication
@@ -389,14 +407,6 @@ class AppRouter {
   void dispose() {
     _refreshListenable.dispose();
     router.dispose();
-  }
-
-  AuthViewModel? _readAuthViewModel(BuildContext context) {
-    try {
-      return context.read<AuthViewModel>();
-    } catch (_) {
-      return null;
-    }
   }
 }
 

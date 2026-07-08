@@ -13,16 +13,14 @@ abstract class AuthRepository {
   AuthUser? get currentUser;
   Future<void> signIn({required String username, required String password});
 
-  /// Signs up a new user. Returns a registration ID that must be verified with OTP.
-  Future<String> signUp({
+  /// Registers a new user and establishes an authenticated session.
+  Future<void> signUp({
     required String name,
     required String email,
     required String username,
     required String password,
+    String? referralCode,
   });
-
-  /// Verifies the OTP sent during registration.
-  Future<void> verifyOtp({required String id, required String otp});
 
   /// Requests a password reset for the given email.
   Future<String> requestPasswordReset({required String email});
@@ -83,6 +81,34 @@ class BackendAuthRepository implements AuthRepository {
       _currentUser = null;
       _authStateController.add(null);
     }
+  }
+
+  Future<void> _establishSessionFromAuthData(Map<String, dynamic>? data) async {
+    final token = data?['token'] as String?;
+    final userData = data?['user'] as Map<String, dynamic>?;
+
+    if (token == null || token.isEmpty) {
+      throw const AuthFailure('Failed to receive authentication token.');
+    }
+
+    await TokenStorageService.saveToken(token);
+
+    if (userData != null) {
+      _currentUser = AuthUser(
+        uid: userData['uid'] as String? ?? '',
+        username: userData['username'] as String?,
+        name: userData['name'] as String?,
+        profilePicture:
+            userData['profile_picture'] as String? ??
+            userData['profilePicture'] as String? ??
+            userData['avatarUrl'] as String?,
+      );
+    } else {
+      _currentUser = AuthUser(uid: '');
+    }
+
+    _authEstablishedDuringInit = true;
+    _authStateController.add(_currentUser);
   }
 
   @override
@@ -146,7 +172,10 @@ class BackendAuthRepository implements AuthRepository {
           _authEstablishedDuringInit = true;
           _authStateController.add(_currentUser);
         } else {
-          final message = responseBody['message'] as String? ?? 'Login failed.';
+          final message =
+              responseBody['error'] as String? ??
+              responseBody['message'] as String? ??
+              'Login failed.';
           throw AuthFailure(message);
         }
       } else if (response.statusCode == 401) {
@@ -154,6 +183,7 @@ class BackendAuthRepository implements AuthRepository {
       } else {
         final responseBody = jsonDecode(response.body) as Map<String, dynamic>?;
         final message =
+            responseBody?['error'] as String? ??
             responseBody?['message'] as String? ??
             'Login failed. Please try again.';
         throw AuthFailure(message);
@@ -173,11 +203,12 @@ class BackendAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<String> signUp({
+  Future<void> signUp({
     required String name,
     required String email,
     required String username,
     required String password,
+    String? referralCode,
   }) async {
     if (username.isEmpty || name.isEmpty || email.isEmpty || password.isEmpty) {
       throw const AuthFailure('All fields are required.');
@@ -202,9 +233,9 @@ class BackendAuthRepository implements AuthRepository {
       );
     }
 
-    // Validate name length
-    if (trimmedName.length >= 30) {
-      throw const AuthFailure('Name must be less than 30 characters.');
+    // Validate name length (max 30 characters)
+    if (trimmedName.length > 30) {
+      throw const AuthFailure('Name must be 30 characters or less.');
     }
 
     // Validate password length
@@ -213,34 +244,40 @@ class BackendAuthRepository implements AuthRepository {
     }
 
     try {
-      final response = await _apiClient.post(ApiConstants.authRegister, {
+      final body = <String, dynamic>{
         'username': trimmedUsername,
         'name': trimmedName,
         'email': trimmedEmail,
         'password': password,
-      }, requiresAuth: false);
+      };
+      final referral = referralCode?.trim().toLowerCase();
+      if (referral != null && referral.isNotEmpty) {
+        body['referral_code'] = referral;
+      }
 
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final response = await _apiClient.post(
+        ApiConstants.authRegister,
+        body,
+        requiresAuth: false,
+      );
+
+      final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        if (body['success'] == true) {
-          final data = body['data'] as Map<String, dynamic>?;
-          final id = data?['id'] as String?;
-
-          if (id == null || id.isEmpty) {
-            throw const AuthFailure('Failed to receive registration ID.');
-          }
-
-          return id;
-        } else {
-          final message = body['error'] as String? ?? 'Registration failed.';
-          throw AuthFailure(message);
+        if (responseBody['success'] == true) {
+          final data = responseBody['data'] as Map<String, dynamic>?;
+          await _establishSessionFromAuthData(data);
+          return;
         }
+        final message = responseBody['error'] as String? ?? 'Registration failed.';
+        throw AuthFailure(message);
       } else if (response.statusCode == 409) {
-        throw const AuthFailure('Username already in use.');
+        final message =
+            responseBody['error'] as String? ?? 'Username or email already in use.';
+        throw AuthFailure(message);
       } else {
         final message =
-            body['error'] as String? ??
+            responseBody['error'] as String? ??
             'Registration failed. Please try again.';
         throw AuthFailure(message);
       }
@@ -254,75 +291,6 @@ class BackendAuthRepository implements AuthRepository {
       }
       throw const AuthFailure(
         'Unable to create account. Please try again.',
-      );
-    }
-  }
-
-  @override
-  Future<void> verifyOtp({required String id, required String otp}) async {
-    if (id.isEmpty || otp.isEmpty) {
-      throw const AuthFailure('Registration ID and OTP are required.');
-    }
-
-    try {
-      final response = await _apiClient.post(ApiConstants.authVerify, {
-        'id': id,
-        'otp': otp,
-      }, requiresAuth: false);
-
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode == 200) {
-        if (body['success'] == true) {
-          final data = body['data'] as Map<String, dynamic>?;
-          final token = data?['token'] as String?;
-          final userData = data?['user'] as Map<String, dynamic>?;
-
-          if (token == null || token.isEmpty) {
-            throw const AuthFailure('Failed to receive authentication token.');
-          }
-
-          // Save token
-          await TokenStorageService.saveToken(token);
-
-          // Create auth user from response
-          if (userData != null) {
-            _currentUser = AuthUser(
-              uid: userData['uid'] as String? ?? '',
-              username: userData['username'] as String?,
-              name: userData['name'] as String?,
-              profilePicture:
-                  userData['profile_picture'] as String? ??
-                  userData['profilePicture'] as String? ??
-                  userData['avatarUrl'] as String?,
-            );
-          } else {
-            _currentUser = AuthUser(uid: '');
-          }
-
-          // Emit auth state change
-          _authEstablishedDuringInit = true;
-          _authStateController.add(_currentUser);
-        } else {
-          final message = body['error'] as String? ?? 'Verification failed.';
-          throw AuthFailure(message);
-        }
-      } else {
-        final message =
-            body['error'] as String? ??
-            'Verification failed. Please try again.';
-        throw AuthFailure(message);
-      }
-    } catch (error) {
-      if (error is AuthFailure) {
-        rethrow;
-      }
-      final offline = offlineMessageIfApplicable(error);
-      if (offline != null) {
-        throw AuthFailure(offline);
-      }
-      throw const AuthFailure(
-        'Unable to verify code. Please try again.',
       );
     }
   }

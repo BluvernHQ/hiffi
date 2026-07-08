@@ -18,6 +18,7 @@ import '../../features/search/data/search_repository.dart';
 import '../../features/search/presentation/viewmodels/search_view_model.dart';
 import '../../features/mood/data/mood_playlist_repository.dart';
 import '../../features/mood/presentation/viewmodels/mood_feed_view_model.dart';
+import '../../features/migration/data/migration_repository.dart';
 import '../../features/following/presentation/viewmodels/following_view_model.dart';
 import '../../features/liked/presentation/viewmodels/liked_videos_view_model.dart';
 import '../../features/watch_history/presentation/viewmodels/watch_history_view_model.dart';
@@ -73,6 +74,10 @@ List<SingleChildWidget> buildAppProviders() {
     Provider<MoodPlaylistRepository>(
       create: (context) =>
           MoodPlaylistRepositoryImpl(apiClient: context.read<ApiClient>()),
+    ),
+    Provider<MigrationRepository>(
+      create: (context) =>
+          MigrationRepository(apiClient: context.read<ApiClient>()),
     ),
     Provider<AppRouter>(
       create: (context) =>

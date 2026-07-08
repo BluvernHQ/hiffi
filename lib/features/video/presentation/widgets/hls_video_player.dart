@@ -4,6 +4,8 @@ import 'package:chewie/chewie.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:hiffi/core/analytics/analytics_capture.dart';
+import 'package:hiffi/core/analytics/analytics_tags.dart';
 import 'package:hiffi/core/services/media/media_sync_service.dart';
 import 'package:hiffi/core/services/pip_service.dart';
 import 'package:hiffi/features/video/domain/models/video_model.dart';
@@ -305,6 +307,17 @@ class _HlsVideoPlayerState extends State<HlsVideoPlayer> {
 
     // Skip backward on left side, forward on right side
     final skipDuration = isLeftSide ? -_skipDuration : _skipDuration;
+    final seekTag = isLeftSide
+        ? AnalyticsTags.playerSeekBackward
+        : AnalyticsTags.playerSeekForward;
+    unawaited(
+      AnalyticsCapture.click(
+        context,
+        elementUiName: seekTag,
+        screenName: 'watch',
+        videoId: widget.videoId,
+      ),
+    );
     unawaited(() async {
       await _controller.seekBy(skipDuration);
       // Some devices transiently pause after rapid seek bursts.

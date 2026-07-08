@@ -1,12 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/analytics/analytics_capture.dart';
+import '../../../../core/analytics/analytics_tags.dart';
 import '../../../../core/utils/network_error_utils.dart';
-import '../../../../core/widgets/network_page_shell.dart';
 import '../../../../core/widgets/hiffi_image.dart';
 import '../../../../core/widgets/hiffi_video_thumbnail.dart';
+import '../../../../core/widgets/network_page_shell.dart';
+import '../../../../core/widgets/offline_empty_state.dart';
+import '../../../../core/widgets/shimmer_widgets.dart';
 import '../../../../core/utils/responsive.dart';
 import '../../../user/domain/models/user_model.dart';
 import '../../../video/domain/models/video_model.dart';
@@ -24,27 +30,53 @@ class SearchResultsPage extends StatefulWidget {
 class _SearchResultsPageState extends State<SearchResultsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late final TextEditingController _searchController;
+  late final FocusNode _searchFocusNode;
   late final ScrollController _allScrollController;
   late final ScrollController _videosScrollController;
   late final ScrollController _usersScrollController;
+
+  String get _query => widget.query.trim();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _searchController = TextEditingController(text: widget.query);
+    _searchFocusNode = FocusNode();
     _allScrollController = ScrollController()..addListener(_onAllScroll);
     _videosScrollController = ScrollController()..addListener(_onVideosScroll);
     _usersScrollController = ScrollController()..addListener(_onUsersScroll);
 
-    // Perform search on init
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<SearchViewModel>().search(widget.query);
-    });
+    if (_query.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        context.read<SearchViewModel>().search(_query);
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchFocusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(SearchResultsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query) {
+      _searchController.text = widget.query;
+      if (_query.isNotEmpty) {
+        context.read<SearchViewModel>().search(_query);
+      } else {
+        context.read<SearchViewModel>().clear();
+      }
+    }
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     _allScrollController.removeListener(_onAllScroll);
     _videosScrollController.removeListener(_onVideosScroll);
     _usersScrollController.removeListener(_onUsersScroll);
@@ -52,6 +84,17 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     _videosScrollController.dispose();
     _usersScrollController.dispose();
     super.dispose();
+  }
+
+  void _submitSearch([String? value]) {
+    final trimmed = (value ?? _searchController.text).trim();
+    if (trimmed.isEmpty) return;
+    _searchFocusNode.unfocus();
+    if (trimmed == _query) {
+      context.read<SearchViewModel>().search(trimmed);
+      return;
+    }
+    context.go('/search?q=${Uri.encodeComponent(trimmed)}');
   }
 
   bool _isNearBottom(ScrollController controller, {double threshold = 320}) {
@@ -81,28 +124,100 @@ class _SearchResultsPageState extends State<SearchResultsPage>
   @override
   Widget build(BuildContext context) {
     final searchViewModel = context.watch<SearchViewModel>();
+    final hasQuery = _query.isNotEmpty;
+    final theme = Theme.of(context);
 
     return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
-        title: Text('Search: ${widget.query}'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'All'),
-            Tab(text: 'Videos'),
-            Tab(text: 'Users'),
-          ],
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
         ),
+        titleSpacing: 0,
+        title: TextField(
+          controller: _searchController,
+          focusNode: _searchFocusNode,
+          textInputAction: TextInputAction.search,
+          onSubmitted: _submitSearch,
+          decoration: InputDecoration(
+            hintText: 'Search videos and creators',
+            border: InputBorder.none,
+            isDense: true,
+            hintStyle: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+            ),
+            suffixIcon: _searchController.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                      if (hasQuery) {
+                        context.go('/search');
+                      } else {
+                        _searchFocusNode.requestFocus();
+                      }
+                    },
+                    tooltip: 'Clear',
+                  )
+                : null,
+          ),
+          style: theme.textTheme.bodyLarge,
+          onChanged: (_) => setState(() {}),
+        ),
+        bottom: hasQuery
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(96),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!searchViewModel.isLoading &&
+                        searchViewModel.error == null &&
+                        searchViewModel.hasResults)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Text(
+                          _resultSummary(searchViewModel),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.8,
+                            ),
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: _SearchTabBar(
+                        controller: _tabController,
+                        videoCount: searchViewModel.videoCount,
+                        userCount: searchViewModel.userCount,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : null,
       ),
       body: NetworkPageShell(
         hasCachedContent: searchViewModel.hasResults,
         isLoading: searchViewModel.isLoading && !searchViewModel.hasResults,
         emptyDescription:
             'Connect to the internet and try again to search on Hiffi.',
-        onRetry: () => searchViewModel.search(widget.query),
-        child: searchViewModel.isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : searchViewModel.error != null
+        onRetry: () async {
+          if (_query.isNotEmpty) await searchViewModel.search(_query);
+        },
+        child: !hasQuery
+            ? _SearchLanding(onSubmit: _submitSearch)
+            : searchViewModel.isLoading && !searchViewModel.hasResults
+            ? const VideoListShimmer(itemCount: 8)
+            : searchViewModel.error != null && !searchViewModel.hasResults
             ? _buildErrorState(searchViewModel)
             : searchViewModel.hasNoResults
             ? _buildEmptyState()
@@ -118,84 +233,56 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     );
   }
 
+  String _resultSummary(SearchViewModel vm) {
+    final total = vm.videoCount + vm.userCount;
+    if (total <= 0) return 'Results for "$_query"';
+    final label = total == 1 ? '1 result' : '$total results';
+    return '$label for "$_query"';
+  }
+
   Widget _buildErrorState(SearchViewModel viewModel) {
     final error = viewModel.error ?? '';
     final isNoInternet = isOfflineErrorMessage(error);
 
+    return OfflineEmptyState(
+      title: isNoInternet ? "You're offline" : 'Search unavailable',
+      description: isNoInternet
+          ? 'Check your connection and try searching again.'
+          : error,
+      onTryAgain: () => viewModel.search(_query),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(32),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: isNoInternet
-                    ? Theme.of(
-                        context,
-                      ).colorScheme.primaryContainer.withOpacity(0.3)
-                    : Theme.of(
-                        context,
-                      ).colorScheme.errorContainer.withOpacity(0.3),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isNoInternet
-                    ? Icons.wifi_off_rounded
-                    : Icons.error_outline_rounded,
-                size: 64,
-                color: isNoInternet
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.error,
-              ),
+            Icon(
+              Icons.search_off_rounded,
+              size: 56,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
             Text(
-              isNoInternet
-                  ? 'You are offline right now'
-                  : 'Oops! Something went wrong',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.5,
-              ),
+              'No results for "$_query"',
               textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                isNoInternet
-                    ? 'Please check your connection and try again to search on Hiffi.'
-                    : 'We encountered an error while searching. Please try again later.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  height: 1.5,
-                ),
-                textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 40),
-            ElevatedButton.icon(
-              onPressed: () {
-                viewModel.search(widget.query);
-              },
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text(
-                'Try Again',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 40,
-                  vertical: 16,
+            const SizedBox(height: 8),
+            Text(
+              'Try different keywords, a creator name, or a shorter phrase.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.8,
                 ),
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
+                height: 1.45,
               ),
             ),
           ],
@@ -204,34 +291,31 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildSectionHeader({
+    required String title,
+    required VoidCallback? onSeeAll,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
+      child: Row(
         children: [
-          Icon(
-            Icons.search_off,
-            size: 64,
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-          ),
-          const SizedBox(height: 16),
           Text(
-            'No results found',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Try a different search term',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withOpacity(0.7),
+          const Spacer(),
+          if (onSeeAll != null)
+            TextButton(
+              onPressed: onSeeAll,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              child: const Text('See all'),
             ),
-          ),
         ],
       ),
     );
@@ -239,25 +323,19 @@ class _SearchResultsPageState extends State<SearchResultsPage>
 
   Widget _buildAllResults(SearchViewModel viewModel) {
     return RefreshIndicator(
-      onRefresh: () => viewModel.search(widget.query),
+      onRefresh: () => viewModel.search(_query),
       child: CustomScrollView(
         controller: _allScrollController,
         slivers: [
-          // Videos section
           if (viewModel.videoResults.isNotEmpty) ...[
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  'Videos (${viewModel.videoCount})',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+              child: _buildSectionHeader(
+                title: 'Videos (${viewModel.videoCount})',
+                onSeeAll: () => _tabController.animateTo(1),
               ),
             ),
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 16.h),
+              padding: EdgeInsets.fromLTRB(12.w, 0, 12.w, 8.h),
               sliver: SliverGrid(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: responsiveGridColumns(context),
@@ -266,33 +344,26 @@ class _SearchResultsPageState extends State<SearchResultsPage>
                   childAspectRatio: _calculateAspectRatio(context),
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  final video = viewModel.videoResults[index];
-                  return _GridVideoCard(video: video);
+                  return _GridVideoCard(video: viewModel.videoResults[index]);
                 }, childCount: viewModel.videoResults.length),
               ),
             ),
           ],
-          // Users section
           if (viewModel.userResults.isNotEmpty) ...[
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  'Users (${viewModel.userCount})',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+              child: _buildSectionHeader(
+                title: 'Creators (${viewModel.userCount})',
+                onSeeAll: () => _tabController.animateTo(2),
               ),
             ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  final user = viewModel.userResults[index];
-                  return _UserCard(user: user);
-                }, childCount: viewModel.userResults.length),
-              ),
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final user = viewModel.userResults[index];
+                return _UserCard(
+                  user: user,
+                  showDivider: index < viewModel.userResults.length - 1,
+                );
+              }, childCount: viewModel.userResults.length),
             ),
           ],
           SliverToBoxAdapter(
@@ -300,6 +371,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
               show: viewModel.isLoadingMoreUsers || viewModel.isLoadingMoreVideos,
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 16)),
         ],
       ),
     );
@@ -307,36 +379,19 @@ class _SearchResultsPageState extends State<SearchResultsPage>
 
   Widget _buildVideoResults(SearchViewModel viewModel) {
     if (viewModel.videoResults.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.video_library_outlined,
-              size: 64,
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No videos found',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
+      return _buildTabEmptyState(
+        icon: Icons.play_circle_outline_rounded,
+        message: 'No videos for "$_query"',
       );
     }
 
     return RefreshIndicator(
-      onRefresh: () => viewModel.searchVideos(widget.query),
+      onRefresh: () => viewModel.searchVideos(_query),
       child: CustomScrollView(
         controller: _videosScrollController,
         slivers: [
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(12.w, 16.h, 12.w, 16.h),
+            padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 16.h),
             sliver: SliverGrid(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: responsiveGridColumns(context),
@@ -345,8 +400,7 @@ class _SearchResultsPageState extends State<SearchResultsPage>
                 childAspectRatio: _calculateAspectRatio(context),
               ),
               delegate: SliverChildBuilderDelegate((context, index) {
-                final video = viewModel.videoResults[index];
-                return _GridVideoCard(video: video);
+                return _GridVideoCard(video: viewModel.videoResults[index]);
               }, childCount: viewModel.videoResults.length),
             ),
           ),
@@ -360,42 +414,25 @@ class _SearchResultsPageState extends State<SearchResultsPage>
 
   Widget _buildUserResults(SearchViewModel viewModel) {
     if (viewModel.userResults.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.person_outline,
-              size: 64,
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withOpacity(0.5),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No users found',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
+      return _buildTabEmptyState(
+        icon: Icons.person_search_rounded,
+        message: 'No creators for "$_query"',
       );
     }
 
     return RefreshIndicator(
-      onRefresh: () => viewModel.searchUsers(widget.query),
+      onRefresh: () => viewModel.searchUsers(_query),
       child: CustomScrollView(
         controller: _usersScrollController,
         slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final user = viewModel.userResults[index];
-                return _UserCard(user: user);
-              }, childCount: viewModel.userResults.length),
-            ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final user = viewModel.userResults[index];
+              return _UserCard(
+                user: user,
+                showDivider: index < viewModel.userResults.length - 1,
+              );
+            }, childCount: viewModel.userResults.length),
           ),
           SliverToBoxAdapter(
             child: _buildBottomLoader(show: viewModel.isLoadingMoreUsers),
@@ -405,11 +442,47 @@ class _SearchResultsPageState extends State<SearchResultsPage>
     );
   }
 
+  Widget _buildTabEmptyState({
+    required IconData icon,
+    required String message,
+  }) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 48,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomLoader({required bool show}) {
     if (!show) return const SizedBox.shrink();
     return const Padding(
       padding: EdgeInsets.symmetric(vertical: 16),
-      child: Center(child: CircularProgressIndicator()),
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
     );
   }
 
@@ -424,7 +497,130 @@ class _SearchResultsPageState extends State<SearchResultsPage>
   }
 }
 
-// Grid video card (reused from home page pattern)
+class _SearchLanding extends StatelessWidget {
+  const _SearchLanding({required this.onSubmit});
+
+  final void Function(String value) onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+      children: [
+        Icon(
+          Icons.search_rounded,
+          size: 48,
+          color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Search Hiffi',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Find videos, creators, and channels across the platform.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+            height: 1.45,
+          ),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          'Try searching for',
+          style: theme.textTheme.labelLarge?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final term in const [
+              'music',
+              'comedy',
+              'gaming',
+              'podcast',
+              'live',
+            ])
+              ActionChip(
+                label: Text(term),
+                onPressed: () => onSubmit(term),
+                backgroundColor:
+                    theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.65,
+                ),
+                side: BorderSide(
+                  color: theme.colorScheme.outlineVariant.withValues(
+                    alpha: 0.35,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SearchTabBar extends StatelessWidget {
+  const _SearchTabBar({
+    required this.controller,
+    required this.videoCount,
+    required this.userCount,
+  });
+
+  final TabController controller;
+  final int videoCount;
+  final int userCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: TabBar(
+        controller: controller,
+        dividerColor: Colors.transparent,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelPadding: EdgeInsets.zero,
+        indicator: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 6,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        labelColor: theme.colorScheme.onSurface,
+        unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
+        labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 13,
+        ),
+        tabs: [
+          const Tab(text: 'All'),
+          Tab(text: videoCount > 0 ? 'Videos ($videoCount)' : 'Videos'),
+          Tab(text: userCount > 0 ? 'Creators ($userCount)' : 'Creators'),
+        ],
+      ),
+    );
+  }
+}
+
 class _GridVideoCard extends StatelessWidget {
   const _GridVideoCard({required this.video});
 
@@ -436,6 +632,16 @@ class _GridVideoCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
+          unawaited(
+            AnalyticsCapture.videoOpened(
+              context,
+              openUiName: AnalyticsTags.openedVideoFromSearch,
+              screenName: 'search',
+              videoId: video.videoId,
+              videoTitle: video.videoTitle,
+              source: 'search',
+            ),
+          );
           context.push('/video/${video.videoId}', extra: video);
         },
         borderRadius: BorderRadius.circular(8),
@@ -443,98 +649,60 @@ class _GridVideoCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Thumbnail
             Expanded(
               flex: 3,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          HiffiVideoThumbnail(
-                            thumbnailPath: video.videoThumbnail,
-                            fit: BoxFit.cover,
+                  fit: StackFit.expand,
+                  children: [
+                    HiffiVideoThumbnail(
+                      thumbnailPath: video.videoThumbnail,
+                      fit: BoxFit.cover,
+                    ),
+                    if (video.status == 'temp')
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
                           ),
-                          // Processing indicator (top right)
-                          if (video.status == 'temp')
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.7),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '• ',
-                                      style: TextStyle(
-                                        color: Colors.redAccent,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Text(
-                                      'processing',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.7),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'processing',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
                             ),
-                          // Processing Overlay
-                          if (video.status == 'temp')
-                            IgnorePointer(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.3),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Center(
-                                  child: Icon(
-                                    Icons.sync,
-                                    color: Colors.white70,
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
+                          ),
+                        ),
                       ),
+                  ],
+                ),
               ),
             ),
             SizedBox(height: 8.h),
-            // Title and User section – responsive for tablet (YouTube-style: 2 lines + ellipsis)
             SizedBox(
               height: responsiveGridTextSectionHeight(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
                 children: [
                   Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        video.videoTitle,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                          fontSize: responsiveGridTitleFontSize(context),
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    child: Text(
+                      video.videoTitle,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                        fontSize: responsiveGridTitleFontSize(context),
                       ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   SizedBox(height: 6.h),
@@ -550,15 +718,13 @@ class _GridVideoCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           '@${video.userUsername.toLowerCase()}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                                fontSize: responsiveGridSubtitleFontSize(
-                                  context,
-                                ),
-                              ),
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant
+                                .withValues(alpha: 0.7),
+                            fontSize: responsiveGridSubtitleFontSize(context),
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -575,16 +741,17 @@ class _GridVideoCard extends StatelessWidget {
   }
 }
 
-// User card for search results
 class _UserCard extends StatelessWidget {
-  const _UserCard({required this.user});
+  const _UserCard({required this.user, this.showDivider = true});
 
   final UserModel user;
+  final bool showDivider;
 
   String _formatCount(int count) {
     if (count >= 1000000) {
       return '${(count / 1000000).toStringAsFixed(1)}M';
-    } else if (count >= 1000) {
+    }
+    if (count >= 1000) {
       return '${(count / 1000).toStringAsFixed(1)}K';
     }
     return count.toString();
@@ -592,121 +759,98 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Use updatedAt timestamp for cache busting, or current timestamp if not available
-    // This ensures we always get the latest profile picture
+    final theme = Theme.of(context);
     final cacheBust =
         user.updatedAt?.millisecondsSinceEpoch ??
         DateTime.now().millisecondsSinceEpoch;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        onTap: () {
-          context.push('/users/${user.username}');
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // Avatar
-              HiffiAvatar(
-                imageUrl: user.profilePicture ?? user.avatarUrl,
-                size: 64,
-                fallbackText: user.name,
-                cacheBust: cacheBust,
-              ),
-              const SizedBox(width: 16),
-              // User info
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '@${user.username.toLowerCase()}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.7),
-                      ),
-                    ),
-                    if (user.bio != null && user.bio!.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        user.bio!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
+    return Column(
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => context.push('/users/${user.username}'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  HiffiAvatar(
+                    imageUrl: user.profilePicture ?? user.avatarUrl,
+                    size: 48,
+                    fallbackText: user.name,
+                    cacheBust: cacheBust,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (user.followers > 0) ...[
-                          Icon(
-                            Icons.people,
-                            size: 16,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                        Text(
+                          user.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
-                          const SizedBox(width: 4),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '@${user.username.toLowerCase()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.8),
+                          ),
+                        ),
+                        if (user.bio != null && user.bio!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            '${_formatCount(user.followers)} followers',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.7),
-                                ),
+                            user.bio!.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.72),
+                            ),
                           ),
                         ],
-                        if (user.totalVideos > 0) ...[
-                          if (user.followers > 0) const SizedBox(width: 16),
-                          Icon(
-                            Icons.video_library,
-                            size: 16,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withOpacity(0.7),
-                          ),
-                          const SizedBox(width: 4),
+                        if (user.followers > 0 || user.totalVideos > 0) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            '${_formatCount(user.totalVideos)} videos',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withOpacity(0.7),
-                                ),
+                            [
+                              if (user.followers > 0)
+                                '${_formatCount(user.followers)} followers',
+                              if (user.totalVideos > 0)
+                                '${_formatCount(user.totalVideos)} videos',
+                            ].join(' · '),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.65),
+                            ),
                           ),
                         ],
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: theme.colorScheme.onSurfaceVariant.withValues(
+                      alpha: 0.45,
+                    ),
+                  ),
+                ],
               ),
-              Icon(
-                Icons.arrow_forward_ios,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+        if (showDivider)
+          Divider(
+            height: 1,
+            indent: 76,
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+          ),
+      ],
     );
   }
 }

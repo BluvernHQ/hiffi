@@ -92,6 +92,11 @@ static const String profileImageBaseUrl = 'https://dev.hiffi.workers.dev';
     return baseUrl;
   }
 
+  /// Resolves profile cover / banner image URL (same CDN rules as profile photo).
+  static String? getCoverImageUrl(String? coverPath, {int? cacheBust}) {
+    return getProfileImageUrl(coverPath, cacheBust: cacheBust);
+  }
+
   /// Gets headers required for profile image requests
   ///
   /// Headers are needed for all Hiffi profile images, whether they're:
